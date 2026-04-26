@@ -1,49 +1,53 @@
 # SaaS / Vendor Registry — multi-view inventory rendered by Obsidian Bases.
 # Filters: active and up-for-renewal contracts (excludes cancelled).
 
-filter:
-  - property: type
-    operator: is
-    value: saas-contract
-  - property: status
-    operator: not
-    value: cancelled
+filters:
+  and:
+    - 'note.type == "saas-contract"'
+    - 'note.status != "cancelled"'
 
 views:
-  - name: By Category
-    type: card
-    group_by: category
+  - type: cards
+    name: By Category
+    groupBy:
+      property: category
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: Up for Renewal
-    type: table
+  - type: table
+    name: Up for Renewal
     order:
-      - property: renewal_date
-        descending: false
-      - property: title
+      - renewal_date
+      - title
 
-  - name: All Contracts
-    type: table
+  - type: table
+    name: All Contracts
     order:
-      - property: title
-      - property: category
-      - property: vendor
-      - property: amount
-      - property: billing_cycle
-      - property: renewal_date
-      - property: seats
-      - property: account_owner
+      - title
+      - category
+      - vendor
+      - amount
+      - billing_cycle
+      - renewal_date
+      - seats
+      - account_owner
 
-  - name: By Account Owner
-    type: card
-    group_by: account_owner
+  - type: cards
+    name: By Account Owner
+    groupBy:
+      property: account_owner
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: Annual Spend by Category
-    type: table
-    group_by: category
+  - type: table
+    name: Annual Spend by Category
+    groupBy:
+      property: category
+      direction: ASC
     order:
-      - property: amount
-        descending: true
+      - title
+      - amount
+    summaries:
+      amount: Sum

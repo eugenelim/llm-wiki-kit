@@ -1,41 +1,44 @@
+# Canonical exercises with current PRs and last-session breadcrumb.
+
 filters:
   and:
     - file.hasTag("exercise")
     - file.hasProperty("modality")
 
-properties:
-  - id: title
-  - id: movement_pattern
-  - id: modality
-  - id: muscle_groups
-  - id: pr_estimated_1rm
-  - id: pr_set_summary
-  - id: last_session
-  - id: sessions_count
-
 views:
   - type: cards
     name: By Movement Pattern
-    order: [title, modality, pr_estimated_1rm, pr_set_summary, last_session]
-    groupBy: movement_pattern
-    sort:
-      - property: pr_estimated_1rm
-        direction: desc
+    groupBy:
+      property: movement_pattern
+      direction: ASC
+    order:
+      - title
+      - modality
+      - pr_estimated_1rm
+      - pr_set_summary
+      - last_session
 
   - type: table
     name: All Exercises
-    order: [title, movement_pattern, modality, pr_estimated_1rm, pr_set_summary, last_session, sessions_count]
-    sort:
-      - property: last_session
-        direction: desc
+    order:
+      - title
+      - movement_pattern
+      - modality
+      - pr_estimated_1rm
+      - pr_set_summary
+      - last_session
+      - sessions_count
 
   - type: cards
     name: Stale (no session in 30+ days)
-    filter:
+    filters:
       and:
-        - file.property("last_session") < dateAdd(now(), "-30d")
-    order: [title, modality, last_session, pr_set_summary]
-    groupBy: movement_pattern
-    sort:
-      - property: last_session
-        direction: asc
+        - 'note.last_session < now() - "30d"'
+    groupBy:
+      property: movement_pattern
+      direction: ASC
+    order:
+      - title
+      - modality
+      - last_session
+      - pr_set_summary

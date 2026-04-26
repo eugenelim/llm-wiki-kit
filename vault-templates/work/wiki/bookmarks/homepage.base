@@ -3,46 +3,42 @@
 # Add new bookmarks by creating type: bookmark pages in wiki/bookmarks/;
 # they appear here automatically.
 
-filter:
-  - property: type
-    operator: is
-    value: bookmark
-  - property: status
-    operator: is
-    value: active
+filters:
+  and:
+    - 'note.type == "bookmark"'
+    - 'note.status == "active"'
 
 views:
-  - name: By Category
-    type: card
-    group_by: category
+  - type: cards
+    name: By Category
+    groupBy:
+      property: category
+      direction: ASC
     order:
-      - property: title
-      - property: last_visited
-        descending: true
+      - title
+      - last_visited
 
-  - name: All Bookmarks
-    type: table
+  - type: table
+    name: All Bookmarks
     order:
-      - property: title
-      - property: category
-      - property: url
-      - property: last_visited
-      - property: tags
+      - title
+      - category
+      - url
+      - last_visited
+      - tags
 
-  - name: Daily Drivers
-    type: card
-    filter:
-      - property: category
-        operator: is
-        value: daily-tools
+  - type: cards
+    name: Daily Drivers
+    filters:
+      and:
+        - 'note.category == "daily-tools"'
     order:
-      - property: title
+      - title
 
-  - name: Reference
-    type: card
-    filter:
-      - property: category
-        operator: is
-        value: reference
+  - type: cards
+    name: Reference
+    filters:
+      and:
+        - 'note.category == "reference"'
     order:
-      - property: title
+      - title
