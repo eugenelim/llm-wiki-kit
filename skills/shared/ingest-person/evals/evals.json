@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest-person",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add this person — pasted email signature: \"Sarah Chen / Senior Engineer / Acme Inc / sarah@acme.com / @sarahchen on Slack\".",
+      "expected_output": "A new person page at wiki/people/sarah-chen.md (work) or wiki/network/relationships/sarah-chen.md (personal), with name/role/company/email/slack populated, relationship inferred from context, last_contact set to today, and synopsis left for human review. Changelog entry appended."
+    },
+    {
+      "id": 2,
+      "prompt": "Capture this LinkedIn profile: https://www.linkedin.com/in/janedoe/. She's joining as a cross-team partner on the order-platform project.",
+      "expected_output": "ingest-website cleans the profile; person schema applied with relationship: cross-team; tags include order-platform; the page links from wiki/projects/order-platform/team.md if a roster exists. If a Jane Doe already exists, surfaces the duplicate and offers person-update instead."
+    },
+    {
+      "id": 3,
+      "prompt": "Save this business card photo from yesterday's conference — Mark Rivera, founder of dataflow.io.",
+      "expected_output": "ingest-document with OCR extracts the card text; person schema applied; in personal variant, placed at wiki/network/relationships/mark-rivera.md with how_we_met set to the conference context. Cadence target asked or left blank for the user to set."
+    }
+  ]
+}

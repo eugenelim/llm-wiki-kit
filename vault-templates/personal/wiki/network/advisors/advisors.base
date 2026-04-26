@@ -1,0 +1,44 @@
+# Advisors / Mentors — multi-view inventory rendered by Obsidian Bases.
+
+filter:
+  - property: type
+    operator: is
+    value: advisor
+  - property: status
+    operator: not
+    value: mentor-graduated
+
+views:
+  - name: By Relationship
+    type: card
+    group_by: relationship
+    order:
+      - property: title
+
+  - name: All Advisors
+    type: table
+    order:
+      - property: title
+      - property: relationship
+      - property: company
+      - property: role
+      - property: contact_cadence
+      - property: last_contact
+        descending: false
+
+  - name: Stale Connections
+    type: table
+    order:
+      - property: last_contact
+        descending: false
+      - property: title
+
+  - name: Active Mentorships
+    type: card
+    filter:
+      - property: status
+        operator: is
+        value: active
+    order:
+      - property: contact_cadence
+      - property: title

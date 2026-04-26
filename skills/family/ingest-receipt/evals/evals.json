@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest-receipt",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Save this receipt photo \u2014 Costco run for groceries.",
+      "expected_output": "ingest-document (OCR) extracts the line items; receipt schema applied; entry routed to wiki/finances/ (or wiki/food/ if appropriate) with totals, vendor, date, category."
+    },
+    {
+      "id": 2,
+      "prompt": "Track this expense \u2014 pasted credit card line item.",
+      "expected_output": "A receipt entry created from the pasted text, routed to the right domain by category (e.g., vehicle for a gas-station charge)."
+    },
+    {
+      "id": 3,
+      "prompt": "Ingest the Home Depot email receipt I just forwarded.",
+      "expected_output": "Email content parsed (paste handling or ingest-website if URL inside), receipt schema applied, routed to wiki/home/."
+    }
+  ]
+}

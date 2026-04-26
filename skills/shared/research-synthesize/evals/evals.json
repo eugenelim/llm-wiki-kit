@@ -1,0 +1,20 @@
+{
+  "skill_name": "research-synthesize",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Synthesize the research for kafka-vs-kinesis.",
+      "expected_output": "An artifact.md produced using the template matching the project's verdict_shape; load-bearing claims pass the Two-Source Rule check or are flagged."
+    },
+    {
+      "id": 2,
+      "prompt": "Produce the artifact for the active research project.",
+      "expected_output": "Same as default for the most-recently-modified project."
+    },
+    {
+      "id": 3,
+      "prompt": "Phase-3: synthesize the pillar pages into a verdict.",
+      "expected_output": "artifact.md produced; load-bearing claims with insufficient sourcing flagged for the user."
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+# Tooling — multi-view inventory rendered by Obsidian Bases.
+
+filter:
+  - property: type
+    operator: is
+    value: tooling-entry
+  - property: status
+    operator: not
+    value: dropped
+
+views:
+  - name: By Role
+    type: card
+    group_by: role
+    order:
+      - property: title
+
+  - name: All Tools
+    type: table
+    order:
+      - property: title
+      - property: role
+      - property: how_used
+      - property: cost
+      - property: status
+      - property: adoption_date
+
+  - name: Daily Drivers
+    type: card
+    filter:
+      - property: how_used
+        operator: is
+        value: daily-driver
+    order:
+      - property: title
+
+  - name: Currently Evaluating
+    type: card
+    filter:
+      - property: status
+        operator: is
+        value: evaluating
+    order:
+      - property: title
+
+  - name: Due for Re-evaluation
+    type: table
+    order:
+      - property: last_evaluated
+        descending: false
+      - property: title

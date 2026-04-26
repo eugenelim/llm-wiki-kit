@@ -1,0 +1,65 @@
+filters:
+  and:
+    - file.hasTag("hobby")
+    - file.hasProperty("category")
+
+properties:
+  - id: title
+  - id: category
+  - id: status
+  - id: current_focus
+  - id: next_milestone
+  - id: started
+  - id: modified
+  - id: session_cadence
+
+views:
+  - type: cards
+    name: Active by Category
+    filter: file.property("status") == "active"
+    order: [title, current_focus, next_milestone, modified]
+    groupBy: category
+    sort:
+      - property: modified
+        direction: desc
+
+  - type: table
+    name: All Hobbies
+    order: [title, category, status, current_focus, modified, started]
+    sort:
+      - property: status
+        direction: asc
+      - property: modified
+        direction: desc
+
+  - type: cards
+    name: Needs Attention (active, no session in 30 days)
+    filter:
+      and:
+        - file.property("status") == "active"
+        - file.property("modified") < dateAdd(now(), "-30d")
+    order: [title, current_focus, modified]
+    groupBy: category
+    sort:
+      - property: modified
+        direction: asc
+
+  - type: table
+    name: Dormant Hobbies
+    filter: file.property("status") == "dormant"
+    order: [title, category, started, modified]
+    sort:
+      - property: modified
+        direction: desc
+
+  - type: cards
+    name: Recent Sessions (last 30 days)
+    filters:
+      and:
+        - file.hasTag("hobby-session")
+        - file.property("date") >= dateAdd(now(), "-30d")
+    order: [title, hobby, date, focus, duration_min, mood]
+    groupBy: hobby
+    sort:
+      - property: date
+        direction: desc

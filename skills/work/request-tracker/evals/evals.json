@@ -1,0 +1,20 @@
+{
+  "skill_name": "request-tracker",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "What are we waiting on this week?",
+      "expected_output": "An inline ranked report grouped by project, listing 'Waiting on @X by {date}' callouts and externally-assigned action items due in the next 7 days, with original-ask date and source-page wikilinks."
+    },
+    {
+      "id": 2,
+      "prompt": "Run the escalation tracker.",
+      "expected_output": "Default 30-day window report, grouped by project, with sections: Due this week, Due this month, Stale (>14 days no movement), Escalations recommended. Each item shows owed-by, ask, asked date, due date, source page."
+    },
+    {
+      "id": 3,
+      "prompt": "What's blocking the order-platform team — any external dependencies?",
+      "expected_output": "Scoped report for the order-platform project: open requests-to-others grouped by classification, plus a note on whether any escalation is overdue. Includes source-page links and frontmatter waiting_on entries."
+    }
+  ]
+}

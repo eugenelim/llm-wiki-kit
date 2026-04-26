@@ -1,0 +1,20 @@
+{
+  "skill_name": "knowledge-consolidation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Consolidate notes on event-driven architecture.",
+      "expected_output": "A new or updated wiki/topics/event-driven-architecture.md synthesizing 5+ atomic notes on the theme, with backlinks to the atomic notes."
+    },
+    {
+      "id": 2,
+      "prompt": "My notes on agentic-systems patterns \u2014 see if there's a topic page worth creating.",
+      "expected_output": "Theme detection across atomic notes; if the threshold is met, a proposed topic page synthesizing the notes."
+    },
+    {
+      "id": 3,
+      "prompt": "Sweep my atomic notes for under-synthesized themes.",
+      "expected_output": "A list of themes that meet the threshold (default 5+ notes) without an existing topic page; proposes which to consolidate first."
+    }
+  ]
+}

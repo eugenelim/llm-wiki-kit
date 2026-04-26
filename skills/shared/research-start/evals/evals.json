@@ -1,0 +1,20 @@
+{
+  "skill_name": "research-start",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Start a research project: 'Kafka beats Kinesis for our event-streaming workload.' Verdict shape: shortlist.",
+      "expected_output": "A new wiki/research/{date}-{slug}/ folder scaffolded with overview.md (claim + verdict_shape recorded), the four pillar pages, sources/, and an empty artifact placeholder."
+    },
+    {
+      "id": 2,
+      "prompt": "Investigate event-streaming options \u2014 claim is 'managed Kinesis is good enough for our scale'. Verdict shape: matrix.",
+      "expected_output": "Same scaffold; the project is ready for capture."
+    },
+    {
+      "id": 3,
+      "prompt": "Start a research project on whether to migrate to Postgres 17.",
+      "expected_output": "Asks the user to declare the central claim and verdict shape before scaffolding; refuses to scaffold without both."
+    }
+  ]
+}

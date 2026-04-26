@@ -1,0 +1,20 @@
+{
+  "skill_name": "weekly-digest",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "What happened this week?",
+      "expected_output": "A weekly digest page summarizing the household's last 7 days across health, food, travel, finances, etc., grounded in changelog entries."
+    },
+    {
+      "id": 2,
+      "prompt": "Run the family weekly digest.",
+      "expected_output": "Same as the default \u2014 synthesize the changelog and modified-page activity into a 'what happened' artifact."
+    },
+    {
+      "id": 3,
+      "prompt": "Catch me up on what's changed since Monday.",
+      "expected_output": "A 7-day window digest, grouped by domain, with links into the source pages for follow-up."
+    }
+  ]
+}

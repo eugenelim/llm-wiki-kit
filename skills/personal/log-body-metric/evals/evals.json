@@ -1,0 +1,20 @@
+{
+  "skill_name": "log-body-metric",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Weighed in: 175.4 lbs.",
+      "expected_output": "Creates wiki/fitness/body/2026-04-26.md with weight_lbs=175.4 and weight_kg=79.6 (auto-converted). If prior 4 weeks of entries exist, surfaces 'Weight delta over last 4 weeks: {prior} → 175.4 ({sign}{delta})'. No measurements section since none provided."
+    },
+    {
+      "id": 2,
+      "prompt": "Monthly measurements: waist 32.5, chest 42, hips 38. Did a DEXA today: 16.8% body fat.",
+      "expected_output": "Creates wiki/fitness/body/2026-04-26.md with body_fat_pct=16.8 and measurements{chest_in:42, waist_in:32.5, hips_in:38}. Notes section pre-filled with 'DEXA scan' as context. Surfaces measurement delta vs last month if a prior entry exists."
+    },
+    {
+      "id": 3,
+      "prompt": "Log body: 174.2 lbs, sleep average was 3 this week (post-travel), energy 3, lower-body cumulative soreness from new mesocycle.",
+      "expected_output": "Creates the body-metric snapshot with weight, sleep_avg_last_7d=3, energy_avg_last_7d=3, soreness_pattern='lower-body cumulative from new mesocycle'. Notes section captures 'post-travel'. If sleep dropped ≥1 point vs last entry, surfaces a flag for the next weekly-review to consider when interpreting upcoming session quality."
+    }
+  ]
+}

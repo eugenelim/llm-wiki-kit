@@ -1,0 +1,20 @@
+{
+  "skill_name": "task-tracking",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a task to order-platform: write integration tests for DLQ handling, high priority, assign to Sarah, due April 30.",
+      "expected_output": "wiki/projects/order-platform/tasks.md updated under Open with the task; synopsis counts incremented."
+    },
+    {
+      "id": 2,
+      "prompt": "What's on Sarah's plate across all projects?",
+      "expected_output": "Cross-project scan of tasks.md files; filter to @sarah; grouped by project, sorted by priority."
+    },
+    {
+      "id": 3,
+      "prompt": "Show me the task board for order-platform.",
+      "expected_output": "Synopsis + open + in-progress task lists from the project's tasks.md."
+    }
+  ]
+}

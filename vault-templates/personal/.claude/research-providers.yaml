@@ -1,0 +1,59 @@
+# Research Providers Configuration
+#
+# The research orchestrator (skills/shared/research/SKILL.md) reads this file to know
+# which providers are enabled. To enable a provider:
+#   1. Set enabled: true
+#   2. Set the API-key env var on your machine
+#
+# See docs/research-providers/{provider}.md for per-provider details.
+
+research_providers:
+
+  # Perplexity — current-state web research with citations.
+  # Strong for: career research (compensation benchmarks, role descriptions),
+  # tool / book recommendations, current events, learning-path lookups,
+  # major-purchase research.
+  # Cost: low. The most-used research provider for personal research.
+  perplexity:
+    enabled: false
+    api_key_env: PERPLEXITY_API_KEY
+    endpoint: https://api.perplexity.ai/chat/completions
+    model: sonar-pro
+    strengths:
+      - current_web_state
+      - cited_factual_lookup
+      - career_research
+      - tool_recommendations
+      - learning_path_research
+    cost_signal: low
+
+  # Semantic Scholar — academic literature, citation graphs.
+  # Strong for: educational deep-dives, learning new domains, evidence-based
+  # decision-making (career path research, methodology selection),
+  # personal research projects with academic depth.
+  # Cost: free.
+  semantic_scholar:
+    enabled: false
+    api_key_env: SEMANTIC_SCHOLAR_API_KEY
+    endpoint: https://api.semanticscholar.org/graph/v1
+    strengths:
+      - academic_papers
+      - peer_reviewed_evidence
+      - learning_deep_dive
+      - methodology_research
+    cost_signal: free
+
+  # Gemini Deep Research — long-form exhaustive synthesis.
+  # Personal-variant default: disabled. Reserve for major life decisions —
+  # career pivots, multi-year planning, location moves, significant purchases.
+  # Cost: high.
+  gemini:
+    enabled: false
+    api_key_env: GOOGLE_API_KEY
+    endpoint: https://generativelanguage.googleapis.com/v1beta/models
+    model: gemini-2.5-pro
+    strengths:
+      - long_form_synthesis
+      - exhaustive_landscape
+      - major_decision_research
+    cost_signal: high

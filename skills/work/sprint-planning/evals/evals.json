@@ -1,0 +1,20 @@
+{
+  "skill_name": "sprint-planning",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Plan the next sprint for the order-platform project.",
+      "expected_output": "A dated sprint-plan page in wiki/projects/order-platform/delivery/sprint-{date}.md with committed specs, tasks, capacity reasoning, and carry-overs from last sprint."
+    },
+    {
+      "id": 2,
+      "prompt": "Run sprint planning \u2014 Monday morning kickoff.",
+      "expected_output": "Same as default; uses inferred project from working directory if unambiguous."
+    },
+    {
+      "id": 3,
+      "prompt": "Mid-sprint replan after the database migration blocker.",
+      "expected_output": "Replan that updates the current sprint plan rather than creating a new one; documents the blocker and reshuffled priorities."
+    }
+  ]
+}

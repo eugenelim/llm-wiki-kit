@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest-application",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Track this application \u2014 Acme platform-engineer role: <URL>",
+      "expected_output": "ingest-website cleans the posting; application schema applied; wiki/career/applications/{acme}-{platform-engineer}.md page created with stage tracking."
+    },
+    {
+      "id": 2,
+      "prompt": "Save this LinkedIn job posting I'm applying to.",
+      "expected_output": "ingest-website + application schema; structured application page created with company, role, posting snapshot, deadline if present."
+    },
+    {
+      "id": 3,
+      "prompt": "Ingest this recruiter email \u2014 they reached out about a senior IC role.",
+      "expected_output": "Paste handling; application page scaffolded with the role, source 'recruiter outreach', and stage 'inbound'."
+    }
+  ]
+}

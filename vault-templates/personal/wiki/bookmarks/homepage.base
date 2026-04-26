@@ -1,0 +1,57 @@
+# Bookmark Homepage — multi-view dashboard rendered by Obsidian Bases.
+# Filters: only active bookmarks (type: bookmark, status: active).
+# Add new bookmarks by creating type: bookmark pages in wiki/bookmarks/;
+# they appear here automatically.
+
+filter:
+  - property: type
+    operator: is
+    value: bookmark
+  - property: status
+    operator: is
+    value: active
+
+views:
+  - name: By Category
+    type: card
+    group_by: category
+    order:
+      - property: title
+      - property: last_visited
+        descending: true
+
+  - name: All Bookmarks
+    type: table
+    order:
+      - property: title
+      - property: category
+      - property: url
+      - property: last_visited
+      - property: tags
+
+  - name: Daily Drivers
+    type: card
+    filter:
+      - property: category
+        operator: is
+        value: daily-tools
+    order:
+      - property: title
+
+  - name: Reading
+    type: card
+    filter:
+      - property: category
+        operator: is
+        value: reading
+    order:
+      - property: title
+
+  - name: Career Tools
+    type: card
+    filter:
+      - property: category
+        operator: is
+        value: career-tools
+    order:
+      - property: title

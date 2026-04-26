@@ -1,0 +1,52 @@
+# Places (POIs) — point-of-interest catalog rendered by Obsidian Bases.
+
+filter:
+  - property: type
+    operator: is
+    value: poi
+  - property: status
+    operator: not
+    value: closed
+
+views:
+  - name: By Location
+    type: card
+    group_by: location
+    order:
+      - property: title
+
+  - name: By Kind
+    type: card
+    group_by: kind
+    order:
+      - property: title
+
+  - name: All POIs
+    type: table
+    order:
+      - property: title
+      - property: location
+      - property: neighborhood
+      - property: kind
+      - property: duration
+      - property: visited
+
+  - name: Wishlist (Not Yet Visited)
+    type: card
+    filter:
+      - property: visited
+        operator: is
+        value: false
+    order:
+      - property: title
+
+  - name: Visited (Past Trips)
+    type: table
+    filter:
+      - property: visited
+        operator: is
+        value: true
+    order:
+      - property: visit_date
+        descending: true
+      - property: title

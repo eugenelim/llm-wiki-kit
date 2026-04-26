@@ -1,0 +1,20 @@
+{
+  "skill_name": "research",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Research: best practices for Kafka topic partitioning at >1M events/sec.",
+      "expected_output": "scripts/research.py dispatches to the best-fit provider; the result is saved as a research-source page in the active project's sources/ folder with research-source schema tagging."
+    },
+    {
+      "id": 2,
+      "prompt": "Find sources on Kinesis vs Kafka cost at our scale.",
+      "expected_output": "Same flow \u2014 provider chosen by question semantics; sources land in the active project."
+    },
+    {
+      "id": 3,
+      "prompt": "Research using Perplexity specifically \u2014 pricing on managed Kafka.",
+      "expected_output": "Honors the explicit provider preference; warns if the question semantics don't match the provider's strengths; saves source."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest-document",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Convert this PDF to markdown: ~/Downloads/spec-2026-04.pdf",
+      "expected_output": "Docling extracts the PDF to clean markdown saved at raw/{date}-{slug}.md, preserving tables and headings; control returns to the orchestrator."
+    },
+    {
+      "id": 2,
+      "prompt": "Ingest this DOCX file.",
+      "expected_output": "Docling extracts the .docx file to clean markdown saved at raw/{date}-{slug}.md."
+    },
+    {
+      "id": 3,
+      "prompt": "OCR this scanned image of a printed document.",
+      "expected_output": "Docling with OCR extracts text from the image to clean markdown in raw/."
+    }
+  ]
+}

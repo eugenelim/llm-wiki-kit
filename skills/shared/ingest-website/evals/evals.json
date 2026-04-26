@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest-website",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Ingest this article: https://stratechery.com/2026/some-post",
+      "expected_output": "defuddle extracts the article to clean markdown saved at raw/{date}-{slug}.md; control returns to the orchestrator for content-type routing."
+    },
+    {
+      "id": 2,
+      "prompt": "Summarize this URL into the wiki \u2014 long blog post.",
+      "expected_output": "Same flow \u2014 defuddle extracts; orchestrator decides content-type and where the synthesized page lands."
+    },
+    {
+      "id": 3,
+      "prompt": "This site is JS-heavy and bot-blocked: <URL>",
+      "expected_output": "Falls back from defuddle to pure.md; cleaned markdown saved at raw/{date}-{slug}.md."
+    }
+  ]
+}
