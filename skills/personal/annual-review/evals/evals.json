@@ -1,0 +1,20 @@
+{
+  "skill_name": "annual-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run my annual review.",
+      "expected_output": "An annual-review page synthesizing four quarterly reviews + decisions + projects + portfolio + reading log; durable themes, decision audit, next-year theme proposal."
+    },
+    {
+      "id": 2,
+      "prompt": "Time to do the year-end review.",
+      "expected_output": "Same as default \u2014 full annual synthesis."
+    },
+    {
+      "id": 3,
+      "prompt": "Look back at this year and propose next year's theme.",
+      "expected_output": "Annual review focused on theme detection across the year and a proposed next-year theme grounded in the patterns surfaced."
+    }
+  ]
+}

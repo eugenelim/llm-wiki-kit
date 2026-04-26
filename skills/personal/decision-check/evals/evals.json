@@ -1,0 +1,20 @@
+{
+  "skill_name": "decision-check",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Audit my recent decisions.",
+      "expected_output": "A digest of decisions in the last 12 months, flagging those that may no longer align with current goals; does NOT auto-resolve, just surfaces."
+    },
+    {
+      "id": 2,
+      "prompt": "Run a decision-check before quarterly review.",
+      "expected_output": "Same as the default audit, scoped to the lookback window; output usable as input for quarterly-review."
+    },
+    {
+      "id": 3,
+      "prompt": "Are any of my recent career decisions stale?",
+      "expected_output": "A focused audit on career decisions in the window, flagging misalignment with current goals."
+    }
+  ]
+}

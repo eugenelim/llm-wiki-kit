@@ -1,0 +1,85 @@
+filters:
+  or:
+    - file.hasTag("fitness-session")
+    - file.hasTag("fitness-program")
+    - file.hasTag("body-metric")
+    - file.hasTag("exercise")
+
+properties:
+  - id: title
+  - id: type
+  - id: session_type
+  - id: date
+  - id: duration_min
+  - id: focus
+  - id: rpe
+  - id: program
+  - id: prs_set
+  - id: pr_estimated_1rm
+  - id: pr_set_summary
+  - id: weight_lbs
+  - id: status
+  - id: goal
+
+views:
+  - type: cards
+    name: Recent Sessions (last 30 days)
+    filter:
+      and:
+        - file.hasTag("fitness-session")
+        - file.property("date") >= dateAdd(now(), "-30d")
+    order: [title, date, session_type, focus, duration_min, rpe, prs_set]
+    groupBy: session_type
+    sort:
+      - property: date
+        direction: desc
+
+  - type: table
+    name: All Sessions
+    filter: file.hasTag("fitness-session")
+    order: [title, date, session_type, focus, duration_min, rpe, program]
+    sort:
+      - property: date
+        direction: desc
+
+  - type: cards
+    name: Active Programs
+    filter:
+      and:
+        - file.hasTag("fitness-program")
+        - file.property("status") == "active"
+    order: [title, goal, current_mesocycle, current_microcycle, period]
+
+  - type: table
+    name: Body Metrics — Last Year
+    filter:
+      and:
+        - file.hasTag("body-metric")
+        - file.property("date") >= dateAdd(now(), "-365d")
+    order: [title, date, weight_lbs, body_fat_pct, sleep_avg_last_7d]
+    sort:
+      - property: date
+        direction: desc
+
+  - type: cards
+    name: PR Dashboard (Strength)
+    filter:
+      and:
+        - file.hasTag("exercise")
+        - file.property("modality").in(["barbell", "dumbbell", "machine", "kettlebell", "bodyweight"])
+    order: [title, movement_pattern, modality, pr_estimated_1rm, pr_set_summary, last_session, sessions_count]
+    groupBy: movement_pattern
+    sort:
+      - property: pr_estimated_1rm
+        direction: desc
+
+  - type: cards
+    name: This Week
+    filter:
+      and:
+        - file.hasTag("fitness-session")
+        - file.property("date") >= dateAdd(now(), "-7d")
+    order: [title, date, session_type, focus, duration_min, rpe]
+    sort:
+      - property: date
+        direction: desc

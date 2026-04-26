@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Ingest this: <URL or paste or file>",
+      "expected_output": "Orchestrator routes to the appropriate source-type ingester (ingest-website / ingest-document / inline) for cleanup, then to the right content-type ingester (ingest-recipe / ingest-meeting / etc.) for schema, runs validation, contradiction check, and updates the wiki."
+    },
+    {
+      "id": 2,
+      "prompt": "Save this article and apply the right schema automatically.",
+      "expected_output": "Same as default \u2014 orchestrator picks the route based on URL pattern, file type, and content shape."
+    },
+    {
+      "id": 3,
+      "prompt": "Capture this PDF \u2014 figure out where it goes.",
+      "expected_output": "ingest-document for cleanup, then content-type detection routes to medical / school / tax / receipt / etc. as appropriate."
+    }
+  ]
+}

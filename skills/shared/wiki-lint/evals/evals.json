@@ -1,0 +1,20 @@
+{
+  "skill_name": "wiki-lint",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Lint the wiki.",
+      "expected_output": "Runs scripts/tag-lint.py and scripts/convergence-debt.py; runs semantic checks (orphan pages, broken wikilinks, contradictions); summarizes findings."
+    },
+    {
+      "id": 2,
+      "prompt": "Check wiki health.",
+      "expected_output": "Same as default."
+    },
+    {
+      "id": 3,
+      "prompt": "Run the linter \u2014 we just bulk-ingested 50 raw sources.",
+      "expected_output": "Same default with extra emphasis on convergence debt and provenance validation given the recent ingest."
+    }
+  ]
+}

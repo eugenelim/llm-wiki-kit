@@ -1,0 +1,60 @@
+# Research Providers Configuration
+#
+# The research orchestrator (skills/shared/research/SKILL.md) reads this file to know
+# which providers are enabled and what each is good at. To enable a provider:
+#   1. Set enabled: true
+#   2. Set the API-key env var on your machine (or in your shell config)
+#   3. Optionally adjust the model / endpoint if the provider's defaults change
+#
+# See docs/research-providers/{provider}.md for per-provider details — what each
+# provider does well, when to enable it, cost notes.
+
+research_providers:
+
+  # Perplexity — current-state web research with citations.
+  # Strong for: vendor benchmarks, current events, recent product releases,
+  # cited factual lookups.
+  # Cost: low. Use freely during Capture phase.
+  # See docs/research-providers/perplexity.md
+  perplexity:
+    enabled: false
+    api_key_env: PERPLEXITY_API_KEY
+    endpoint: https://api.perplexity.ai/chat/completions
+    model: sonar-pro            # sonar-pro | sonar | sonar-deep-research
+    strengths:
+      - current_web_state
+      - cited_factual_lookup
+      - news_and_recent_events
+      - vendor_benchmarks
+    cost_signal: low
+
+  # Semantic Scholar — academic literature, citation graphs, paper search.
+  # Strong for: peer-reviewed evidence, literature reviews, citation backtracking.
+  # Cost: free. Use freely during Capture phase. Pairs well with Perplexity.
+  # See docs/research-providers/semantic-scholar.md
+  semantic_scholar:
+    enabled: false
+    api_key_env: SEMANTIC_SCHOLAR_API_KEY    # optional but increases rate limits
+    endpoint: https://api.semanticscholar.org/graph/v1
+    strengths:
+      - academic_papers
+      - citation_graphs
+      - peer_reviewed_evidence
+      - literature_review
+    cost_signal: free
+
+  # Gemini Deep Research — long-form exhaustive synthesis spanning many sources.
+  # Strong for: comprehensive landscape analyses, strategic deep dives.
+  # Cost: high. Reserve for the most important pillar gaps — load-bearing
+  # verdict claims, strategic context-setting, cross-cutting synthesis.
+  # See docs/research-providers/gemini.md
+  gemini:
+    enabled: false
+    api_key_env: GOOGLE_API_KEY
+    endpoint: https://generativelanguage.googleapis.com/v1beta/models
+    model: gemini-2.5-pro
+    strengths:
+      - long_form_synthesis
+      - exhaustive_landscape
+      - strategic_analysis
+    cost_signal: high

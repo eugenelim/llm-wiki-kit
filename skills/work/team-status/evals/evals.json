@@ -1,0 +1,20 @@
+{
+  "skill_name": "team-status",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Produce the team status.",
+      "expected_output": "A team-wide team-status page at wiki/team-status/{date}.md with the four canonical sections (Progress with RAG table, Risks, Issues, Asks) and a Synopsis. Audience defaults to internal; period defaults to since-last-status. Delta vs. previous status surfaced if one exists."
+    },
+    {
+      "id": 2,
+      "prompt": "Run the team-status report for order-platform — leadership audience, weekly cadence.",
+      "expected_output": "Per-project team-status at wiki/projects/order-platform/status/{date}-team-status.md, scoped to that project, with leadership-tailored brevity (RAG-led, asks-prominent, 1-2 pages). Reads sprint plan, tasks, decisions, risk/issue callouts, and request-tracker output for that project."
+    },
+    {
+      "id": 3,
+      "prompt": "Pre-steering-committee status — focus on RAG and asks across the org.",
+      "expected_output": "Team-wide status with audience=steering-committee: terse Progress (RAG dashboard), top 3 risks, top issues only if material, asks section emphasized with decisions needed by date. ~1 page of dense content suitable for direct conversion via status-slides."
+    }
+  ]
+}

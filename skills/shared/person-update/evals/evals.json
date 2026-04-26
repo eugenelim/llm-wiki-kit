@@ -1,0 +1,20 @@
+{
+  "skill_name": "person-update",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Log a coffee with @sarah-chen — talked about her new platform-engineer role; she's interested in our schema-registry work.",
+      "expected_output": "Updates wiki/people/sarah-chen.md (or wiki/network/relationships/sarah-chen.md): appends '- 2026-04-26: coffee — new platform-engineer role; interested in schema-registry' to the interactions section, bumps last_contact to today, updates modified. Changelog entry appended."
+    },
+    {
+      "id": 2,
+      "prompt": "After our 1:1, update @mark's page — he asked me to send the Kafka migration post by Friday.",
+      "expected_output": "Appends an interaction entry, bumps last_contact, and adds a `> [!important] Owed back to @mark by 2026-04-30: send Kafka migration post.` callout to the Open Asks section. The next request-tracker run will surface this."
+    },
+    {
+      "id": 3,
+      "prompt": "Log Dr. Patel's visit today for Ava — flu shot administered, follow-up in 6 weeks.",
+      "expected_output": "Updates wiki/people/dr-patel.md (family variant): appends a Recent Visits entry with date and visit summary, bumps last_contact, and adds a `> [!important] Follow-up due by 2026-06-07` callout that follow-up-tracker will surface. (Note: clinical detail about the flu shot lands in wiki/health/ava-medical.md via ingest-medical-record — person-update tracks the relationship touch, not the clinical record.)"
+    }
+  ]
+}

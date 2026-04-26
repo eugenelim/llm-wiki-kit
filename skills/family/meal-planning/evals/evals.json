@@ -1,0 +1,20 @@
+{
+  "skill_name": "meal-planning",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Plan meals for this week.",
+      "expected_output": "A weekly meal-plan page with day-by-day dinner assignments respecting dietary notes and the family calendar, plus a consolidated shopping list."
+    },
+    {
+      "id": 2,
+      "prompt": "Run meal planning \u2014 easy week, kids' sports schedule is heavy.",
+      "expected_output": "Same as default but biased toward weeknight-friendly recipes; shopping list still generated."
+    },
+    {
+      "id": 3,
+      "prompt": "It's Sunday \u2014 let's do the meal plan.",
+      "expected_output": "Default meal-planning operation: read recipe library + dietary notes + last week's plan + calendar, propose meals + shopping list."
+    }
+  ]
+}

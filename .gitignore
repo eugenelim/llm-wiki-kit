@@ -1,0 +1,26 @@
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Obsidian — per-user state (do not commit)
+.obsidian/workspace*.json
+.obsidian/cache
+
+# Derived artifacts
+.wiki-search-index/

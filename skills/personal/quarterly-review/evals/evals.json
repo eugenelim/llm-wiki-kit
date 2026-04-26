@@ -1,0 +1,20 @@
+{
+  "skill_name": "quarterly-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run my quarterly review.",
+      "expected_output": "A quarterly-review page synthesizing 12-13 weekly reviews + goals + decisions + projects shipped, with theme detection and next-quarter intent."
+    },
+    {
+      "id": 2,
+      "prompt": "It's the end of Q2 \u2014 do the review.",
+      "expected_output": "Same as the default for the most-recent quarter."
+    },
+    {
+      "id": 3,
+      "prompt": "Quarterly synthesis for 2026-Q1, focused on the platform-team transition.",
+      "expected_output": "Quarterly review for the named period with the focus theme as the lens for synthesis."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "skill_name": "research-verdict-check",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Should I keep capturing on the kafka-vs-kinesis research?",
+      "expected_output": "A recommendation: 'converging' / 'plateauing' / 'still incomplete', with evidence (pillar fill rates, recent-source novelty, claim coverage); no auto-progression."
+    },
+    {
+      "id": 2,
+      "prompt": "Check the research progress.",
+      "expected_output": "Same as default for the most-recently-modified project."
+    },
+    {
+      "id": 3,
+      "prompt": "Run the verdict check \u2014 I'm not sure if I have enough sources.",
+      "expected_output": "Same recommendation framing; explicit guidance on what's missing if the verdict isn't yet clear."
+    }
+  ]
+}

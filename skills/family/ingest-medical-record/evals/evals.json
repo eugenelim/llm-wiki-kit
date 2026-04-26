@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest-medical-record",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Save this visit summary from yesterday's pediatrician appointment: <pasted text>",
+      "expected_output": "An updated wiki/health/{person}-medical.md page with the visit appended, medications/providers updated as side-effects, and any new follow-up callouts."
+    },
+    {
+      "id": 2,
+      "prompt": "Ingest this EOB PDF from Cigna.",
+      "expected_output": "ingest-document is invoked on the PDF; clean markdown lands in raw/, then medical schema is applied and the result is appended to the right person's medical summary."
+    },
+    {
+      "id": 3,
+      "prompt": "Track this lab result for Mom.",
+      "expected_output": "Lab values are extracted and appended to wiki/health/mom-medical.md with date, ordering provider, and abnormal-flag callouts."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "skill_name": "follow-up-tracker",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "What follow-ups are due in the next 60 days?",
+      "expected_output": "A grouped list of follow-ups due (medical rechecks, vehicle service, home maintenance) within the window, with dates and the source page for each."
+    },
+    {
+      "id": 2,
+      "prompt": "Anything coming up for Jake medically?",
+      "expected_output": "A filtered list of Jake's medical follow-ups within the default 60-day window, with the visit/recheck context and dates."
+    },
+    {
+      "id": 3,
+      "prompt": "Run the weekly follow-up check.",
+      "expected_output": "Same as the default invocation: scan health/vehicle/home pages, surface items due in the next 60 days, append a digest entry to the changelog."
+    }
+  ]
+}

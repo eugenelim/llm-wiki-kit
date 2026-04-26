@@ -1,0 +1,47 @@
+# Restaurants — multi-view inventory rendered by Obsidian Bases.
+# Filters: only active or wishlist restaurants (excludes 'closed').
+# New restaurant entries auto-appear via the type: restaurant filter.
+
+filter:
+  - property: type
+    operator: is
+    value: restaurant
+  - property: status
+    operator: not
+    value: closed
+
+views:
+  - name: By Cuisine
+    type: card
+    group_by: cuisine
+    order:
+      - property: title
+      - property: family_rating
+        descending: true
+
+  - name: All Restaurants
+    type: table
+    order:
+      - property: title
+      - property: cuisine
+      - property: price_tier
+      - property: location
+      - property: family_rating
+      - property: last_visited
+        descending: true
+
+  - name: Recent Visits
+    type: table
+    order:
+      - property: last_visited
+        descending: true
+      - property: title
+
+  - name: Wishlist
+    type: card
+    filter:
+      - property: status
+        operator: is
+        value: wishlist
+    order:
+      - property: title

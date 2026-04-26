@@ -1,0 +1,57 @@
+# Bookmark Homepage — multi-view dashboard rendered by Obsidian Bases.
+# Filters: only active bookmarks (type: bookmark, status: active).
+# Add new bookmarks by creating type: bookmark pages in wiki/bookmarks/;
+# they appear here automatically.
+
+filter:
+  - property: type
+    operator: is
+    value: bookmark
+  - property: status
+    operator: is
+    value: active
+
+views:
+  - name: By Category
+    type: card
+    group_by: category
+    order:
+      - property: title
+      - property: last_visited
+        descending: true
+
+  - name: All Bookmarks
+    type: table
+    order:
+      - property: title
+      - property: category
+      - property: url
+      - property: last_visited
+      - property: tags
+
+  - name: School Portals
+    type: card
+    filter:
+      - property: category
+        operator: is
+        value: school-portal
+    order:
+      - property: title
+
+  - name: Vendor Logins
+    type: card
+    filter:
+      - property: category
+        operator: is
+        value: vendor-portal
+    order:
+      - property: title
+
+  - name: Recipe Sources
+    type: card
+    filter:
+      - property: category
+        operator: is
+        value: recipe-source
+    order:
+      - property: title

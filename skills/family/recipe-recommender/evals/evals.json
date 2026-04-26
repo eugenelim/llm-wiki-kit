@@ -1,0 +1,20 @@
+{
+  "skill_name": "recipe-recommender",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "What should we cook tonight? About 30 min, kid-friendly, salmon in the fridge.",
+      "expected_output": "An inline ranked list of 3-5 recipes from the family library that fit the constraints, with reasons. No wiki page written."
+    },
+    {
+      "id": 2,
+      "prompt": "What can we make with chicken thighs and broccoli?",
+      "expected_output": "Inline ranked recipes from the library that use those ingredients (or substitute close), with prep/cook times."
+    },
+    {
+      "id": 3,
+      "prompt": "Pick a recipe for tonight \u2014 guest dinner, vegetarian, ~1 hour.",
+      "expected_output": "Inline ranked recipes that meet the dietary + time constraints; no wiki page write."
+    }
+  ]
+}

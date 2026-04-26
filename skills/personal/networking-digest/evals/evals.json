@@ -1,0 +1,20 @@
+{
+  "skill_name": "networking-digest",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run my networking digest.",
+      "expected_output": "A digest covering the last 90 days: follow-ups owed, stale connections worth re-engaging, recent conversations worth weaving into projects/decisions."
+    },
+    {
+      "id": 2,
+      "prompt": "Pre-conference networking check \u2014 Strange Loop next week.",
+      "expected_output": "Filtered digest emphasizing past contacts likely attending or in-domain, plus suggested re-engagement messages."
+    },
+    {
+      "id": 3,
+      "prompt": "Who haven't I talked to in a while that I should?",
+      "expected_output": "Stale-connection list with last_contact dates, ranked by relationship strength and recency."
+    }
+  ]
+}

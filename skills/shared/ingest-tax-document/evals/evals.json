@@ -1,0 +1,20 @@
+{
+  "skill_name": "ingest-tax-document",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Save this 1099-DIV from Schwab.",
+      "expected_output": "ingest-document cleans the PDF; tax-document schema applied; result saved to wiki/finances/tax/{year}/schwab-1099-div.md with payer, amounts, and form-type tagged."
+    },
+    {
+      "id": 2,
+      "prompt": "Ingest this W-2 PDF.",
+      "expected_output": "Same flow \u2014 wiki/finances/tax/{year}/{employer}-w2.md created with wages, withholdings, and tax-year tagged."
+    },
+    {
+      "id": 3,
+      "prompt": "Track this K-1 \u2014 partnership distribution.",
+      "expected_output": "K-1 captured into wiki/finances/tax/{year}/{entity}-k1.md with partnership/income items broken out."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "skill_name": "log-accomplishment",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just got promoted to staff engineer — log this.",
+      "expected_output": "A new wiki/accomplishments/2026-04-26-promoted-to-staff-engineer.md file. dimension: career inferred from 'promoted'. impact: significant defaulted (promotions are significant by default). The page seeds ## What from the user's description and leaves ## Why It Matters / ## Context / ## Evidence for enrichment. Changelog entry appended; user nudged about career-narrative-refresh given impact level."
+    },
+    {
+      "id": 2,
+      "prompt": "Log: completed AWS Solutions Architect Pro cert today, impact significant, evidence is the certificate URL https://aws.amazon.com/verification/...",
+      "expected_output": "wiki/accomplishments/2026-04-26-aws-solutions-architect-pro.md with dimension: learning, impact: significant, evidence: the URL. Tag includes both 'accomplishment' and 'learning'. ## What seeded; ## Evidence pre-filled with the URL."
+    },
+    {
+      "id": 3,
+      "prompt": "Note this accomplishment: ran my first half-marathon over the weekend.",
+      "expected_output": "wiki/accomplishments/{weekend-date}-first-half-marathon.md with dimension: health inferred. Asks user to confirm date if today doesn't match (the weekend may be 1-2 days back). impact defaults to meaningful but offers 'significant' since 'first' suggests a threshold crossing — surfaces the choice rather than silently defaulting."
+    }
+  ]
+}

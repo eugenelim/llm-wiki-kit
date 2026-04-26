@@ -1,0 +1,20 @@
+{
+  "skill_name": "bookmark-homepage",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Render my bookmark homepage.",
+      "expected_output": "An updated wiki/bookmarks/homepage.base file with the multi-view layout (cards-by-category default, all-bookmarks table, featured-category views) reflecting the current bookmark collection."
+    },
+    {
+      "id": 2,
+      "prompt": "Generate the bookmark dashboard with a static markdown export.",
+      "expected_output": "Both .base file (updated/created) AND a static wiki/bookmarks/homepage.md with category-grouped multi-column tables."
+    },
+    {
+      "id": 3,
+      "prompt": "Update the bookmark home page \u2014 only show work bookmarks.",
+      "expected_output": "Filtered homepage layout limited to category=work (or tags=work) bookmarks."
+    }
+  ]
+}

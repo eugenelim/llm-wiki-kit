@@ -1,0 +1,20 @@
+{
+  "skill_name": "weekly-digest",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "What changed this week?",
+      "expected_output": "A weekly-digest page synthesizing sprint plans active this week, meeting decisions, ADRs accepted, specs that shipped \u2014 across all active projects."
+    },
+    {
+      "id": 2,
+      "prompt": "Produce the weekly digest.",
+      "expected_output": "Same as default."
+    },
+    {
+      "id": 3,
+      "prompt": "Friday afternoon digest \u2014 pre-leadership-meeting.",
+      "expected_output": "Same as default; emphasizes decisions / status changes most relevant to leadership."
+    }
+  ]
+}

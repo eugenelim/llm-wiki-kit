@@ -1,0 +1,20 @@
+{
+  "skill_name": "wiki-search",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Search the wiki for 'event sourcing'.",
+      "expected_output": "scripts/wiki-search.py runs a BM25 search and returns ranked page references with snippets; large vault assumed."
+    },
+    {
+      "id": 2,
+      "prompt": "Find pages mentioning 'circuit breaker' across all projects.",
+      "expected_output": "Same \u2014 BM25 ranked results."
+    },
+    {
+      "id": 3,
+      "prompt": "Index the vault \u2014 we just added 100 pages.",
+      "expected_output": "Re-indexes via scripts/wiki-search.py index wiki/."
+    }
+  ]
+}

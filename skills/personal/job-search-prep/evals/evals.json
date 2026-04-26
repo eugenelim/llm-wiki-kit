@@ -1,0 +1,20 @@
+{
+  "skill_name": "job-search-prep",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Prep an application for Stripe staff-engineer role.",
+      "expected_output": "A scaffolded application page + tailored resume + cover letter / pitch + selected portfolio pieces, ready within an hour."
+    },
+    {
+      "id": 2,
+      "prompt": "Need application materials for the Acme referral by Friday.",
+      "expected_output": "Same as default with the deadline acknowledged in the scaffolded application page."
+    },
+    {
+      "id": 3,
+      "prompt": "Help me apply to this <URL> role.",
+      "expected_output": "Routes through ingest-application first if not yet captured, then produces tailored materials per the standard prep flow."
+    }
+  ]
+}
