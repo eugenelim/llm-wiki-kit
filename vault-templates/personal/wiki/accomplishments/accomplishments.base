@@ -1,66 +1,77 @@
+# Accomplishment ledger — append-the-moment wins across 10 dimensions.
+# Quarterly + annual reviews compose per-dimension reflections from these.
+
 filters:
   and:
     - file.hasTag("accomplishment")
     - file.hasProperty("dimension")
 
-properties:
-  - id: title
-  - id: dimension
-  - id: date
-  - id: impact
-  - id: status
-  - id: evidence
-  - id: related_project
-  - id: related_person
-
 views:
   - type: cards
     name: By Dimension
-    order: [title, date, impact, evidence]
-    groupBy: dimension
-    sort:
-      - property: date
-        direction: desc
+    groupBy:
+      property: dimension
+      direction: ASC
+    order:
+      - title
+      - date
+      - impact
+      - evidence
 
   - type: table
     name: All Accomplishments
-    order: [title, dimension, date, impact, status, related_project]
-    sort:
-      - property: date
-        direction: desc
+    order:
+      - title
+      - dimension
+      - date
+      - impact
+      - status
+      - related_project
 
   - type: cards
     name: This Year — Significant+
-    filter:
+    filters:
       and:
-        - file.property("date") >= "2026-01-01"
-        - file.property("impact").in(["significant", "major"])
-    order: [title, dimension, date, evidence]
-    groupBy: dimension
-    sort:
-      - property: date
-        direction: desc
+        - 'date(note.date) >= date("2026-01-01")'
+        - '["significant", "major"].contains(impact)'
+    groupBy:
+      property: dimension
+      direction: ASC
+    order:
+      - title
+      - dimension
+      - date
+      - evidence
 
   - type: cards
     name: Career
-    filter: file.property("dimension") == "career"
-    order: [title, date, impact, evidence]
-    sort:
-      - property: date
-        direction: desc
+    filters:
+      and:
+        - 'note.dimension == "career"'
+    order:
+      - title
+      - date
+      - impact
+      - evidence
 
   - type: cards
     name: Craft
-    filter: file.property("dimension") == "craft"
-    order: [title, date, impact, evidence]
-    sort:
-      - property: date
-        direction: desc
+    filters:
+      and:
+        - 'note.dimension == "craft"'
+    order:
+      - title
+      - date
+      - impact
+      - evidence
 
   - type: cards
     name: Learning
-    filter: file.property("dimension") == "learning"
-    order: [title, date, impact, evidence]
-    sort:
-      - property: date
-        direction: desc
+    filters:
+      and:
+        - 'note.dimension == "learning"'
+    order:
+      - title
+      - date
+      - impact
+      - evidence

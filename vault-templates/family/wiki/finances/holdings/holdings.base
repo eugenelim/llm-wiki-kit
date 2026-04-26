@@ -1,55 +1,59 @@
 # Holdings — investment portfolio inventory rendered by Obsidian Bases.
 # Filters: active and partial-sold (excludes fully-sold).
 
-filter:
-  - property: type
-    operator: is
-    value: holding
-  - property: status
-    operator: not
-    value: sold
+filters:
+  and:
+    - 'note.type == "holding"'
+    - 'note.status != "sold"'
 
 views:
-  - name: By Broker
-    type: card
-    group_by: broker
+  - type: cards
+    name: By Broker
+    groupBy:
+      property: broker
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: By Asset Class
-    type: card
-    group_by: asset_class
+  - type: cards
+    name: By Asset Class
+    groupBy:
+      property: asset_class
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: By Account Type
-    type: card
-    group_by: account_type
+  - type: cards
+    name: By Account Type
+    groupBy:
+      property: account_type
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: By Account Holder
-    type: card
-    group_by: account_holder
+  - type: cards
+    name: By Account Holder
+    groupBy:
+      property: account_holder
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: All Holdings
-    type: table
+  - type: table
+    name: All Holdings
     order:
-      - property: title
-      - property: ticker
-      - property: asset_class
-      - property: broker
-      - property: account_type
-      - property: account_holder
-      - property: shares
-      - property: cost_basis
-      - property: acquired
+      - title
+      - ticker
+      - asset_class
+      - broker
+      - account_type
+      - account_holder
+      - shares
+      - cost_basis
+      - acquired
 
-  - name: Due for Review
-    type: table
+  - type: table
+    name: Due for Review
     order:
-      - property: last_review
-        descending: false
-      - property: title
+      - last_review
+      - title

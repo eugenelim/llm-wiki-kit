@@ -1,51 +1,50 @@
 # Agentic Stack — multi-view inventory of cloud tooling rendered by Obsidian Bases.
 # Filters: only in-use or evaluating tools (excludes rejected, deprecated).
 
-filter:
-  - property: type
-    operator: is
-    value: cloud-tool
-  - property: status
-    operator: not
-    value: rejected
+filters:
+  and:
+    - 'note.type == "cloud-tool"'
+    - 'note.status != "rejected"'
 
 views:
-  - name: By Cloud Provider
-    type: card
-    group_by: cloud_provider
+  - type: cards
+    name: By Cloud Provider
+    groupBy:
+      property: cloud_provider
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: By Role in Stack
-    type: card
-    group_by: role
+  - type: cards
+    name: By Role in Stack
+    groupBy:
+      property: role
+      direction: ASC
     order:
-      - property: title
+      - title
 
-  - name: All Tools
-    type: table
+  - type: table
+    name: All Tools
     order:
-      - property: title
-      - property: cloud_provider
-      - property: role
-      - property: install_status
-      - property: pricing
-      - property: maintainer
+      - title
+      - cloud_provider
+      - role
+      - install_status
+      - pricing
+      - maintainer
 
-  - name: In Production
-    type: card
-    filter:
-      - property: install_status
-        operator: is
-        value: production
+  - type: cards
+    name: In Production
+    filters:
+      and:
+        - 'note.install_status == "production"'
     order:
-      - property: title
+      - title
 
-  - name: Currently Evaluating
-    type: card
-    filter:
-      - property: status
-        operator: is
-        value: evaluating
+  - type: cards
+    name: Currently Evaluating
+    filters:
+      and:
+        - 'note.status == "evaluating"'
     order:
-      - property: title
+      - title

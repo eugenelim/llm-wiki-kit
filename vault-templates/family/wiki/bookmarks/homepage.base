@@ -3,55 +3,50 @@
 # Add new bookmarks by creating type: bookmark pages in wiki/bookmarks/;
 # they appear here automatically.
 
-filter:
-  - property: type
-    operator: is
-    value: bookmark
-  - property: status
-    operator: is
-    value: active
+filters:
+  and:
+    - 'note.type == "bookmark"'
+    - 'note.status == "active"'
 
 views:
-  - name: By Category
-    type: card
-    group_by: category
+  - type: cards
+    name: By Category
+    groupBy:
+      property: category
+      direction: ASC
     order:
-      - property: title
-      - property: last_visited
-        descending: true
+      - title
+      - last_visited
 
-  - name: All Bookmarks
-    type: table
+  - type: table
+    name: All Bookmarks
     order:
-      - property: title
-      - property: category
-      - property: url
-      - property: last_visited
-      - property: tags
+      - title
+      - category
+      - url
+      - last_visited
+      - tags
 
-  - name: School Portals
-    type: card
-    filter:
-      - property: category
-        operator: is
-        value: school-portal
+  - type: cards
+    name: School Portals
+    filters:
+      and:
+        - 'note.category == "school-portal"'
     order:
-      - property: title
+      - title
 
-  - name: Vendor Logins
-    type: card
-    filter:
-      - property: category
-        operator: is
-        value: vendor-portal
+  - type: cards
+    name: Vendor Logins
+    filters:
+      and:
+        - 'note.category == "vendor-portal"'
     order:
-      - property: title
+      - title
 
-  - name: Recipe Sources
-    type: card
-    filter:
-      - property: category
-        operator: is
-        value: recipe-source
+  - type: cards
+    name: Recipe Sources
+    filters:
+      and:
+        - 'note.category == "recipe-source"'
     order:
-      - property: title
+      - title

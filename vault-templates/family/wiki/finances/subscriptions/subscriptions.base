@@ -1,51 +1,49 @@
 # Subscriptions — multi-view inventory rendered by Obsidian Bases.
 # Filters: only active subscriptions (excludes cancelled).
 
-filter:
-  - property: type
-    operator: is
-    value: subscription
-  - property: status
-    operator: not
-    value: cancelled
+filters:
+  and:
+    - 'note.type == "subscription"'
+    - 'note.status != "cancelled"'
 
 views:
-  - name: By Category
-    type: card
-    group_by: category
+  - type: cards
+    name: By Category
+    groupBy:
+      property: category
+      direction: ASC
     order:
-      - property: title
-      - property: amount
-        descending: true
+      - title
+      - amount
 
-  - name: All Subscriptions
-    type: table
+  - type: table
+    name: All Subscriptions
     order:
-      - property: title
-      - property: category
-      - property: provider
-      - property: amount
-      - property: billing_cycle
-      - property: next_billing
-      - property: account_holder
+      - title
+      - category
+      - provider
+      - amount
+      - billing_cycle
+      - next_billing
+      - account_holder
 
-  - name: Coming Up for Renewal
-    type: table
+  - type: table
+    name: Coming Up for Renewal
     order:
-      - property: next_billing
-        descending: false
-      - property: title
+      - next_billing
+      - title
 
-  - name: Due for Re-evaluation
-    type: table
+  - type: table
+    name: Due for Re-evaluation
     order:
-      - property: review_by
-        descending: false
-      - property: title
+      - review_by
+      - title
 
-  - name: Annual (vs Monthly)
-    type: card
-    group_by: billing_cycle
+  - type: cards
+    name: Annual vs Monthly
+    groupBy:
+      property: billing_cycle
+      direction: ASC
     order:
-      - property: amount
-        descending: true
+      - title
+      - amount

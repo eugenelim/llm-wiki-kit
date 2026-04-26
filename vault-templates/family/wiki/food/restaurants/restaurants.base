@@ -2,46 +2,41 @@
 # Filters: only active or wishlist restaurants (excludes 'closed').
 # New restaurant entries auto-appear via the type: restaurant filter.
 
-filter:
-  - property: type
-    operator: is
-    value: restaurant
-  - property: status
-    operator: not
-    value: closed
+filters:
+  and:
+    - 'note.type == "restaurant"'
+    - 'note.status != "closed"'
 
 views:
-  - name: By Cuisine
-    type: card
-    group_by: cuisine
+  - type: cards
+    name: By Cuisine
+    groupBy:
+      property: cuisine
+      direction: ASC
     order:
-      - property: title
-      - property: family_rating
-        descending: true
+      - title
+      - family_rating
 
-  - name: All Restaurants
-    type: table
+  - type: table
+    name: All Restaurants
     order:
-      - property: title
-      - property: cuisine
-      - property: price_tier
-      - property: location
-      - property: family_rating
-      - property: last_visited
-        descending: true
+      - title
+      - cuisine
+      - price_tier
+      - location
+      - family_rating
+      - last_visited
 
-  - name: Recent Visits
-    type: table
+  - type: table
+    name: Recent Visits
     order:
-      - property: last_visited
-        descending: true
-      - property: title
+      - last_visited
+      - title
 
-  - name: Wishlist
-    type: card
-    filter:
-      - property: status
-        operator: is
-        value: wishlist
+  - type: cards
+    name: Wishlist
+    filters:
+      and:
+        - 'note.status == "wishlist"'
     order:
-      - property: title
+      - title
