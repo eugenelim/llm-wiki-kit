@@ -83,8 +83,9 @@ def find_debt(raw_files, references):
         fname = os.path.basename(raw_file)
         referenced = False
 
+        raw_stem = os.path.splitext(fname)[0]
         for ref in references:
-            if raw_file in ref or ref in raw_file or fname in ref:
+            if raw_file in ref or raw_stem in ref:
                 referenced = True
                 break
 
