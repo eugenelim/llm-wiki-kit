@@ -44,10 +44,17 @@ The **vault is the source of truth**, not the agent. Claude proposes; you decide
 |---|---|
 | [Obsidian](https://obsidian.md) (free) | Browse the vault, search, graph view, backlinks |
 | [Claude Code](https://claude.com/code) or Claude Cowork with file-system access | The agent that maintains the vault |
-| Python 3.10+ *(optional)* | Lint scripts, BM25 search, document ingest |
-| Node + npm *(optional)* | Web clipping with `defuddle` |
+**When you need Python 3.10+:**
 
-You can skip the optional dependencies and add them only when you need them.
+| `pip install …` | When you need it |
+|---|---|
+| `docling` | PDF, DOCX, PPTX, XLSX ingest |
+| `pyyaml` | Wiki lint scripts |
+| `bm25s[core] PyStemmer` | BM25 search (500+ page vaults) |
+
+| Node / npm | When you need it |
+|---|---|
+| `defuddle-cli` | Web URL clipping |
 
 ---
 
@@ -65,7 +72,8 @@ You have two ways to set up the vault. Both end with the same result.
 
 2. **Install [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills)** (Obsidian's official agent skills — wikilinks, Bases, Canvas):
    ```bash
-   git clone https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
+   # Pin to a specific commit for stability: ... && git -C /tmp/obsidian-skills checkout <commit>
+   git clone --depth 1 https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
    mkdir -p .claude
    cp -r /tmp/obsidian-skills/.claude/* .claude/
    rm -rf /tmp/obsidian-skills
@@ -73,8 +81,9 @@ You have two ways to set up the vault. Both end with the same result.
 
 3. **Copy this kit's skills** from your `llm-wiki-kit` checkout into `.claude/skills/`:
    ```bash
-   cp -r /path/to/llm-wiki-kit/skills/shared/* .claude/skills/
-   cp -r /path/to/llm-wiki-kit/skills/personal/* .claude/skills/
+   # If $WIKI_KIT is not set, run: export WIKI_KIT=/path/to/llm-wiki-kit
+   cp -r "$WIKI_KIT/skills/shared/"*   .claude/skills/
+   cp -r "$WIKI_KIT/skills/personal/"* .claude/skills/
    ```
 
 4. **Edit `purpose.md`** — replace placeholders with your actual scope. 3-7 sentences, in-scope and out-of-scope. Claude reads this before every ingest, so anything outside scope gets skipped rather than polluting the wiki.
@@ -134,6 +143,51 @@ Open the new review in Obsidian. That's the rhythm — Sunday plan, Friday diges
 
 > [!tip] If your vault is empty
 > Run `Capture three accomplishments from this past week.` and `Add one book I'm currently reading.` first. The weekly review needs *some* substrate. The accomplishment ledger and the book log are the two highest-leverage things to start.
+
+**What you get** — a weekly review looks like this:
+
+```markdown
+---
+type: weekly-review
+week_ending: 2026-04-27
+provenance: synthesized
+created: 2026-04-27
+modified: 2026-04-27
+tags: [weekly-review, review]
+---
+
+## Synopsis
+
+Week of April 21–27. Shipped the auth refactor, read 40% of Thinking Fast and
+Slow, missed the gym twice. Main theme: execution on backlog, not new starts.
+
+## What Shipped
+
+- ✅ Auth token refresh endpoint merged and deployed
+- ✅ Finished [[books/thinking-fast-and-slow]] chapters 1-8 (notes in book page)
+- ✅ Replied to Sarah at Acme (stale connection surfaced from rolodex)
+
+## What Got Dropped
+
+- ❌ Rate limiting design doc — blocked on infra decision, carry to next week
+- ❌ 3 of 4 planned gym sessions — travel on Wednesday
+
+## Themes
+
+- **Execution gap:** planned 5 items, shipped 3. Two blockers were external.
+- **Reading momentum:** on track for finish by May 10.
+
+## Next Week
+
+1. Write rate limiting design doc once infra decision lands (Mon)
+2. Research [[decisions/2026-deployment-strategy]] — verdict overdue
+3. Coffee chat with Marcus (added to calendar)
+
+## Open Loops
+
+- [[decisions/2026-deployment-strategy]] — flagged stale, revisit due
+- [[network/sarah-chen]] — replied this week; follow up in 3 weeks
+```
 
 ---
 

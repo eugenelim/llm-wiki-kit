@@ -44,10 +44,16 @@ The **vault is the source of truth**, not the agent. Claude proposes; a parent r
 |---|---|
 | [Obsidian](https://obsidian.md) (free) | Browse the vault, search, graph view |
 | [Claude Code](https://claude.com/code) or Claude Cowork with file-system access | The agent that maintains the vault |
-| Python 3.10+ *(optional)* | Lint scripts, document ingest |
-| Node + npm *(optional)* | Web clipping with `defuddle` |
+**When you need Python 3.10+:**
 
-You can skip the optional dependencies and add them only when you need them.
+| `pip install …` | When you need it |
+|---|---|
+| `docling` | PDF, DOCX, PPTX, XLSX ingest |
+| `pyyaml` | Wiki lint scripts |
+
+| Node / npm | When you need it |
+|---|---|
+| `defuddle-cli` | Web URL clipping |
 
 ---
 
@@ -65,7 +71,8 @@ You have two ways to set up the vault. Both end with the same result.
 
 2. **Install [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills)** (Obsidian's official agent skills — wikilinks, Bases, Canvas):
    ```bash
-   git clone https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
+   # Pin to a specific commit for stability: ... && git -C /tmp/obsidian-skills checkout <commit>
+   git clone --depth 1 https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
    mkdir -p .claude
    cp -r /tmp/obsidian-skills/.claude/* .claude/
    rm -rf /tmp/obsidian-skills
@@ -73,8 +80,9 @@ You have two ways to set up the vault. Both end with the same result.
 
 3. **Copy this kit's skills** from your `llm-wiki-kit` checkout into `.claude/skills/`:
    ```bash
-   cp -r /path/to/llm-wiki-kit/skills/shared/* .claude/skills/
-   cp -r /path/to/llm-wiki-kit/skills/family/* .claude/skills/
+   # If $WIKI_KIT is not set, run: export WIKI_KIT=/path/to/llm-wiki-kit
+   cp -r "$WIKI_KIT/skills/shared/"* .claude/skills/
+   cp -r "$WIKI_KIT/skills/family/"* .claude/skills/
    ```
 
 4. **Edit `purpose.md`** — replace placeholders with your family's actual scope. 3-7 sentences, in-scope and out-of-scope bullets. Claude reads this before every ingest, so anything outside scope gets skipped rather than polluting the wiki.
@@ -132,6 +140,46 @@ Open the new plan in Obsidian. That's your shopping list and dinner schedule for
 
 > [!tip] If your recipe library is empty
 > Capture 5-10 family favorites first using the [Recipes](#recipes) section below. Even a small library is enough to get the meal-planning loop going.
+
+**What you get** — a meal plan looks like this:
+
+```markdown
+---
+type: meal-plan
+week_of: 2026-04-28
+provenance: synthesized
+created: 2026-04-27
+modified: 2026-04-27
+tags: [meal-plan, food]
+---
+
+## Synopsis
+
+Meal plan for the week of April 28. 5 home-cooked dinners, 1 takeout,
+1 leftover night. Shopping list grouped by section.
+
+## Plan
+
+| Day | Dinner | Notes |
+|---|---|---|
+| Mon | [[lemon-herb-chicken]] | Defrost chicken Sun night |
+| Tue | [[one-pot-pasta-primavera]] | Use zucchini before it turns |
+| Wed | [[sheet-pan-salmon]] | — |
+| Thu | Leftovers | — |
+| Fri | Takeout | Thai or pizza, family vote |
+| Sat | [[slow-cooker-chili]] | Start at noon |
+| Sun | [[grain-bowl]] | Clear the fridge |
+
+## Shopping List
+
+**Produce:** zucchini (2), bell peppers (3), lemons (4), garlic, baby spinach
+
+**Protein:** chicken thighs (2 lbs), salmon fillets (4), ground turkey (1.5 lbs)
+
+**Pantry:** pasta (1 lb), crushed tomatoes (2 cans), chicken broth (32 oz)
+
+**Dairy:** parmesan, plain Greek yogurt
+```
 
 ---
 
