@@ -90,12 +90,6 @@ def find_synonyms(tags, threshold=2):
             synonyms.append((t1, t2, "identical-after-normalize"))
             continue
 
-        # Check common abbreviation patterns
-        # e.g., "kubernetes" vs "k8s", "event-driven" vs "eda"
-        if n1.startswith(n2) or n2.startswith(n1):
-            synonyms.append((t1, t2, "prefix-match"))
-            continue
-
         # Levenshtein distance for short tags
         if len(n1) > 3 and len(n2) > 3:
             dist = levenshtein(n1, n2)

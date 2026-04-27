@@ -194,62 +194,82 @@ def yaml_list(items: list) -> str:
     return "\n".join(f"  - {x}" for x in items)
 
 
+def emit_research_source_markdown(
+    result: dict,
+    project: str,
+    *,
+    title: str,
+    tags: list,
+    provenance: str,
+    source_kind: str,
+    fetched_via: str,
+    citations: list,
+    content_block: str,
+) -> str:
+    today = date.today().isoformat()
+    tags_inline = "[" + ", ".join(tags) + "]"
+    return (
+        f"---\n"
+        f'title: "{title}"\n'
+        f"type: research-source\n"
+        f"status: current\n"
+        f"provenance: {provenance}\n"
+        f"created: {today}\n"
+        f"modified: {today}\n"
+        f"tags: {tags_inline}\n"
+        f'project: "[[research/{project}/overview]]"\n'
+        f'source_url: ""\n'
+        f"source_kind: {source_kind}\n"
+        f"fetched_via: {fetched_via}\n"
+        f"fetched_at: {today}\n"
+        f"pillar_contributions: []\n"
+        f"verification_strength: {result['verification_strength']}\n"
+        f"citations:\n{yaml_list(citations)}\n"
+        f'published_at: ""\n'
+        f'events_described: ""\n'
+        f"---\n"
+        f"\n"
+        f"## Synopsis\n"
+        f"\n"
+        f"{{One sentence: what this query contributed to the project. Fill in after review.}}\n"
+        f"\n"
+        f"{content_block}\n"
+    )
+
+
 def emit_perplexity_markdown(result: dict, project: str) -> str:
     today = date.today().isoformat()
     citations = result["citations"]
-
-    return f"""---
-title: "Perplexity: {result['query']}"
-type: research-source
-status: current
-provenance: extracted
-created: {today}
-modified: {today}
-tags: [research-source, perplexity]
-project: "[[research/{project}/overview]]"
-source_url: ""
-source_kind: web
-fetched_via: perplexity
-fetched_at: {today}
-pillar_contributions: []
-verification_strength: {result['verification_strength']}
-citations:
-{yaml_list(citations)}
-published_at: ""
-events_described: ""
----
-
-## Synopsis
-
-{{One sentence: what this query contributed to the project. Fill in after review.}}
-
-## Provenance
-
-- **Provider:** Perplexity ({result.get('model', 'sonar-pro')})
-- **Query:** {result['query']}
-- **Fetched:** {today}
-
-## Answer
-
-{result['answer']}
-
-## Citations
-
-""" + (
+    citations_text = (
         "\n".join(f"- {c}" for c in citations) if citations else "(none returned)"
-    ) + """
-
-## Adversarial Read
-
-- {What's missing or biased?}
-- {Counter-source needed: ...}
-
-## Chronology
-
-- **Source published:** {date — typically the cited articles' publication}
-- **Events described:** {}
-- **Currency:** {still valid? superseded?}
-"""
+    )
+    content_block = (
+        f"## Provenance\n\n"
+        f"- **Provider:** Perplexity ({result.get('model', 'sonar-pro')})\n"
+        f"- **Query:** {result['query']}\n"
+        f"- **Fetched:** {today}\n\n"
+        f"## Answer\n\n"
+        f"{result['answer']}\n\n"
+        f"## Citations\n\n"
+        f"{citations_text}\n\n"
+        f"## Adversarial Read\n\n"
+        f"- {{What's missing or biased?}}\n"
+        f"- {{Counter-source needed: ...}}\n\n"
+        f"## Chronology\n\n"
+        f"- **Source published:** {{date — typically the cited articles' publication}}\n"
+        f"- **Events described:** {{}}\n"
+        f"- **Currency:** {{still valid? superseded?}}"
+    )
+    return emit_research_source_markdown(
+        result, project,
+        title=f"Perplexity: {result['query']}",
+        tags=["research-source", "perplexity"],
+        provenance="extracted",
+        source_kind="web",
+        fetched_via="perplexity",
+        citations=citations,
+        content_block=content_block,
+    )
 
 
 def emit_semantic_scholar_markdown(result: dict, project: str) -> str:
@@ -278,103 +298,60 @@ def emit_semantic_scholar_markdown(result: dict, project: str) -> str:
             f"**Paper ID:** `{pid}`\n\n"
             f"**Abstract:** {abstract}\n"
         )
-
     papers_md = "\n\n".join(paper_blocks) if paper_blocks else "(no papers returned)"
-
-    return f"""---
-title: "Semantic Scholar: {result['query']}"
-type: research-source
-status: current
-provenance: extracted
-created: {today}
-modified: {today}
-tags: [research-source, semantic-scholar]
-project: "[[research/{project}/overview]]"
-source_url: ""
-source_kind: paper
-fetched_via: semantic-scholar
-fetched_at: {today}
-pillar_contributions: []
-verification_strength: {result['verification_strength']}
-citations:
-{yaml_list(citations)}
-published_at: ""
-events_described: ""
----
-
-## Synopsis
-
-{{One sentence: what this query contributed to the project. Fill in after review.}}
-
-## Provenance
-
-- **Provider:** Semantic Scholar
-- **Query:** {result['query']}
-- **Total results:** {result['total']}
-- **Fetched:** {today}
-
-## Papers
-
-{papers_md}
-
-## Adversarial Read
-
-- {{What's missing? Are key seminal papers absent?}}
-- {{Field shifts since these papers' publication?}}
-
-## Chronology
-
-- **Papers span:** {{year range}}
-- **Currency:** {{methodology shifts? still-current vs. superseded?}}
-"""
+    content_block = (
+        f"## Provenance\n\n"
+        f"- **Provider:** Semantic Scholar\n"
+        f"- **Query:** {result['query']}\n"
+        f"- **Total results:** {result['total']}\n"
+        f"- **Fetched:** {today}\n\n"
+        f"## Papers\n\n"
+        f"{papers_md}\n\n"
+        f"## Adversarial Read\n\n"
+        f"- {{What's missing? Are key seminal papers absent?}}\n"
+        f"- {{Field shifts since these papers' publication?}}\n\n"
+        f"## Chronology\n\n"
+        f"- **Papers span:** {{year range}}\n"
+        f"- **Currency:** {{methodology shifts? still-current vs. superseded?}}"
+    )
+    return emit_research_source_markdown(
+        result, project,
+        title=f"Semantic Scholar: {result['query']}",
+        tags=["research-source", "semantic-scholar"],
+        provenance="extracted",
+        source_kind="paper",
+        fetched_via="semantic-scholar",
+        citations=citations,
+        content_block=content_block,
+    )
 
 
 def emit_gemini_markdown(result: dict, project: str) -> str:
     today = date.today().isoformat()
-    return f"""---
-title: "Gemini: {result['query']}"
-type: research-source
-status: current
-provenance: synthesized
-created: {today}
-modified: {today}
-tags: [research-source, gemini, deep-research]
-project: "[[research/{project}/overview]]"
-source_url: ""
-source_kind: report
-fetched_via: gemini
-fetched_at: {today}
-pillar_contributions: []
-verification_strength: {result['verification_strength']}
-citations: []
-published_at: ""
-events_described: ""
----
-
-## Synopsis
-
-{{One sentence: what this synthesis contributed to the project. Fill in after review.}}
-
-## Provenance
-
-- **Provider:** Gemini ({result.get('model', 'gemini-2.5-pro')})
-- **Query:** {result['query']}
-- **Fetched:** {today}
-
-## Synthesis
-
-{result['answer']}
-
-## Adversarial Read
-
-- {{Where might Gemini have synthesized claims it didn't actually find?}}
-- {{What primary sources should corroborate the load-bearing claims?}}
-
-## Chronology
-
-- **Synthesis snapshot:** {today}
-- **Underlying sources span:** {{verify by spot-checking citations}}
-"""
+    content_block = (
+        f"## Provenance\n\n"
+        f"- **Provider:** Gemini ({result.get('model', 'gemini-2.5-pro')})\n"
+        f"- **Query:** {result['query']}\n"
+        f"- **Fetched:** {today}\n\n"
+        f"## Synthesis\n\n"
+        f"{result['answer']}\n\n"
+        f"## Adversarial Read\n\n"
+        f"- {{Where might Gemini have synthesized claims it didn't actually find?}}\n"
+        f"- {{What primary sources should corroborate the load-bearing claims?}}\n\n"
+        f"## Chronology\n\n"
+        f"- **Synthesis snapshot:** {today}\n"
+        f"- **Underlying sources span:** {{verify by spot-checking citations}}"
+    )
+    return emit_research_source_markdown(
+        result, project,
+        title=f"Gemini: {result['query']}",
+        tags=["research-source", "gemini", "deep-research"],
+        provenance="synthesized",
+        source_kind="report",
+        fetched_via="gemini",
+        citations=[],
+        content_block=content_block,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -395,8 +372,8 @@ def main() -> None:
     parser.add_argument("--query", required=True, help="Research query")
     parser.add_argument(
         "--project",
-        default="TBD",
-        help="Active research project slug (for cross-linking; optional)",
+        required=True,
+        help="Active research project slug (used for cross-linking in output frontmatter)",
     )
     parser.add_argument(
         "--top",
