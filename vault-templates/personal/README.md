@@ -72,7 +72,7 @@ You have two ways to set up the vault. Both end with the same result.
 
 2. **Install [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills)** (Obsidian's official agent skills — wikilinks, Bases, Canvas):
    ```bash
-   # Pin to a specific commit for stability: ... && git -C /tmp/obsidian-skills checkout <commit>
+   # Pin to a specific commit for stability: ... && git -C /tmp/obsidian-skills checkout fa1e131a014576ff8f8919f191a7ca8d8fded39b
    git clone --depth 1 https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
    mkdir -p .claude
    cp -r /tmp/obsidian-skills/.claude/* .claude/
