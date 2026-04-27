@@ -135,26 +135,12 @@ group strategy, and dead-letter queue handling.
 ## (rest of content...)
 ```
 
-**Why this matters:** Claude's context window is finite and expensive.
-When navigating the wiki to answer a question or find context, Claude
-should read pages in three stages:
+**Progressive loading rule:** Query in three stages:
+1. **Index scan** — Read `index.md` to identify candidate pages.
+2. **Synopsis scan** — Read frontmatter + `## Synopsis` of candidates. Discard irrelevant.
+3. **Full read** — Read complete content of confirmed-relevant pages only.
 
-1. **Depth 0 — Index scan.** Read `index.md` files to identify
-   candidate pages. Index entries provide ~5-10 words per page.
-2. **Depth 1 — Synopsis scan.** Read frontmatter + Synopsis section
-   of candidate pages (~50-100 tokens each). Decide which pages
-   are actually relevant.
-3. **Depth 2 — Full read.** Read the complete content of only the
-   pages that are confirmed relevant.
-
-**This is a 100-300x reduction in tokens** compared to reading every
-page in full. For a vault with 200+ wiki pages, this is the difference
-between a workable query and an overloaded context window.
-
-**CLAUDE.md rule:** When querying the wiki, ALWAYS use progressive
-loading. Never read full page content until you have confirmed
-relevance via the synopsis. The only exception is when the user
-points you to a specific page by name.
+Never read full page content until relevance is confirmed via synopsis. Exception: user names a specific page.
 
 ### Provenance Tracking
 
@@ -193,11 +179,6 @@ Every wiki page must declare how its content was produced:
    - Pages with `provenance: synthesized` or `mixed` have source footnotes
    - Source footnotes point to files that actually exist in `raw/`
 
-**Why this matters:** When Claude reads a wiki page in a future session,
-it needs to know whether it's reading a source-faithful extraction or an
-LLM-generated synthesis. An extracted fact can be trusted at face value.
-A synthesized claim should be verified if it's driving a design decision.
-
 ## Vault Structure (Shared Across Variants)
 
 ```
@@ -234,9 +215,7 @@ vault-root/
 
 ### Ingest (Processing New Sources)
 
-1. **Read `purpose.md` first.** If the source falls outside the vault's
-   stated scope, skip it and log the skip in `log/changelog.md`. Do not
-   pollute the wiki with out-of-scope content.
+1. **Read `purpose.md`** at the start of any ingest session, or before the first ingest in a conversation. Cache for the session — do not re-read per item in batch operations. If the source falls outside scope, skip it and log the skip in `log/changelog.md`.
 2. Accept raw source → copy to `raw/` in the appropriate subfolder
 3. Identify the source type and determine which wiki pages it affects
 4. Extract key information: entities, decisions, claims, dates, relationships

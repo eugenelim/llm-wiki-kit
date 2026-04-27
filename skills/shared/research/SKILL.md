@@ -86,9 +86,9 @@ Read `enabled: true` providers from the YAML config. If only Perplexity is enabl
      --query {query} \
      --project {slug}
    ```
-5. **Receive markdown output** from the script (research-source schema with frontmatter populated, `pillar_contributions:` left empty for human/agent post-fill).
-6. **Save** to `wiki/research/{slug}/sources/{provider}-{date}-{query-slug}.md`.
-7. **Tag pillar contributions** based on what came back (entities listed → entities; measurable values → attributes; explanations → mental-model; recommendations → verdict).
+5. **Receive markdown output** from the script (research-source schema with frontmatter populated).
+6. **Tag pillar contributions** from the content already in context — classify which pillars the answer addresses (entities listed → entities; measurable values → attributes; explanations → mental-model; recommendations → verdict).
+7. **Save** to `wiki/research/{slug}/sources/{provider}-{date}-{query-slug}.md` with `pillar_contributions:` frontmatter populated and a `## Pillar Contributions` section appended. No re-read of the file needed.
 8. **Append to project overview's phase log:** `{date}: research (provider: {p}; query: {q})`.
 
 ## Output
