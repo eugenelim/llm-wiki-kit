@@ -22,8 +22,10 @@ Output:
 
 import argparse
 import os
+import random
 import re
 import sys
+import time
 from datetime import date
 
 try:
@@ -74,6 +76,64 @@ def slugify(text: str, max_length: int = 50) -> str:
 
 
 # -----------------------------------------------------------------------------
+# HTTP helper
+# -----------------------------------------------------------------------------
+
+
+def request_with_backoff(method, url, *, max_retries=3, base_delay=1.0, **kwargs):
+    """
+    Call `method(url, **kwargs)` with exponential backoff + jitter.
+
+    Retries on connection errors, timeouts, 429 (rate limit), and 5xx responses.
+    4xx errors other than 429 are not retried — they indicate a client mistake
+    that won't resolve by waiting.
+
+    Delay schedule (before jitter): 1s, 2s, 4s (base_delay * 2^attempt).
+    Jitter: ±25% to avoid thundering-herd on concurrent calls.
+    On 429, the Retry-After header is respected if present.
+    """
+    response = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = method(url, **kwargs)
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            if attempt == max_retries:
+                raise
+            delay = base_delay * (2 ** attempt) * random.uniform(0.75, 1.25)
+            print(
+                f"  [{type(exc).__name__}] retrying in {delay:.1f}s "
+                f"(attempt {attempt + 1}/{max_retries})",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+            continue
+
+        # Non-retryable: success or 4xx (not 429)
+        if response.status_code < 500 and response.status_code != 429:
+            return response
+
+        if attempt == max_retries:
+            response.raise_for_status()
+
+        # Determine wait time
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After")
+            delay = float(retry_after) if retry_after else base_delay * (2 ** attempt)
+        else:
+            delay = base_delay * (2 ** attempt)
+        delay *= random.uniform(0.75, 1.25)
+
+        print(
+            f"  [HTTP {response.status_code}] retrying in {delay:.1f}s "
+            f"(attempt {attempt + 1}/{max_retries})",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
+
+    response.raise_for_status()  # exhausted retries on HTTP error
+
+
+# -----------------------------------------------------------------------------
 # Provider dispatchers
 # -----------------------------------------------------------------------------
 
@@ -95,7 +155,7 @@ def dispatch_perplexity(query: str, config: dict) -> dict:
     }
 
     print(f"Dispatching to Perplexity ({model})...", file=sys.stderr)
-    response = requests.post(endpoint, headers=headers, json=body, timeout=60)
+    response = request_with_backoff(requests.post, endpoint, headers=headers, json=body, timeout=60)
     response.raise_for_status()
     data = response.json()
 
@@ -133,7 +193,7 @@ def dispatch_semantic_scholar(query: str, config: dict, top: int = 10) -> dict:
     }
 
     print("Dispatching to Semantic Scholar...", file=sys.stderr)
-    response = requests.get(url, headers=headers, params=params, timeout=30)
+    response = request_with_backoff(requests.get, url, headers=headers, params=params, timeout=30)
     response.raise_for_status()
     data = response.json()
 
@@ -168,7 +228,7 @@ def dispatch_gemini(query: str, config: dict) -> dict:
     }
 
     print(f"Dispatching to Gemini ({model})... this may take a while.", file=sys.stderr)
-    response = requests.post(url, json=body, timeout=300)
+    response = request_with_backoff(requests.post, url, json=body, timeout=300)
     response.raise_for_status()
     data = response.json()
 
