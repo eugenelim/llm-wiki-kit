@@ -1,0 +1,19 @@
+name: Check shared file sync
+
+on:
+  push:
+    paths:
+      - "shared/**"
+      - "vault-templates/**"
+  pull_request:
+    paths:
+      - "shared/**"
+      - "vault-templates/**"
+
+jobs:
+  sync-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify shared files match vault-template copies
+        run: bash scripts/check-sync.sh
