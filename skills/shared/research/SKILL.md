@@ -11,7 +11,7 @@ metadata:
 
 The research orchestrator. Given a research query (or autonomous invocation after [[research-start]]), the orchestrator picks the best provider(s), dispatches via `scripts/research.py`, and saves the result to the active research project's `sources/` folder with research-source schema tagging.
 
-Provider choice is **LLM-driven**, based on question semantics, the active project's pillar gaps, the verdict shape, and the cost-signal budget across configured providers. The orchestrator reads `.claude/research-providers.yaml` to know what's enabled.
+Provider choice is **script-driven** via `scripts/pick-provider.py`, which encodes the 6-signal selection algorithm as a lookup table. The orchestrator reads `.claude/research-providers.yaml` to know what's enabled.
 
 ## When to Use
 
@@ -77,19 +77,27 @@ Read `enabled: true` providers from the YAML config. If only Perplexity is enabl
 ## Operation
 
 1. **Read the active project's state.** Identify pillar gaps and verdict shape.
-2. **Read the YAML config.** Filter to enabled providers; note their strengths and cost signals.
-3. **Decide strategy.** Pick one or two providers based on the signals above.
-4. **Dispatch via the script:**
+2. **Select provider(s) via script:**
+   ```bash
+   python scripts/pick-provider.py \
+     --question-type {current-state|literature|synthesis} \
+     --verdict-shape {matrix|shortlist|blueprint} \
+     --pillar-gaps {comma-separated gaps} \
+     --load-bearing {true|false} \
+     --config .claude/research-providers.yaml
+   ```
+   Output is the selected provider name(s). Use `--explain` to log the scoring breakdown.
+3. **Dispatch via the research script:**
    ```bash
    python scripts/research.py \
      --provider {provider} \
      --query {query} \
      --project {slug}
    ```
-5. **Receive markdown output** from the script (research-source schema with frontmatter populated).
-6. **Tag pillar contributions** from the content already in context — classify which pillars the answer addresses (entities listed → entities; measurable values → attributes; explanations → mental-model; recommendations → verdict).
-7. **Save** to `wiki/research/{slug}/sources/{provider}-{date}-{query-slug}.md` with `pillar_contributions:` frontmatter populated and a `## Pillar Contributions` section appended. No re-read of the file needed.
-8. **Append to project overview's phase log:** `{date}: research (provider: {p}; query: {q})`.
+4. **Receive markdown output** from the script (research-source schema with frontmatter populated).
+5. **Tag pillar contributions** from the content already in context — classify which pillars the answer addresses (entities listed → entities; measurable values → attributes; explanations → mental-model; recommendations → verdict).
+6. **Save** to `wiki/research/{slug}/sources/{provider}-{date}-{query-slug}.md` with `pillar_contributions:` frontmatter populated and a `## Pillar Contributions` section appended. No re-read of the file needed.
+7. **Append to project overview's phase log:** `{date}: research (provider: {p}; query: {q})`.
 
 ## Output
 

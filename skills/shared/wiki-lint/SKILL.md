@@ -1,6 +1,6 @@
 ---
 name: wiki-lint
-description: "Run health checks on the vault. Combines deterministic Python scripts (scripts/tag-lint.py for tag hygiene, missing frontmatter, missing synopsis; scripts/convergence-debt.py for unconsolidated themes) with semantic LLM checks (orphan pages, broken wikilinks, contradiction detection). Use on request \"lint the wiki\" / \"check wiki health\", weekly or per-sprint, or after bulk ingestion of new raw sources."
+description: "Run health checks on the vault. Scripts handle structural checks (tag hygiene, broken links, orphans, asset coverage, provenance footnotes, staleness); Claude handles semantic checks (contradiction detection, synonym judgment). Use on request \"lint the wiki\" / \"check wiki health\", weekly or per-sprint, or after bulk ingestion of new raw sources."
 license: MIT
 compatibility: "Requires Python 3.10+ and pyyaml."
 metadata:
@@ -21,66 +21,47 @@ checks that benefit from deterministic scanning).
 
 ## Operations
 
-### 1. Structural Lint (Script-Assisted)
-
-Run the tag lint script for tag hygiene, missing frontmatter,
-and missing synopsis checks:
+### 1. Structural Lint (Script)
 
 ```bash
-python scripts/tag-lint.py wiki/ > log/tag-lint-$(date +%Y-%m-%d).md
+python scripts/tag-lint.py wiki/ \
+  --provenance-check \
+  --staleness-days 90 \
+  > log/tag-lint-$(date +%Y-%m-%d).md
 ```
 
-Read the output report and summarize the key findings.
+Covers: tag hygiene, missing frontmatter, missing synopsis, provenance footnote
+violations, and active pages not modified in 90 days. Read the output and
+summarize key findings.
 
-### 2. Convergence Debt (Script-Assisted)
-
-Run the convergence-debt script to find raw sources with no
-referencing wiki page:
+### 2. Convergence Debt (Script)
 
 ```bash
 python scripts/convergence-debt.py . > log/convergence-debt-$(date +%Y-%m-%d).md
 ```
 
-Files in `raw/` that no wiki page references in `sources:` frontmatter
-or footnotes represent convergence debt — they were dropped into the
-vault but never synthesized into knowledge. Read the output report
-and summarize.
+Files in `raw/` that no wiki page references represent convergence debt —
+ingested but never synthesized. Read the output and summarize.
 
-Report format:
-```markdown
-## Convergence Debt
+### 3. Broken Wikilinks + Orphan Pages (Script)
 
-The following raw sources have no corresponding wiki page:
-- `raw/project-x/meeting-2026-04-10.md` — ingested but not synthesized
-- `raw/project-x/requirements-v3.pdf` — no wiki page references this
+```bash
+python scripts/lint-links.py wiki/ > log/link-lint-$(date +%Y-%m-%d).md
 ```
 
-### 3. Broken Wikilinks (Claude-Driven)
+Reports: broken `[[wikilinks]]` (target matches no `.md` file) and orphan
+pages (no inbound links). Read the output and surface findings.
 
-Scan wiki pages for `[[wikilinks]]`. For each link, verify the
-target page exists. Report broken links with the source page and
-the broken target.
+### 4. Asset Coverage (Script)
 
-### 4. Orphan Pages (Claude-Driven)
+```bash
+python scripts/lint-assets.py wiki/ > log/asset-lint-$(date +%Y-%m-%d).md
+```
 
-Find wiki pages that have no inbound links from any other page.
-These are invisible in the knowledge graph — either link them
-from relevant pages or consider archiving.
+Reports non-markdown files in `_assets/` directories with no companion `.md`
+page. Read the output and surface findings.
 
-### 5. Companion Page Coverage (Claude-Driven)
-
-Scan all `_assets/` directories. For each non-markdown file,
-check whether a companion `.md` page exists. Report files
-without companions.
-
-### 6. Provenance Validation (Claude-Driven)
-
-For pages with `provenance: synthesized` or `provenance: mixed`:
-- Check that source footnotes exist
-- Verify footnote targets point to files in `raw/` that exist
-- Flag `> [!note] Inferred` callouts that have not been resolved
-
-### 7. Contradiction Detection (Claude-Driven)
+### 5. Contradiction Detection (Claude-Driven)
 
 This is the most token-intensive check. Only run when requested
 or when specific pages are flagged.
@@ -93,7 +74,7 @@ For a given domain or topic:
 5. Check for conflicting claims
 6. Report contradictions with specific quotes and page references
 
-### 8. Synonym Suggestions (Script Output → Claude Review)
+### 6. Synonym Suggestions (Script Output → Claude Review)
 
 Read the tag lint report. For each synonym pair flagged by the
 script, decide:
