@@ -99,29 +99,33 @@ When the [[research]] orchestrator is invoked **or** when an active research pro
 
 ## Extraction Paths
 
-### Specialized (delegated)
+### Specialized ingesters
 
-The orchestrator detects both axes, then hands off. Each ingester produces clean markdown (source-type) or a structured wiki page (content-type), then returns control to the orchestrator for the Shared Flow.
+Detect both axes, dispatch. After the ingester returns, run the interactive review with the user before final commit.
 
-**Source-type ingesters** (shared across variants):
+**Source-type** (clean the input):
 
-- **Web pages, articles, blog posts** → [[ingest-website]] (defuddle locally; pure.md fallback for JS-heavy / bot-blocked sites, behind a privacy gate)
-- **PDF, DOCX, PPTX, XLSX, images** → [[ingest-document]] (Docling via `scripts/ingest_document.py`; `--fast` `pymupdf4llm` path for plain-text PDFs)
+| Input | Ingester |
+|---|---|
+| HTML web URL | [[ingest-website]] |
+| PDF / DOCX / PPTX / XLSX / image | [[ingest-document]] |
 
-**Content-type ingesters** (variant-specific):
+**Content-type** (apply schema, route to wiki location):
 
-- **Recipes** → [[ingest-recipe]] *(family)* — composes `ingest-website` (URLs) or `ingest-document` (photos / scanned cards) for cleanup, then applies the recipe template's schema and cross-references dietary notes for per-person allergen flags
-- **Meeting transcripts** → [[ingest-meeting]] *(work)* — handles paste directly, or composes `ingest-website` (Granola / Otter / Fireflies URLs) or `ingest-document` (PDF exports); extracts decisions, action items, key discussion, open questions; pushes action items to the project's `tasks.md`
-- **Book / course / paper notes** → [[ingest-book-note]] *(personal)* — composes `ingest-document` (PDFs) or paste handling; creates structured book page + 2-5 atomic notes capturing standout ideas
-- **Job applications** → [[ingest-application]] *(personal)* — composes `ingest-website` (postings) or `ingest-document` (PDFs); creates application page with stage tracking + tailored-material slots; surfaces network leverage at the company
-- **Bookmarks** → [[ingest-bookmark]] *(all variants)* — lightweight URL save (no full content extraction); produces a small `bookmark` page with structured metadata that the [[bookmark-homepage]] operation renders as a multi-column dashboard via Obsidian Bases
-- **Tax documents** → [[ingest-tax-document]] *(family / personal)* — composes `ingest-document` (Docling); extracts form type / year / issuer / key figures; redacts SSN; cross-references holdings for 1099-B / 1099-DIV; routes to `wiki/finances/tax/{year}/`
-- **Medical records, EOBs, lab results** → [[ingest-medical-record]] *(family)* — composes `ingest-document`; appends dated entry to per-person medical summary; updates medications / providers; surfaces follow-ups for the [[follow-up-tracker]]
-- **Receipts, statement entries** → [[ingest-receipt]] *(family)* — composes `ingest-document` (photos/PDFs) or paste; categorizes by domain (vehicle / home / medical / food / travel); routes output to the right page; surfaces warranty + tax-relevant items
-- **Trip itineraries** → [[ingest-trip]] *(family)* — composes `ingest-website` (booking URLs) or `ingest-document` (PDFs); creates or appends to a trip page in `wiki/travel/upcoming/`; surfaces passport / readiness checks
-- **School documents** → [[ingest-school-doc]] *(family)* — composes `ingest-document` or `ingest-website`; routes to per-child education folder; surfaces dates for family calendar and action-item callouts
-
-After the specialized ingester returns, the orchestrator runs the type-appropriate **interactive review** with the user before final commit. Pattern: specialized ingester = mechanical extraction; orchestrator = judgment, scope, contradiction handling, final wiki write.
+| Signal | Ingester | Variant | Output |
+|---|---|---|---|
+| Recipe URL / "save this recipe" | [[ingest-recipe]] | family | `wiki/food/{slug}.md` |
+| Speaker-labeled transcript / AI-summary | [[ingest-meeting]] | work | `wiki/projects/{slug}/meetings/` |
+| Book / course / paper notes | [[ingest-book-note]] | personal | `wiki/books/` |
+| Job application / posting | [[ingest-application]] | personal | `wiki/applications/` |
+| URL to save/bookmark (not summarize) | [[ingest-bookmark]] | all | `wiki/bookmarks/` |
+| Person / contact | [[ingest-person]] | all | `wiki/people/` |
+| Tax form (W-2, 1099-*, etc.) | [[ingest-tax-document]] | family/personal | `wiki/finances/tax/{year}/` |
+| Medical record / EOB / lab result | [[ingest-medical-record]] | family | `wiki/health/` |
+| Receipt / statement | [[ingest-receipt]] | family | `wiki/finances/` |
+| Trip itinerary / booking | [[ingest-trip]] | family | `wiki/travel/upcoming/` |
+| School document | [[ingest-school-doc]] | family | `wiki/education/{child}/` |
+| Generic article / blog post | (inline) | all | `wiki/research/{date}-{slug}.md` |
 
 ### Inline (handled by the orchestrator)
 
@@ -170,23 +174,9 @@ The Obsidian Web Clipper extension defaults to saving to `Clippings/{title}.md` 
 
 **De-duplication:** if `ingest-website` is invoked on a URL that already has a clipping in `Clippings/` matching `source_url:`, use the existing clipping rather than re-fetching. The relocation flow runs as normal.
 
-## Shared Flow (All Source Types)
+## Shared Flow
 
-After extraction, every source type runs through the same steps:
-
-1. **Scope check:** Read `purpose.md`. Skip out-of-scope content.
-   Log the skip.
-2. **Contradiction check:** Compare extracted claims against existing
-   wiki content. Flag contradictions with `> [!danger]` callouts.
-   Do not silently overwrite.
-3. **Wiki update:** Create or update wiki pages with wikilinks,
-   proper frontmatter, and synopsis sections.
-4. **Task extraction:** If action items were found (meetings, decisions),
-   add them to the project's `tasks.md`.
-5. **Entity fact log:** If any fact-tracked entities were mentioned,
-   append new facts to their fact logs.
-6. **Index update:** Update `wiki/index.md` if new pages were created.
-7. **Changelog:** Append an entry to `log/changelog.md`.
+After any ingester returns, run the Shared Flow defined in CLAUDE.md § Operations > Ingest (steps 1–9).
 
 ## Usage Examples
 

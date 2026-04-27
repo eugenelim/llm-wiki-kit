@@ -239,22 +239,6 @@ events_described: ""
         "\n".join(f"- {c}" for c in citations) if citations else "(none returned)"
     ) + """
 
-## Pillar Contributions
-
-For each pillar this answer contributes to, fill in below after reading:
-
-### Entities
-{}
-
-### Attributes
-{}
-
-### Mental Model
-{}
-
-### Verdict
-{}
-
 ## Adversarial Read
 
 - {What's missing or biased?}
@@ -333,22 +317,6 @@ events_described: ""
 
 {papers_md}
 
-## Pillar Contributions
-
-For each pillar these papers contribute to, fill in below after reading:
-
-### Entities
-{{}}
-
-### Attributes
-{{}}
-
-### Mental Model
-{{}}
-
-### Verdict
-{{}}
-
 ## Adversarial Read
 
 - {{What's missing? Are key seminal papers absent?}}
@@ -396,23 +364,6 @@ events_described: ""
 ## Synthesis
 
 {result['answer']}
-
-## Pillar Contributions
-
-Gemini reports synthesize across many implicit sources. Decompose the synthesis
-into specific claims and tag each:
-
-### Entities
-{{}}
-
-### Attributes
-{{}}
-
-### Mental Model
-{{}}
-
-### Verdict
-{{}}
 
 ## Adversarial Read
 
