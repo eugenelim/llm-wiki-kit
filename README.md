@@ -1,12 +1,10 @@
 # LLM Wiki Kit
 
-> A configurable knowledge **operating system** built on the LLM Wiki pattern. Pick a variant, drop it in a synced folder, and start using your wiki with Claude Code.
+An Obsidian vault template wired for Claude Code. Drop it in your synced folder, point Claude at it, and it ingests meeting transcripts, PDFs, URLs, and notes into structured pages — then runs operations (sprint plans, weekly reviews, meal plans, status decks) that read the wiki and write back into it. Three variants ship: **work** (engineering teams), **family** (household), **personal** (one person). Pick one and follow its README.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Agent Skills Spec](https://img.shields.io/badge/skills-agentskills.io-blue.svg)](https://agentskills.io/specification)
 [![Obsidian Skills](https://img.shields.io/badge/foundation-kepano%2Fobsidian--skills-purple.svg)](https://github.com/kepano/obsidian-skills)
-
-The kit captures raw sources into a structured Obsidian-vault wiki, then runs operations that produce derived artifacts — sprint plans, weekly reviews, meal plans, status decks, ADR queues, networking digests. Three first-class variants ship: **work**, **family**, **personal**. Capture and operate, both grounded in the same vault.
 
 ---
 
@@ -57,6 +55,17 @@ Don't see your shape? Build a custom variant: [`docs/guides/customizing.md`](doc
 
 ---
 
+## What Claude can and can't do to your vault
+
+- Claude **never deletes files** without confirmation — moves to `archive/` instead.
+- Claude **never renames files** — updates `title:` and `aliases:` in frontmatter; Obsidian handles renames.
+- Claude **never silently overwrites** contradicting content — inserts a `> [!danger] Contradiction` callout for human review.
+- Claude **proposes before writing** operations; you confirm before anything is saved.
+- `raw/` is immutable — source documents are never modified after ingest.
+- Git not required but strongly recommended. Your vault is a folder of text files — `git init` takes 5 seconds.
+
+---
+
 ## Quick Start
 
 Three steps. Picks the work variant for the example — swap the path for `family` or `personal` as needed.
@@ -66,6 +75,7 @@ Three steps. Picks the work variant for the example — swap the path for `famil
 ```bash
 git clone https://github.com/eugenelim/llm-wiki-kit.git
 cd llm-wiki-kit
+WIKI_KIT=$(pwd)   # save this — referenced in step 2
 
 # Copy your chosen variant to a synced folder (OneDrive / iCloud / Dropbox / Git)
 cp -r vault-templates/work ~/OneDrive/my-team-wiki
@@ -79,14 +89,15 @@ From inside the new vault folder:
 cd ~/OneDrive/my-team-wiki
 
 # Foundation: kepano/obsidian-skills (wikilinks, Bases, Canvas, defuddle)
-git clone https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
+# Pin to a specific commit for stability: git clone ... && git -C /tmp/obsidian-skills checkout <commit>
+git clone --depth 1 https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
 mkdir -p .claude
 cp -r /tmp/obsidian-skills/.claude/* .claude/
 rm -rf /tmp/obsidian-skills
 
 # This kit's skills (shared + your variant)
-cp -r /path/to/llm-wiki-kit/skills/shared/* .claude/skills/
-cp -r /path/to/llm-wiki-kit/skills/work/* .claude/skills/   # or family / personal
+cp -r "$WIKI_KIT/skills/shared/"* .claude/skills/
+cp -r "$WIKI_KIT/skills/work/"*   .claude/skills/   # or family / personal
 ```
 
 ### 3. Set up your `purpose.md` — pick one path

@@ -42,10 +42,18 @@ The **wiki is the source of truth**, not the agent. Claude proposes, you review.
 |---|---|
 | [Obsidian](https://obsidian.md) (free) | Browse the vault, graph view, backlinks |
 | [Claude Code](https://claude.com/code) or Claude Cowork with file-system access | The agent that maintains the vault |
-| Python 3.10+ *(optional)* | Lint scripts, BM25 search, document ingest |
-| Node + npm *(optional)* | Web clipping with `defuddle` |
+**When you need Python 3.10+:**
 
-You can skip the optional dependencies and add them only when you need them.
+| `pip install …` | When you need it |
+|---|---|
+| `docling` | PDF, DOCX, PPTX, XLSX ingest |
+| `pyyaml` | Wiki lint scripts |
+| `bm25s[core] PyStemmer` | BM25 search (500+ page vaults) |
+| `python-pptx` | Status deck generation |
+
+| Node / npm | When you need it |
+|---|---|
+| `defuddle-cli` | Web URL clipping |
 
 ---
 
@@ -64,7 +72,8 @@ You have two ways to set up the vault. Both end with the same result.
 
 2. **Install [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills)** (Obsidian's official agent skills — wikilinks, Bases, Canvas):
    ```bash
-   git clone https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
+   # Pin to a specific commit for stability: ... && git -C /tmp/obsidian-skills checkout <commit>
+   git clone --depth 1 https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
    mkdir -p .claude
    cp -r /tmp/obsidian-skills/.claude/* .claude/
    rm -rf /tmp/obsidian-skills
@@ -72,8 +81,9 @@ You have two ways to set up the vault. Both end with the same result.
 
 3. **Copy this kit's skills** from your `llm-wiki-kit` checkout into `.claude/skills/`:
    ```bash
-   cp -r /path/to/llm-wiki-kit/skills/shared/* .claude/skills/
-   cp -r /path/to/llm-wiki-kit/skills/work/* .claude/skills/
+   # If $WIKI_KIT is not set, run: export WIKI_KIT=/path/to/llm-wiki-kit
+   cp -r "$WIKI_KIT/skills/shared/"* .claude/skills/
+   cp -r "$WIKI_KIT/skills/work/"*   .claude/skills/
    ```
 
 4. **Edit `purpose.md`** — replace the placeholders with your team's scope. 3-7 sentences, in-scope and out-of-scope bullets. Claude reads this before every ingest, so anything outside scope gets skipped rather than polluting the wiki.
@@ -132,6 +142,52 @@ Open the new sprint page in Obsidian. That's your reference for the week.
 
 > [!tip] If you don't have an active project yet
 > Run `Capture a new project: {one-paragraph brief}.` Claude will scaffold `wiki/projects/{slug}/overview.md`, `tasks.md`, and the standard subfolders.
+
+**What you get** — a sprint plan looks like this:
+
+```markdown
+---
+type: sprint-plan
+project: "[[projects/order-platform/overview]]"
+sprint_start: 2026-04-28
+sprint_end: 2026-05-09
+capacity_days: 18
+status: active
+created: 2026-04-28
+modified: 2026-04-28
+tags: [sprint-plan, order-platform]
+---
+
+## Synopsis
+
+Sprint 14 for order-platform. Goal: complete Kafka consumer group refactor
+and close out the NFR validation. 18 engineer-days across 3 people.
+
+## Goals
+
+1. Ship Kafka consumer group refactor (closes [[decisions/adr-007-consumer-groups]])
+2. Close NFR latency validation with k6 results in [[specs/nfr-validation]]
+3. Unblock auth service integration (dependency for payment-service sprint 8)
+
+## Scope
+
+| Task | Owner | Est. | Status |
+|---|---|---|---|
+| Consumer group migration script | @alice | 3d | 🔲 |
+| k6 load test + report | @bob | 2d | 🔲 |
+| Auth token refresh endpoint | @alice | 2d | 🔲 |
+| PR reviews + retro prep | all | 1d | 🔲 |
+
+## Risks
+
+- Auth service dependency: payment-service unblocks only if we ship by Wed.
+  Fallback: stub the endpoint for their sprint, deliver real impl next sprint.
+
+## Deferred
+
+- Rate limiting middleware (blocked on infra decision — see [[decisions/adr-008]])
+- GraphQL schema cleanup (low priority, carry to sprint 15)
+```
 
 ---
 
