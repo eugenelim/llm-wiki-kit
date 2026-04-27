@@ -89,7 +89,7 @@ From inside the new vault folder:
 cd ~/OneDrive/my-team-wiki
 
 # Foundation: kepano/obsidian-skills (wikilinks, Bases, Canvas, defuddle)
-# Pin to a specific commit for stability: git clone ... && git -C /tmp/obsidian-skills checkout <commit>
+# Pin to a specific commit for stability: git clone ... && git -C /tmp/obsidian-skills checkout fa1e131a014576ff8f8919f191a7ca8d8fded39b
 git clone --depth 1 https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
 mkdir -p .claude
 cp -r /tmp/obsidian-skills/.claude/* .claude/
