@@ -15,6 +15,11 @@
       "id": 3,
       "prompt": "Pre-steering-committee status — focus on RAG and asks across the org.",
       "expected_output": "Team-wide status with audience=steering-committee: terse Progress (RAG dashboard), top 3 risks, top issues only if material, asks section emphasized with decisions needed by date. ~1 page of dense content suitable for direct conversion via status-slides."
+    },
+    {
+      "id": 4,
+      "prompt": "Run /team-status against a vault with three active projects, each with active sprint plans, tasks, and recent meetings. The team has shipped meaningfully across all three projects this week.",
+      "expected_output": "Team-wide status where Synopsis leads with the overall RAG roll-up and counts (projects per RAG band, risks, issues, asks). Synopsis names at most one project (only when it is the dominant signal). Headline phrases from Progress table rows do not reappear verbatim or near-verbatim in the Synopsis. Progress table retains full per-project detail. What's Next retains per-project forward-looking bullets."
     }
   ]
 }

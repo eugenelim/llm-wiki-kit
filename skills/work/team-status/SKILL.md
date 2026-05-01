@@ -83,6 +83,8 @@ tags: [status, weekly]
 ## Synopsis
 RAG: 🟡 Amber. Two projects on track; order-platform slipping schema sign-off. One material risk; one open issue. Two asks for leadership.
 
+<!-- Note: Synopsis names order-platform because it is the single principal signal of the period. The other two projects appear only via the "two on track" count. Do not write one sentence per project here. -->
+
 ## Progress
 | Workstream | RAG | Update |
 |---|---|---|
@@ -104,6 +106,16 @@ RAG: 🟡 Amber. Two projects on track; order-platform slipping schema sign-off.
 ## What's Next (next 2 weeks)
 - Ship 4 specs in order-platform; close DLQ issue; conclude vendor evaluation.
 ```
+
+### Synopsis vs Progress — no duplication
+
+The Synopsis is a top-line roll-up consumed at-a-glance; the Progress table is the per-project detail layer. They must not duplicate content:
+
+- **Synopsis MUST contain:** overall RAG, count of projects per RAG band (e.g., "2 green / 1 amber / 0 red"), counts of risks / issues / asks, and the single most-important top-line signal for the period.
+- **Synopsis MUST NOT contain:** one sentence per project paraphrasing each project's Progress row. If you find yourself writing "A did X. B did Y. C did Z." in the Synopsis, that is the bug — move the detail into Progress and replace the Synopsis with a counts-and-RAG summary.
+- **Synopsis MAY name a specific project** only when that project is the dominant signal of the period (the principal Amber driver, the project that resolved a major risk, the project newly red). One project max in a typical Synopsis.
+
+What's Next is forward-looking and is expected to have per-project bullets — that is not duplication of Progress.
 
 ## Side-effects
 
