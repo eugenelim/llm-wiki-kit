@@ -20,6 +20,16 @@
       "id": 4,
       "prompt": "Run /team-status against a vault with three active projects, each with active sprint plans, tasks, and recent meetings. The team has shipped meaningfully across all three projects this week.",
       "expected_output": "Team-wide status where Synopsis leads with the overall RAG roll-up and counts (projects per RAG band, risks, issues, asks). Synopsis names at most one project (only when it is the dominant signal). Headline phrases from Progress table rows do not reappear verbatim or near-verbatim in the Synopsis. Progress table retains full per-project detail. What's Next retains per-project forward-looking bullets."
+    },
+    {
+      "id": 5,
+      "prompt": "Produce team status. The vault has one project with two formal ISSUE-*.md pages (one critical open, one medium mitigated) and one inline danger callout that has persisted since last week's status, plus one formal RISK-*.md page (high impact, medium probability) and one unregistered warning callout.",
+      "expected_output": "Issues section renders as a table with ID, severity icon, title, owner, ETA, status columns for the two formal pages. Untriaged callout is listed below the table with a promotion offer. Risks section renders as a table with ID, probability×impact, title, owner, proximity, status for the formal Risk page. Unregistered callout listed below with promotion offer. Synopsis includes structured counts: 'Issues: 1 critical / 1 medium mitigated (1 untriaged). Risks: 1 open (1 unregistered).'"
+    },
+    {
+      "id": 6,
+      "prompt": "Produce team status for a vault that has only inline callouts and no formal issue or risk pages.",
+      "expected_output": "Issues and Risks sections fall back to the callout-based bullet list format. Delta summary surfaces all inline callouts as untriaged with an offer to promote them to formal pages. Synopsis counts show 0 formal issues / 0 formal risks and N untriaged callouts."
     }
   ]
 }

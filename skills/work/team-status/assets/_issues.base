@@ -1,0 +1,44 @@
+# Open Issues — per-project Bases view.
+# Replace {project-slug} with the actual project slug when creating this file.
+
+filters:
+  and:
+    - 'note.type == "issue"'
+    - 'note.project == "{project-slug}"'
+
+views:
+  - type: table
+    name: Open
+    filters:
+      and:
+        - 'note.status != "resolved"'
+        - 'note.status != "wont-fix"'
+        - 'note.status != "duplicate"'
+    order:
+      - severity
+      - eta
+      - title
+    columns: [id, severity, status, owner, eta, modified]
+
+  - type: cards
+    name: By Severity
+    filters:
+      and:
+        - 'note.status != "resolved"'
+        - 'note.status != "wont-fix"'
+        - 'note.status != "duplicate"'
+    groupBy:
+      property: severity
+      direction: ASC
+    order:
+      - eta
+      - title
+
+  - type: table
+    name: Resolved (last 30d)
+    filters:
+      and:
+        - 'note.status == "resolved"'
+    order:
+      - resolved desc
+    columns: [id, severity, title, resolved]
