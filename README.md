@@ -245,17 +245,19 @@ For the full design narratives: [`docs/design/work.md`](docs/design/work.md), [`
 
 ## Scaling notes
 
-The kit scales in stages. Start simple and add infrastructure only when you hit the limits of the current stage.
+The kit scales in stages — but the `wiki-search` skill auto-adapts so you usually don't have to do anything. Day-1 vaults work with zero setup; the skill upgrades its own backend once it's worth doing.
 
 | Vault size | Retrieval method | What to do |
 |---|---|---|
-| **<100 pages** | Progressive loading only | Claude reads index.md, scans synopses, reads full pages. No infrastructure needed. |
-| **100-500 pages** | Progressive loading | Still manageable. Keep synopses concise. Ensure `index.md` is well-maintained. |
-| **500-2,000 pages** | **BM25 search** (optional skill) | Install the `wiki-search` skill. `pip install bm25s[core] PyStemmer`. ~5 second index build. |
-| **2,000-10,000 pages** | BM25 search + sharded index | Split the index by project or domain. Rebuild nightly. Consider separate vaults per major area. |
-| **10,000+ pages** | Dedicated search service | Move to Typesense, MeiliSearch, or SQLite FTS5 as an external index. The wiki remains markdown; only the search layer changes. |
+| **<100 pages** | Progressive loading + ripgrep | Nothing — `wiki-search` ships ripgrep as the default backend (zero install if you already have `rg`). |
+| **100-1,000 pages** | Progressive loading + ripgrep | Nothing. Keep synopses concise; keep `index.md` well-maintained. |
+| **1,000-5,000 pages** | **SQLite FTS5** (auto-enabled) | Nothing — `wiki-search` flips to FTS5 automatically on the first call after the vault crosses ~1000 pages or 50 MB. Stdlib `sqlite3` with FTS5 ships with standard Python; no `pip install`. The first call after the flip does a one-time index bootstrap and logs a single advisory line. |
+| **5,000-50,000 pages** | FTS5 (auto-enabled) | Stays the same. Consider sharding by major folder if a single index gets large. |
+| **50,000+ pages** | FTS5 + sharding, or external | Beyond what file-based FTS5 handles well. Move to Typesense or Meilisearch as an external index — the wiki stays markdown. |
 
-**Why BM25, not vectors?** At wiki scale, keyword search with stemming handles retrieval well. Vectors add embedding infrastructure, chunking tuning, and a database — none of which are justified until you're well past 10,000 pages or need cross-language semantic similarity.
+**Why ripgrep + FTS5, not vectors?** Both backends are lexical; keyword search with stemming handles retrieval well at wiki scale. Vectors add embedding infrastructure, chunking tuning, and a database — none of which are justified until you're well past 50,000 pages or need cross-language semantic similarity.
+
+**Forcing a backend.** Set `kit.search.backend: ripgrep` or `: fts5` in `wiki/.wiki-search/config.yaml`, or run `python .claude/skills/wiki-search/scripts/wiki-search.py backend wiki/ --set <choice>`. See [`skills/shared/wiki-search/SKILL.md`](skills/shared/wiki-search/SKILL.md) for the full operations reference.
 
 **Deployment + security.** The shared-drive approach (OneDrive / iCloud / Dropbox / Git) inherits your existing access controls, encryption, and compliance posture. The vault runs entirely on your machines; nothing leaves unless you opt into research integrations per query.
 

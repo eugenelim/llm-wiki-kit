@@ -3,18 +3,33 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Search the wiki for 'event sourcing'.",
-      "expected_output": "scripts/wiki-search.py runs a BM25 search and returns ranked page references with snippets; large vault assumed."
+      "prompt": "Search the vault for 'event sourcing'.",
+      "expected_output": "Invokes scripts/wiki-search.py search wiki/ \"event sourcing\". Backend is auto-resolved (ripgrep on small vaults, FTS5 once auto-enabled). Returns ranked page references with synopsis."
     },
     {
       "id": 2,
-      "prompt": "Find pages mentioning 'circuit breaker' across all projects.",
-      "expected_output": "Same \u2014 BM25 ranked results."
+      "prompt": "Find pages tagged urgent that mention compliance.",
+      "expected_output": "Invokes scripts/wiki-search.py search wiki/ \"compliance\" --tag urgent. Frontmatter filter restricts to pages with `tags: [urgent, ...]`."
     },
     {
       "id": 3,
-      "prompt": "Index the vault \u2014 we just added 100 pages.",
-      "expected_output": "Re-indexes via scripts/wiki-search.py index wiki/."
+      "prompt": "Find meeting pages about the Q3 launch.",
+      "expected_output": "Invokes scripts/wiki-search.py search wiki/ \"Q3 launch\" --type meeting. Restricts to pages with frontmatter `type: meeting`."
+    },
+    {
+      "id": 4,
+      "prompt": "Why is search using ripgrep instead of FTS5?",
+      "expected_output": "Invokes scripts/wiki-search.py backend wiki/ to print the current backend, last vault measurement, thresholds, and recent notes. Explains that the auto-flip hasn't tripped yet."
+    },
+    {
+      "id": 5,
+      "prompt": "We just moved 200 wiki pages to a new folder — search results look stale.",
+      "expected_output": "Invokes scripts/wiki-search.py index wiki/ --rebuild to force a full FTS5 rebuild (mtime-based incremental refresh misses bulk moves that preserved mtimes)."
+    },
+    {
+      "id": 6,
+      "prompt": "Find the literal phrase `TODO: refactor` in the codebase.",
+      "expected_output": "Uses the IDE's built-in Grep tool, NOT this skill. The skill description explicitly directs raw substring searches and code search to Grep."
     }
   ]
 }

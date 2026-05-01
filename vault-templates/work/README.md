@@ -48,7 +48,7 @@ The **wiki is the source of truth**, not the agent. Claude proposes, you review.
 |---|---|
 | `docling` | PDF, DOCX, PPTX, XLSX ingest |
 | `pyyaml` | Wiki lint scripts |
-| `bm25s[core] PyStemmer` | BM25 search (500+ page vaults) |
+| _(none)_ | `wiki-search` uses ripgrep + stdlib SQLite FTS5 — no pip install needed |
 | `python-pptx` | Status deck generation |
 
 | Node / npm | When you need it |
@@ -481,11 +481,13 @@ python .claude/skills/wiki-lint/scripts/tag-lint.py .
 python .claude/skills/wiki-lint/scripts/convergence-debt.py .
 ```
 
-For a 500+ page vault, install BM25 search:
-```bash
-pip install bm25s[core] PyStemmer pyyaml
-```
-Then ask Claude `Search the vault for {query}.` It runs `wiki-search.py` instead of progressive scanning.
+**Search.** Ask Claude `Search the vault for {query}.` and it invokes the
+`wiki-search` skill. Default backend is ripgrep (zero install if you already
+have `rg` on PATH). Once the vault grows past ~1000 pages or 50 MB, the skill
+auto-upgrades to a SQLite FTS5 backend with BM25 ranking, porter stemming, and
+frontmatter-aware filters — all using stdlib `sqlite3`, no `pip install`. See
+[`skills/shared/wiki-search/SKILL.md`](../../skills/shared/wiki-search/SKILL.md)
+for the full operations reference and how to force a backend.
 
 ---
 

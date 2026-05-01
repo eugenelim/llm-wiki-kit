@@ -22,5 +22,8 @@ env/
 .obsidian/workspace*.json
 .obsidian/cache
 
-# Derived artifacts
-.wiki-search-index/
+# Derived artifacts (wiki-search runtime state + FTS5 index)
+# state.json + index.sqlite live here; config.yaml does too if you create one.
+# To commit a config, add `!wiki/.wiki-search/config.yaml` after this line.
+.wiki-search/
+.wiki-search-index/   # legacy location — pre-2026 wiki-search builds
