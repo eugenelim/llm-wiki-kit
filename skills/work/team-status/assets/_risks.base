@@ -1,0 +1,45 @@
+# Open Risks — per-project Bases view.
+# Replace {project-slug} with the actual project slug when creating this file.
+
+filters:
+  and:
+    - 'note.type == "risk"'
+    - 'note.project == "{project-slug}"'
+
+views:
+  - type: table
+    name: Open
+    filters:
+      and:
+        - 'note.status != "closed"'
+        - 'note.status != "realized"'
+    order:
+      - impact
+      - probability
+      - proximity
+      - title
+    columns: [id, probability, impact, status, owner, proximity, modified]
+
+  - type: cards
+    name: By Impact
+    filters:
+      and:
+        - 'note.status != "closed"'
+        - 'note.status != "realized"'
+    groupBy:
+      property: impact
+      direction: ASC
+    order:
+      - probability
+      - proximity
+      - title
+
+  - type: table
+    name: Realized / Closed (last 30d)
+    filters:
+      and:
+        - 'note.status != "open"'
+        - 'note.status != "mitigated"'
+    order:
+      - closed desc
+    columns: [id, impact, title, status, realized_as, closed]

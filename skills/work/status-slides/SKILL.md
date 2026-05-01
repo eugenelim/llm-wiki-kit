@@ -45,8 +45,8 @@ The script generates this 7-slide canonical deck (with audience-conditional incl
 | 1 | Title | frontmatter / overview | Project, period, audience, presenter |
 | 2 | Executive Summary | `## Synopsis` | 2-3 bullets max; RAG headline |
 | 3 | RAG Dashboard | `## Progress` table | Workstream / RAG / one-line update; RAG cell colors auto-applied |
-| 4 | Top Risks | `## Risks` | Cap 3-5 for leadership, 8 for internal |
-| 5 | Open Issues | `## Issues` | Each: description, owner, ETA. **Dropped for `customer` audience** |
+| 4 | Top Risks | `## Risks` | Structured RISK-* cards: ID, probability×impact icon, title, owner, proximity, one-line mitigation. Falls back to bullet list for unregistered callouts. Cap 3-5 for leadership, 8 for internal. |
+| 5 | Open Issues | `## Issues` | Structured ISSUE-* cards: severity icon + ID, title, owner, ETA, status. Critical/high → individual cards; medium → one grouped bullet; low → count only. Falls back to bullet list for untriaged callouts. **Dropped for `customer` audience**. |
 | 6 | Asks / Decisions Needed | `## Asks` | Most-important slide for leadership; decisions with owners and dates |
 | 7 | What's Next | `## What's Next` | Next 2-4 weeks |
 
@@ -54,6 +54,17 @@ Audience tailoring (handled by the script):
 - **leadership / steering-committee:** slides 1, 2, 3, 4, 6 emphasized; 5, 7 condensed.
 - **customer:** drop slide 5 (Issues); reframe Risks as "watch items."
 - **internal:** all slides; full detail; appendix when overflow.
+
+## Severity / Probability Color Tokens
+
+Consistent across `team-status` markdown output and slide rendering:
+
+| Level | Markdown icon | Slide swatch (RGB) |
+|---|---|---|
+| critical / high impact | 🔴 | `#D32F2F` |
+| high probability | 🟠 | `#F57C00` |
+| medium | 🟡 | `#FBC02D` |
+| low | ⚪ | `#9E9E9E` |
 
 ## Tooling: scripts/build_slides.py
 

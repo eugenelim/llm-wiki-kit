@@ -32,8 +32,10 @@ Reads:
 - `wiki/projects/*/tasks.md` — open / in-progress tasks (volume + blocked >7 days)
 - `wiki/projects/*/meetings/*.md` from the period — recent decisions and action items
 - `wiki/projects/*/decisions/*.md` — ADRs `accepted` since last status
-- `> [!warning] Risk: ...` callouts across the wiki
-- `> [!danger] Issue: ...` callouts across the wiki
+- `wiki/projects/*/issues/ISSUE-*.md` — formal Issue pages (`status: open | mitigated`) — primary source
+- `wiki/projects/*/risks/RISK-*.md` — formal Risk pages (`status: open | mitigated`) — primary source
+- `> [!warning] Risk: ...` callouts across the wiki — fallback / quick-capture inbox
+- `> [!danger] Issue: ...` callouts across the wiki — fallback / quick-capture inbox
 - request-tracker output (or scan inline) — open asks and escalations
 - Last team-status page (if exists) — for delta comparison
 
@@ -44,8 +46,8 @@ The four sections are populated from these signals:
 | Section | Signals |
 |---|---|
 | **Progress** | sprint progress vs. plan, milestones hit/slipped, specs shipped, ADRs accepted, RAG per workstream |
-| **Risks** | `> [!warning] Risk: {description}. Mitigation: {plan}.` callouts, plus risks inferred from slipped milestones / capacity gaps |
-| **Issues** | `> [!danger] Issue: {description}. Owner: @{person}. ETA: {date}.` callouts, plus open high-priority tasks blocked >7 days |
+| **Risks** | Primary: `wiki/projects/*/risks/RISK-*.md` pages (`status: open | mitigated`), ordered by impact × probability then proximity. Secondary: `> [!warning] Risk:` callouts (treated as untriaged — flag for promotion). Plus risks inferred from slipped milestones / capacity gaps. |
+| **Issues** | Primary: `wiki/projects/*/issues/ISSUE-*.md` pages (`status: open | mitigated`), ordered by severity then ETA. Secondary: `> [!danger] Issue:` callouts (treated as untriaged — flag for promotion). Plus open high-priority tasks blocked >7 days. |
 | **Asks** | request-tracker output: open requests-to-others, escalations, decisions needed from leadership |
 
 ## Algorithm
@@ -56,14 +58,17 @@ The four sections are populated from these signals:
    - **🟡 Amber** — slipping but recoverable; one or more material risks open
    - **🔴 Red** — milestone in jeopardy; unmitigated issue; capacity gap; external blocker not moving
 3. **Synthesize Progress.** What shipped, what's in-flight, what slipped. Frame against declared goals/milestones.
-4. **Surface Risks.** Top 3-5 risks ranked by impact × likelihood. Each with mitigation plan and owner.
-5. **Surface Issues.** Current blockers / incidents. Each with owner, ETA, escalation status.
+4. **Surface Risks.** Read formal Risk pages first (`RISK-*.md`, status: open | mitigated), ordered by impact × probability then proximity. Fall back to `> [!warning] Risk:` callouts for untriaged items. Cap 3-5 for leadership, 8 for internal.
+5. **Surface Issues.** Read formal Issue pages first (`ISSUE-*.md`, status: open | mitigated), ordered by severity then ETA. Fall back to `> [!danger] Issue:` callouts for untriaged items.
 6. **Surface Asks.** Decisions needed from leadership; cross-team requests outstanding (from request-tracker); capacity asks.
 7. **Tailor to audience.**
    - **leadership / steering-committee:** terse, RAG-led, asks-prominent. ~1-2 pages.
    - **internal:** full detail, transparent on tradeoffs.
    - **customer:** progress-led; risks framed as "watch items"; issues only if customer-affecting.
-8. **Write the status page** to `wiki/projects/{slug}/status/{YYYY-MM-DD}-team-status.md` (per-project) or `wiki/team-status/{YYYY-MM-DD}.md` (team-wide).
+8. **Triage unpromoted callouts.** For each inline callout, check whether a matching formal page exists (fingerprint by description + owner + ETA). Any callout that has persisted across two consecutive runs without a formal page surfaces in the delta summary with a promotion offer:
+   > "N inline [issue|risk] callouts have persisted >1 week. Want me to promote them to formal pages?"
+   If accepted, create pages from `_templates/issue.md` / `_templates/risk.md` (or `assets/issue-template.md` / `assets/risk-template.md` if the vault templates are missing).
+9. **Write the status page** to `wiki/projects/{slug}/status/{YYYY-MM-DD}-team-status.md` (per-project) or `wiki/team-status/{YYYY-MM-DD}.md` (team-wide).
 
 ## Output
 
@@ -81,7 +86,7 @@ tags: [status, weekly]
 ---
 
 ## Synopsis
-RAG: 🟡 Amber. Two projects on track; order-platform slipping schema sign-off. One material risk; one open issue. Two asks for leadership.
+RAG: 🟡 Amber. Two projects on track; order-platform slipping schema sign-off. Risks: 1 open (1 unregistered). Issues: 1 critical / 1 medium (1 untriaged). Two asks for leadership.
 
 <!-- Note: Synopsis names order-platform because it is the single principal signal of the period. The other two projects appear only via the "two on track" count. Do not write one sentence per project here. -->
 
@@ -93,11 +98,23 @@ RAG: 🟡 Amber. Two projects on track; order-platform slipping schema sign-off.
 | platform-foundation | 🟢 | Service-mesh adoption Phase 2 done |
 
 ## Risks
-- **R1 (high impact, medium likelihood):** Schema-registry vendor lock-in if Confluent migration delays past Q3. Mitigation: parallel evaluation of Apicurio (PoC by 2026-05-15). Owner: @lead-arch.
-- **R2 ...**
+
+| ID | P×I | Title | Owner | Proximity | Status |
+|---|---|---|---|---|---|
+| [[../projects/order-platform/risks/RISK-ORDER-003\|RISK-ORDER-003]] | high×high | Schema-registry vendor lock-in if Confluent delays | @lead-arch | 2026-05-15 | open |
+
+**Unregistered callouts:** 1 (persisted >1 week — recommend promotion)
+- "Capacity gap if contractor not approved" — surfaced in tasks. Owner: @pm. Proximity: TBD.
 
 ## Issues
-- **I1:** Order-ingestion DLQ growing 5% per day in staging. Owner: @sarah. ETA: 2026-04-30. Root cause: mis-shaped messages from upstream pre-canonical-model rollout.
+
+| ID | Severity | Title | Owner | ETA | Status |
+|---|---|---|---|---|---|
+| [[../projects/order-platform/issues/ISSUE-ORDER-007\|ISSUE-ORDER-007]] | 🔴 critical | Order-ingestion DLQ growing 5%/day in staging | @sarah | 2026-04-30 | open |
+| [[../projects/auth-service/issues/ISSUE-AUTH-002\|ISSUE-AUTH-002]] | 🟡 medium | MFA SMS provider rate-limited after 100 req/min | @raj | 2026-05-10 | mitigated |
+
+**Untriaged callouts:** 1 (persisted >1 week — recommend promotion)
+- "Schema sign-off owed by data-platform" — surfaced in [[../projects/order-platform/tasks]]. Owner: @data-platform. ETA: TBD.
 
 ## Asks (Leadership)
 - **A1:** Approval to bring on contractor for schema migration (~$80k, 8 weeks). Decision needed by 2026-05-01.
@@ -122,6 +139,9 @@ What's Next is forward-looking and is expected to have per-project bullets — t
 1. Each project page's frontmatter `last_status:` updated to the new status page wikilink.
 2. A digest entry appended to `log/changelog.md`.
 3. If a previous team-status exists, a delta summary surfaces: "{N} risks new, {M} issues new, {K} risks resolved since {prev-date}."
+4. **Triage delta.** The status page records structured counts in the Synopsis: `{open}` open issues, `{mitigated}` mitigated, `{resolved-this-period}` resolved, `{untriaged}` untriaged callouts. Same for risks (`{open}` / `{mitigated}` / `{realized}` / `{unregistered}`).
+
+See `references/issue-risk-management.md` for field semantics, lifecycle state machines, Bases view setup, and migration guidance.
 
 ## Pairs With
 
@@ -138,7 +158,7 @@ What's Next is forward-looking and is expected to have per-project bullets — t
 
 ## Failure Modes
 
-- **No risk/issue callouts in the wiki.** Surface: "no `> [!warning] Risk:` or `> [!danger] Issue:` callouts found. Either the team isn't using the convention, or there really are none. Want me to infer from slipped milestones / blocked tasks?"
+- **No formal issue/risk pages and no callouts.** Surface: "no `ISSUE-*.md` / `RISK-*.md` pages and no `> [!warning]` / `> [!danger]` callouts found. Either the team isn't using these conventions, or there genuinely are none. Want me to infer from slipped milestones / blocked tasks?"
 - **Last status was very recent.** If a team-status was generated <3 days ago and nothing has changed materially, propose updating the existing one rather than creating a new one.
 - **Audience mismatch.** If `audience: customer` is requested but Issues contains internal-only language, flag for review before producing.
 - **Many projects red.** If the majority of projects are RAG: red, surface a top-line "the team is overloaded" rather than burying it in workstream rows.
