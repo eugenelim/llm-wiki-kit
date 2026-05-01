@@ -50,7 +50,7 @@ The **vault is the source of truth**, not the agent. Claude proposes; you decide
 |---|---|
 | `docling` | PDF, DOCX, PPTX, XLSX ingest |
 | `pyyaml` | Wiki lint scripts |
-| `bm25s[core] PyStemmer` | BM25 search (500+ page vaults) |
+| _(none)_ | `wiki-search` uses ripgrep + stdlib SQLite FTS5 — no pip install needed |
 
 | Node / npm | When you need it |
 |---|---|
@@ -563,11 +563,11 @@ python .claude/skills/wiki-lint/scripts/tag-lint.py .
 python .claude/skills/wiki-lint/scripts/convergence-debt.py .
 ```
 
-For a 500+ page vault:
-```bash
-pip install bm25s[core] PyStemmer pyyaml
-```
-Then `Search the vault for {query}.` runs BM25 instead of progressive scanning.
+**Search.** `Search the vault for {query}.` invokes the `wiki-search` skill.
+Default backend is ripgrep (zero install if you already have `rg` on PATH).
+Once the vault grows past ~1000 pages or 50 MB the skill auto-upgrades to a
+SQLite FTS5 backend with BM25 ranking, porter stemming, and frontmatter-aware
+filters — all via stdlib `sqlite3`, no `pip install`.
 
 ---
 

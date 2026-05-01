@@ -1,105 +1,167 @@
 ---
 name: wiki-search
-description: "Optional, large-scale. BM25 full-text search via scripts/wiki-search.py for vaults that have outgrown progressive loading (index.md → synopsis scan → full read). Use only when the vault has 500+ wiki pages, query operations frequently scan many synopses before finding relevant pages, fuzzy matching is needed, or multiple people query the vault frequently. For smaller vaults use progressive loading."
+description: "Vault search across wiki pages with frontmatter-aware filters (--tag, --type, --status). Default backend is ripgrep (literal substring, zero install, always-fresh content); auto-upgrades to SQLite FTS5 with BM25 ranking, porter stemming, phrase/NEAR/prefix queries, and snippet extraction once the vault grows past ~1000 pages. Use this skill for any wiki/ content search — it returns titles, types, tags, and synopses ready for the agent to read. Reserve the IDE's built-in Grep tool for: regex queries, code search inside .claude/ or other infrastructure paths outside wiki/, or single-file inspection by exact path."
 license: MIT
-compatibility: "Requires Python 3.10+ and bm25s[core] PyStemmer pyyaml."
+compatibility: "Requires Python 3.10+. ripgrep (`rg`) on PATH for the default backend. SQLite with FTS5 ships with standard Python — no pip install required."
 metadata:
   variant: shared
 ---
 
-# Wiki Search Skill (Optional — Large Scale)
+# Wiki Search Skill
 
-BM25 full-text search for vaults that outgrow progressive loading.
+Two-tier search over the vault. The skill calls one entry point; the backend is
+chosen automatically and the choice is invisible to the agent.
 
-## When to Use
+| Tier | Backend | When | Setup |
+|---|---|---|---|
+| 1 | **ripgrep** | Default for new vaults; small vaults stay here forever | Just `rg` on PATH |
+| 2 | **SQLite FTS5** | Auto-enabled once the vault crosses ~1000 pages or 50 MB | Stdlib Python (`sqlite3` + FTS5) — no pip install |
 
-Progressive loading (index.md → synopsis scan → full read) is the
-default retrieval method and works well up to ~500 wiki pages. Beyond
-that, scanning synopses to find relevant content becomes token-expensive.
+## When to use this skill (vs the IDE's built-in Grep)
 
-Enable this skill when:
-- The vault has 500+ wiki pages
-- Query operations frequently scan many synopses before finding relevant pages
-- You need fuzzy matching (progressive loading is exact wikilink navigation)
-- Multiple people query the vault frequently
+Use **this skill** for any search whose target is *vault content* (anything
+under `wiki/`). Both backends return ranked page references with frontmatter
+metadata and a synopsis or snippet — that's what the agent needs to decide
+which page to actually read. Specifically:
 
-## Prerequisites
+- Plain content queries ("find pages about *X*") — both backends handle these.
+- Frontmatter filters (`--type meeting`, `--tag urgent`, `--status active`,
+  case-insensitive).
+- Stemming-aware queries (`running` matches `runs`, once FTS5 is active).
+- Phrase, prefix, or NEAR queries (FTS5 syntax: `"value stream"`, `market*`,
+  `kafka NEAR/5 lag`).
 
-Install dependencies (once per machine):
-```bash
-pip install bm25s[core] PyStemmer pyyaml
-```
+Use the **built-in Grep** tool for:
+- Regex queries (this skill's ripgrep tier defaults to literal substring;
+  there's no `--regex` flag).
+- Code search inside `.claude/`, `scripts/`, or other infrastructure paths.
+- Log files, configs, anything outside the `wiki/` content tree.
+- Inspecting a known file by exact path (the skill is for finding pages, not
+  reading them).
+
+The kit deliberately leaves the IDE's built-in tools unrestricted; routing is a
+prose decision the agent makes. If you (the agent) are unsure, prefer the skill
+when querying *vault content* and Grep otherwise.
 
 ## Operations
 
-### Build the Index
+The script lives at `scripts/wiki-search.py`. Run it from the vault root with
+the path to the `wiki/` directory.
 
-Run after any significant ingest session or on a schedule:
-```bash
-python scripts/wiki-search.py index wiki/
-```
-
-This creates a `.wiki-search-index/` directory inside `wiki/` containing
-the BM25 index and a metadata.json with page titles, types, and synopses.
-Add `.wiki-search-index/` to `.gitignore` — it's a derived artifact.
-
-Rebuild time: <5 seconds for 1,000 pages. <30 seconds for 10,000 pages.
-
-### Search
+### Search (the common case)
 
 ```bash
-python scripts/wiki-search.py search wiki/ "event driven architecture" --top 10
+python .claude/skills/wiki-search/scripts/wiki-search.py search wiki/ "event driven architecture"
+python .claude/skills/wiki-search/scripts/wiki-search.py search wiki/ "compliance" --tag urgent --type meeting
+python .claude/skills/wiki-search/scripts/wiki-search.py search wiki/ "kafka" --top 20
 ```
 
-Returns ranked results as markdown with wikilinks, scores, and synopses.
+The output is markdown the agent can read directly: ranked page references with
+title, type, status, tags, score (FTS5) or match-count (ripgrep), synopsis, and
+a snippet.
 
-### Using Search in the Query Operation
+### Inspect or change the backend
 
-When this skill is active, the Query operation changes:
+```bash
+# Show the current backend, last vault measurement, and recent notes
+python .claude/skills/wiki-search/scripts/wiki-search.py backend wiki/
 
-1. **Search first.** Run a BM25 query to get ranked candidate pages
-2. **Read synopses** from the search results (already included in output)
-3. **Read full content** of only the top relevant pages (depth 2)
-4. Synthesize answer as normal
+# Force ripgrep (e.g., after archiving most of the vault)
+python .claude/skills/wiki-search/scripts/wiki-search.py backend wiki/ --set ripgrep --delete-index
 
-This replaces the "read index.md → scan synopses" step with a faster,
-more targeted search. Progressive loading remains as the fallback if
-the search index is stale or missing.
+# Force FTS5 (e.g., small vault but you want stemming/snippets now)
+python .claude/skills/wiki-search/scripts/wiki-search.py backend wiki/ --set fts5
 
-### Keeping the Index Fresh
+# Restore the default (auto-detect)
+python .claude/skills/wiki-search/scripts/wiki-search.py backend wiki/ --set auto
 
-The index must be rebuilt after significant wiki changes. Options:
+# Forget the auto-flip and re-evaluate from scratch
+python .claude/skills/wiki-search/scripts/wiki-search.py backend wiki/ --reset
+```
 
-- **Manual:** Run `wiki-search.py index` after each ingest session
-- **Scheduled:** Add to a Cowork scheduled task (e.g., nightly rebuild)
-- **Git hook:** If using Git sync, add a post-merge hook that rebuilds
+### Manage the FTS5 index (only meaningful once FTS5 is active)
 
-A stale index returns slightly less accurate results but never returns
-wrong results — it just misses pages added after the last build. Claude
-can fall back to progressive loading for recently-added pages.
+```bash
+# Incremental refresh — usually unnecessary; fts5 search refreshes itself.
+python .claude/skills/wiki-search/scripts/wiki-search.py index wiki/
 
-## How It Works
+# Full rebuild — escape hatch for cases where mtime-based diffing misses
+# changes (e.g., bulk file moves that preserved mtimes).
+python .claude/skills/wiki-search/scripts/wiki-search.py index wiki/ --rebuild
+```
 
-The script scans all `.md` files in `wiki/`, extracts:
-- Title (from frontmatter or filename)
-- Tags (from frontmatter)
-- Synopsis section
-- Full body text
+## How the backend choice works
 
-It builds a BM25 index with English stemming and stop-word removal
-using the `bm25s` library (pure Python, backed by sparse matrices).
-Search queries are stemmed the same way.
+On the first search call in a session (or whenever `wiki/.wiki-search/state.json`
+ages out of its cache window), the script reads three inputs in priority order:
 
-Results include the synopsis for each hit, so the agent can assess
-relevance without reading the full page — preserving the progressive
-loading pattern at the search layer.
+1. **Explicit override** in `wiki/.wiki-search/config.yaml` — wins outright.
+2. **Persistent flip flag** in `wiki/.wiki-search/state.json` — if FTS5 was
+   previously auto-enabled, stay flipped (one-way hysteresis, no thrash).
+3. **Vault measurement** — count `.md` pages and total bytes. Cross either
+   threshold (1000 pages or 50 MB by default) and the script bootstraps the
+   FTS5 index, sets the flip flag, and uses FTS5 thereafter.
 
-## Scaling Notes
+After the decision is recorded, subsequent searches within the cache window
+(default: 1 hour, or until the vault root mtime is newer) skip the walk and
+just read the recorded backend. Per-call cost is approximately zero.
 
-| Vault size | Recommended retrieval | Rationale |
+## Freshness (FTS5)
+
+When FTS5 is the active backend, every search call performs a quick incremental
+refresh: it walks the vault, upserts pages whose `mtime` differs from the
+recorded value, and deletes entries for pages that no longer exist. The diff is
+small because most pages haven't changed, so the cost is sub-second on medium
+vaults. The user does not need to run `index --rebuild` after the first time.
+
+`index --rebuild` exists as an escape hatch — use it after bulk moves where
+mtimes are preserved, or if a kit upgrade bumps the FTS5 schema (the script
+detects the schema mismatch and rebuilds automatically on the next call).
+
+## Health checks and fallbacks
+
+The skill is designed to never leave the user without a working search:
+
+- **Index missing** — silently rebuild on next search.
+- **Schema drift** (kit upgrade changed the FTS5 schema) — wipe and rebuild
+  automatically; if even rebuild fails, fall back to ripgrep for the call.
+- **Corrupt index** (any `sqlite3.DatabaseError`) — wipe and rebuild once;
+  if rebuild also fails, fall back to ripgrep for this call and log a note.
+- **`rg` missing** — return a clear error pointing to the install command for
+  the user's OS, or suggest forcing FTS5 via config.
+- **All fallbacks log a one-line note** in `state.json` (last 20 retained) so
+  the user can see what happened by running `backend wiki/`.
+
+## Configuration (optional)
+
+By default no config file is needed. To override:
+
+```yaml
+# wiki/.wiki-search/config.yaml — commit this file to share team-wide
+kit:
+  search:
+    backend: auto                          # ripgrep | fts5 | auto (default)
+    auto_enable_threshold_pages: 1000
+    auto_enable_threshold_bytes: 50000000  # 50 MB; trips first
+    cache_window_seconds: 3600             # how long state.json is trusted
+```
+
+`config.yaml` is the only file in `.wiki-search/` that should be committed.
+`state.json` and `index.sqlite` are derived runtime artifacts; the kit's
+`.gitignore` excludes the entire `.wiki-search/` directory, so add an explicit
+`!wiki/.wiki-search/config.yaml` entry if you want to commit the config.
+
+## Scaling
+
+| Vault size | Active backend | What you do |
 |---|---|---|
-| <100 pages | Progressive loading only | Claude navigates the structure efficiently |
-| 100-500 pages | Progressive loading | Synopsis scanning is still manageable |
-| 500-2,000 pages | BM25 search (this skill) | Too many synopses to scan efficiently |
-| 2,000-10,000 pages | BM25 search + sharded index | Split index by project/domain |
-| 10,000+ pages | Consider dedicated search (Typesense, MeiliSearch) | Beyond what file-based BM25 handles well |
+| <100 pages | ripgrep | Nothing — progressive loading is usually faster anyway |
+| 100–500 pages | ripgrep | Nothing |
+| 500–1000 pages | ripgrep | Nothing; or set `backend: fts5` if queries feel slow |
+| 1000–5000 pages | **FTS5** (auto-enabled) | Nothing; first call after the flip does a one-time bootstrap |
+| 5000–50,000 pages | FTS5 | Consider sharding by major folder (one index per project) |
+| 50,000+ pages | FTS5 + sharding, or external | Beyond what file-based FTS5 handles well; consider Typesense or Meilisearch |
+
+Both backends are **lexical** by design. Synonyms (`car` ↔ `automobile`) and
+conceptual matches (`pricing strategy` ↔ `go-to-market plan`) are out of scope
+for this skill — that needs embeddings and is a different problem.
