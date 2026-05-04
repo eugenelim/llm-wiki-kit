@@ -1,0 +1,20 @@
+{
+  "skill_name": "archive-done-tasks",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Archive done tasks for order-platform.",
+      "expected_output": "Reads wiki/projects/order-platform/tasks.md; parses Done section; shows a preview grouped by completion month; on confirmation, writes monthly archive files under wiki/projects/order-platform/archive/ and clears the Done section from tasks.md; updates Synopsis counts and modified date."
+    },
+    {
+      "id": 2,
+      "prompt": "Clean up the task board — archive all done tasks across all projects.",
+      "expected_output": "Enumerates all wiki/projects/*/tasks.md files; parses each Done section; groups tasks by completion month per project; shows a combined preview; on confirmation, writes archive files for each project, clears Done sections, updates Synopsis counts and modified dates, appends to log/changelog.md."
+    },
+    {
+      "id": 3,
+      "prompt": "Move done tasks to archive for auth-service and order-platform.",
+      "expected_output": "Processes two named projects; shows a combined preview grouped by project and month; creates/appends archive files; clears Done sections; skips any tasks that are already present in the archive (duplicate guard)."
+    }
+  ]
+}
