@@ -93,6 +93,24 @@ Move between sections as state changes:
 
 Update the Synopsis counts after each change.
 
+### Archive Done Tasks
+
+When the Done section grows beyond a screen, or at sprint-end:
+
+```
+"Archive done tasks for order-platform"
+"Clean up the task board"
+```
+
+This is handled by the `archive-done-tasks` skill. It moves `- [x]` items
+from the Done section into monthly archive files at
+`wiki/projects/{slug}/archive/tasks-YYYY-MM.md`, keyed by the
+`Completed: YYYY-MM-DD` field on each task. After archiving, the Done
+section in `tasks.md` is cleared and the Synopsis counts are updated.
+
+Run `extract-accomplishments` afterward to generate a report from the
+archived tasks.
+
 ### Show Tasks by Person
 
 ```
