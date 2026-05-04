@@ -35,6 +35,8 @@ domain-specific terminology when appropriate.
 | `tool` | Tool and technology evaluations | `wiki/tools/` |
 | `cloud-tool` | Inventory item: cloud-provider tooling for agentic systems (rendered via `wiki/tools/agentic-stack/agentic-stack.base`) | `wiki/tools/agentic-stack/` |
 | `saas-contract` | Inventory item: SaaS / vendor contract record (rendered via `wiki/tools/vendors/vendors.base`) | `wiki/tools/vendors/` |
+| `review` | Retrospective synthesis (accomplishments, weekly digest) | `wiki/team-status/` or `wiki/projects/{slug}/delivery/` |
+| `task-archive` | Monthly archive of completed tasks, written by archive-done-tasks | `wiki/projects/{slug}/archive/tasks-YYYY-MM.md` |
 | `asset` | Companion page for non-text files | Co-located with asset |
 | `deliverable` | Companion page for output files | Co-located in wiki |
 
@@ -267,8 +269,12 @@ Operations available in `skills/work/`:
 - **Request tracker** — surface outstanding cross-team requests + escalations with due dates (work analog of `follow-up-tracker`)
 - **Team status** — forward-looking RAG / risks / issues / asks consolidated status page (the canonical leadership-meeting artifact)
 - **Status slides** — convert a `team-status` page into a best-practice executive PowerPoint deck
+- **Archive done tasks** — move completed tasks from `tasks.md` Done sections into monthly archive files (`archive/tasks-YYYY-MM.md`); keeps the active board clean
+- **Extract accomplishments** — synthesize a period's archived (and live) done tasks into an accomplishments report with highlights, per-project breakdown, volume table, and detected themes
 
 The status pipeline composes: `request-tracker` surfaces open asks → `team-status` consolidates Progress/Risks/Issues/Asks into a wiki page → `status-slides` produces the deck. `weekly-digest` is the backward-looking complement, not a substitute.
+
+The done-task pipeline composes: `task-tracking` manages the live board → `archive-done-tasks` moves completions to monthly archives → `extract-accomplishments` synthesizes the archives into a stakeholder-ready report.
 
 People-handling skills (shared across variants, but heavily used in work):
 
