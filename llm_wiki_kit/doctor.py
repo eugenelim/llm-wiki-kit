@@ -1,6 +1,6 @@
 """Vault-state validator behind ``wiki doctor``.
 
-Replays the journal, compares to disk, and reports six kinds of issue:
+Replays the journal, compares to disk, and reports eight kinds of issue:
 
 * ``page-drift`` — a journaled ``page.write`` whose on-disk hash no
   longer matches, with no outstanding ``page.proposal`` to explain it.
@@ -11,6 +11,13 @@ Replays the journal, compares to disk, and reports six kinds of issue:
 * ``missing`` — a journaled ``page.write`` whose file is gone.
 * ``primitive-missing`` — a journal-recorded primitive that the kit's
   catalog no longer carries (e.g. after a kit downgrade).
+* ``stale-lock`` — a ``lock.acquired`` event older than
+  ``WIKI_LOCK_STALE_HOURS`` (default 24) with no matching release
+  (``journal-locking`` spec §Doctor).
+* ``journal-corrupt`` — a malformed journal line; surfaced once with
+  the offending line number, then the remaining checks run against
+  the valid-events prefix instead of crashing the whole pass
+  (``journal-locking`` spec §Recovery).
 
 Doctor only reports. Auto-fix lives in a future ``wiki doctor --fix``
 task. The CLI surface maps a non-empty report to exit code 1; ``2`` is
@@ -20,12 +27,15 @@ reserved for internal errors raised through :class:`WikiError`.
 from __future__ import annotations
 
 import hashlib
+import os
+import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_wiki_kit import managed_regions
 from llm_wiki_kit.errors import ManagedRegionError
-from llm_wiki_kit.journal import read_events, replay_state
+from llm_wiki_kit.journal import read_events_lenient, replay_state
 from llm_wiki_kit.models import Event, ManagedRegionWriteEvent, VaultState
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
 
@@ -36,6 +46,13 @@ PENDING_PROPOSAL = "pending-proposal"
 ORPHAN = "orphan"
 MISSING = "missing"
 PRIMITIVE_MISSING = "primitive-missing"
+STALE_LOCK = "stale-lock"
+JOURNAL_CORRUPT = "journal-corrupt"
+
+# Default stale-lock threshold per ``journal-locking`` spec §Invariants.
+# Doctor reads ``WIKI_LOCK_STALE_HOURS`` on each run; this default applies
+# when the env var is absent, blank, or unparseable.
+_DEFAULT_STALE_HOURS = 24
 
 # Kit-owned vault paths. Files outside these are user-owned and invisible
 # to the orphan check by design (ADR-0004: the kit never touches user
@@ -57,6 +74,21 @@ class Issue:
     ADR-0005 reserves Pydantic for the disk-bound schemas. ``detail``
     is optional context (e.g. "region missing"); empty string by default
     so the rendered line stays compact.
+
+    Most issue kinds put a vault-relative filesystem path in ``path``
+    (``AGENTS.md``, ``skills/rogue/SKILL.md``). The one shim today is
+    ``journal-corrupt``, where ``path`` carries the 1-based line number
+    of the offending journal row as a string — there is no vault file
+    that "owns" a torn JSONL line, and the plan
+    (``docs/specs/journal-locking/plan.md`` §Steps step 6) makes this
+    the explicit contract. A future ``Issue`` refactor that splits
+    ``path`` into ``path | line`` should update both call sites at
+    once — including ``run_doctor``'s ``(kind, path, detail)`` sort
+    key, which would order ``journal-corrupt: 10`` before
+    ``journal-corrupt: 2`` (lexicographic on the line-number string)
+    the moment ``read_events_lenient`` learns to surface more than one
+    ``Corruption`` per pass. Today only one corruption is reported, so
+    the bug is latent.
     """
 
     kind: str
@@ -201,6 +233,88 @@ def check_orphans(state: VaultState, vault_root: Path) -> list[Issue]:
     return issues
 
 
+def _now() -> datetime:
+    """Wall-clock seam.
+
+    Lives in this module so tests can monkeypatch ``doctor._now`` to pin
+    "now" against a fixed datetime — sleeping in tests would be both
+    slow and flaky. Production callers never override it.
+    """
+
+    return datetime.now(UTC)
+
+
+def _stale_threshold_hours() -> int:
+    """Read ``WIKI_LOCK_STALE_HOURS`` or fall back to the 24-hour default.
+
+    Blank, unparseable, zero, or negative values fall back rather than
+    raising — ``wiki doctor`` is the diagnostic command of last resort,
+    so it must not refuse to run because an env var was mistyped.
+    Malformed values emit one warning to stderr so the user knows their
+    config was ignored.
+    """
+
+    raw = os.environ.get("WIKI_LOCK_STALE_HOURS")
+    if raw is None or raw == "":
+        return _DEFAULT_STALE_HOURS
+    try:
+        hours = int(raw)
+    except ValueError:
+        print(
+            f"wiki doctor: WIKI_LOCK_STALE_HOURS={raw!r} is not an integer; "
+            f"using default {_DEFAULT_STALE_HOURS}",
+            file=sys.stderr,
+        )
+        return _DEFAULT_STALE_HOURS
+    if hours <= 0:
+        print(
+            f"wiki doctor: WIKI_LOCK_STALE_HOURS={raw!r} is not positive; "
+            f"using default {_DEFAULT_STALE_HOURS}",
+            file=sys.stderr,
+        )
+        return _DEFAULT_STALE_HOURS
+    return hours
+
+
+def check_stale_lock(state: VaultState, threshold_hours: int) -> list[Issue]:
+    """Surface a ``stale-lock`` issue if the latest acquire has no release.
+
+    Reads ``state.held_lock`` rather than re-deriving from events: the
+    "last-acquire-wins, any-release-clears" semantics already live in
+    ``replay_state`` (``journal.py``), and a parallel walk here would
+    be a second source of truth waiting to drift. Pattern-matches the
+    rest of the doctor checks (``check_page_drift``,
+    ``check_pending_proposals``, ``check_orphans``,
+    ``check_missing``, ``check_primitive_missing``) which all consume
+    the replayed ``VaultState`` directly.
+
+    Precondition: ``threshold_hours`` must be a positive integer. The
+    only in-kit caller routes through ``_stale_threshold_hours()`` which
+    clamps; a direct caller passing zero or a negative value gets
+    "everything is stale" semantics by arithmetic, which is the caller's
+    bug to fix.
+
+    Naive (tz-less) ``HeldLock.acquired_at`` values are coerced to UTC
+    before the age subtraction. The kit's own writers always emit
+    tz-aware timestamps, but a hand-edited or externally produced
+    journal line may carry a naive one — and ``wiki doctor`` must not
+    crash on a journal it was specifically built to inspect.
+    """
+
+    holder = state.held_lock
+    if holder is None:
+        return []
+
+    acquired_at = holder.acquired_at
+    if acquired_at.tzinfo is None:
+        acquired_at = acquired_at.replace(tzinfo=UTC)
+    age = _now() - acquired_at
+    if age.total_seconds() < threshold_hours * 3600:
+        return []
+
+    return [Issue(STALE_LOCK, holder.by, f"acquired {acquired_at.isoformat()}")]
+
+
 def check_primitive_missing(state: VaultState, kit_root: Path) -> list[Issue]:
     """Installed primitives the current kit catalog no longer ships.
 
@@ -225,18 +339,28 @@ def check_primitive_missing(state: VaultState, kit_root: Path) -> list[Issue]:
 
 
 def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
-    """Replay the journal and return every issue, sorted by ``(kind, path)``."""
+    """Replay the journal and return every issue, sorted by ``(kind, path)``.
+
+    Uses ``read_events_lenient`` so a malformed line surfaces as a
+    ``journal-corrupt`` issue while the remaining checks run against the
+    valid-events prefix. Strict ``read_events`` would have raised and
+    hidden every other problem in the vault — the opposite of what
+    ``wiki doctor`` is for.
+    """
 
     journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
-    events = read_events(journal_path)
+    events, corruption = read_events_lenient(journal_path)
     state = replay_state(events)
 
     issues: list[Issue] = []
+    if corruption is not None:
+        issues.append(Issue(JOURNAL_CORRUPT, str(corruption.line), corruption.reason))
     issues.extend(check_page_drift(state, vault_root))
     issues.extend(check_managed_region_drift(events, vault_root, state))
     issues.extend(check_pending_proposals(state))
     issues.extend(check_orphans(state, vault_root))
     issues.extend(check_missing(state, vault_root))
     issues.extend(check_primitive_missing(state, kit_root))
+    issues.extend(check_stale_lock(state, _stale_threshold_hours()))
     issues.sort(key=lambda issue: (issue.kind, issue.path, issue.detail))
     return issues
