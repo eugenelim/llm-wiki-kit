@@ -391,7 +391,12 @@ def test_resolve_recipe_primitives_is_deterministic() -> None:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RECIPES_DIR = REPO_ROOT / "recipes"
 CORE_DIR = REPO_ROOT / "core"
+TEMPLATES_DIR = REPO_ROOT / "templates"
 INITIAL_RECIPES: list[str] = ["family", "personal", "work-os"]
+# Recipes that still resolve to ``[core]`` until their primitives ship.
+# ``family`` and ``personal`` keep this shape until Tasks 13 and 15;
+# ``work-os`` expanded in Task 14 and is covered separately below.
+CORE_ONLY_RECIPES: list[str] = ["family", "personal"]
 
 
 def test_initial_recipes_present() -> None:
@@ -410,18 +415,50 @@ def test_discover_recipes_finds_three_initial_recipes() -> None:
     assert [r.name for r in found] == INITIAL_RECIPES
 
 
-def test_initial_recipes_resolve_against_live_catalog() -> None:
-    """Every shipped recipe must resolve cleanly against the live
-    catalog as it exists today — which, until Task 11, is just ``core``.
-    A recipe that names a future primitive would break this test until
-    that primitive ships."""
+def test_core_only_recipes_resolve_to_core() -> None:
+    """``family`` and ``personal`` still resolve to ``[core]`` until
+    Tasks 13 and 15 ship their primitives. A recipe that names a future
+    primitive would break this test until that primitive ships."""
 
     from llm_wiki_kit.primitives import load_primitive
 
     catalog = [load_primitive(CORE_DIR)]
-    for name in INITIAL_RECIPES:
+    for name in CORE_ONLY_RECIPES:
         recipe = load_recipe(RECIPES_DIR / f"{name}.yaml")
         ordered = resolve_recipe_primitives(recipe, catalog)
         assert [p.name for p in ordered] == ["core"], (
-            f"recipe '{name}' must resolve to [core] until Task 11+ primitives ship"
+            f"recipe '{name}' must resolve to [core] until its task ships"
         )
+
+
+def test_work_os_recipe_resolves_against_live_catalog() -> None:
+    """The ``work-os`` recipe was expanded in Task 14 and must resolve
+    against the full live catalog (core plus every primitive under
+    ``templates/``) to its declared closure plus the transitive
+    ``requires:`` of those primitives (``people`` and ``meeting``)."""
+
+    from llm_wiki_kit.primitives import discover_primitives, load_primitive
+
+    catalog = [load_primitive(CORE_DIR), *discover_primitives(TEMPLATES_DIR)]
+    recipe = load_recipe(RECIPES_DIR / "work-os.yaml")
+    ordered = resolve_recipe_primitives(recipe, catalog)
+
+    expected = {
+        "action-item-rollup",
+        "core",
+        "customer-feedback",
+        "customers",
+        "decision",
+        "domains",
+        "interview",
+        "meeting",
+        "onboarding-pack",
+        "people",
+        "projects",
+        "renewal-reminders",
+        "stakeholder-map-refresh",
+        "stakeholder-update",
+        "status-synthesis",
+        "vendor-contract",
+    }
+    assert {p.name for p in ordered} == expected

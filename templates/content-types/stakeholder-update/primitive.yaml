@@ -1,0 +1,16 @@
+name: stakeholder-update
+kind: content-type
+version: 0.1.0
+description: >-
+  Stakeholder-update page type. Ships an ingester skill (paste a status note,
+  email draft, or slide bullets and get a structured update page), a page
+  template, and the schema contributions that make `type: stakeholder-update`
+  a valid value with update-scoped fields. Feeds `status-synthesis`.
+requires:
+  - people
+  - projects
+contributes_to:
+  - file: frontmatter.schema.yaml
+    region: types
+  - file: frontmatter.schema.yaml
+    region: fields

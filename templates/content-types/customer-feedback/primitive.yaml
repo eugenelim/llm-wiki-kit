@@ -1,0 +1,17 @@
+name: customer-feedback
+kind: content-type
+version: 0.1.0
+description: >-
+  Customer-feedback page type. Ships an ingester skill (paste a support
+  ticket, sales call note, survey response, or NPS comment and get a
+  structured feedback page), a page template, and the schema contributions
+  that make `type: customer-feedback` a valid value with feedback-scoped
+  fields. Feeds `status-synthesis` and `onboarding-pack`.
+requires:
+  - customers
+  - people
+contributes_to:
+  - file: frontmatter.schema.yaml
+    region: types
+  - file: frontmatter.schema.yaml
+    region: fields
