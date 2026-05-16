@@ -290,8 +290,8 @@ backward. The numbers move with the data, not the SKILL prose.
 ## Model selection
 
 Every subagent file declares `model:` in its frontmatter explicitly. The
-`lint-agent-artifacts.sh` linter (lands in PR-5 of RFC-0002) will
-enforce this. The current choices:
+[`lint-agent-artifacts.sh`](../tools/lint-agent-artifacts.sh) linter
+enforces this. The current choices:
 
 | Subagent | Model | Why |
 |---|---|---|
@@ -373,8 +373,8 @@ journal gotchas, not every lesson the repo ever learned) and
 append-only (a lesson that stops being true gets a *new* entry citing
 the old one, not an edit — which keeps history honest).
 
-**How agents see it.** `tools/hooks/session-start.sh` (lands in PR-5 of
-RFC-0002) reads the file at session open and prints the entries —
+**How agents see it.** [`tools/hooks/session-start.sh`](../tools/hooks/session-start.sh)
+reads the file at session open and prints the entries —
 optionally filtered by a path or narrower glob. Matching uses Python's
 `fnmatch` with the caller's `--scope` value as the *path* argument and
 the entry's stored glob as the *pattern*, so an agent working in
@@ -392,14 +392,16 @@ they are "the enforcement triplet":
 
 | Layer | Mechanism | What it gates |
 |---|---|---|
-| Caps | [`tools/check-done.py`](../tools/check-done.py) | Iteration cap, token budget, plan approval, fingerprint stasis (see [§ Work-loop state](#work-loop-state)). **Lands in PR-1 (this PR).** |
-| Artifacts | `tools/lint-agents-md.sh`, `tools/lint-agent-artifacts.sh`, `tools/lint-skill-deps.sh`, `tools/lint-knowledge.sh` | Shape, manifest, and content hygiene for every `.claude/`, `AGENTS.md`, and `docs/knowledge/` artifact. **Lands in PR-5 of RFC-0002** (forthcoming). |
-| Aggregation | `tools/hooks/pre-pr.sh` | Runs caps + artifact linters together before a PR opens. CI mirrors this. **Lands in PR-5 of RFC-0002** (forthcoming). |
+| Caps | [`tools/check-done.py`](../tools/check-done.py) | Iteration cap, token budget, plan approval, fingerprint stasis (see [§ Work-loop state](#work-loop-state)). |
+| Artifacts | [`tools/lint-agents-md.sh`](../tools/lint-agents-md.sh), [`tools/lint-agent-artifacts.sh`](../tools/lint-agent-artifacts.sh), [`tools/lint-skill-deps.sh`](../tools/lint-skill-deps.sh), [`tools/lint-knowledge.sh`](../tools/lint-knowledge.sh) | Shape, manifest, and content hygiene for every `.claude/`, `AGENTS.md`, and `docs/knowledge/` artifact. |
+| Aggregation | [`tools/hooks/pre-pr.sh`](../tools/hooks/pre-pr.sh) | Runs caps + artifact linters together before a PR opens, plus the kit's `ruff` / `mypy` / `pytest` gates. CI mirrors this. |
 
-Until PR-5 lands, the artifact and aggregation layers are advisory —
-the caps script is the only mechanical gate of the triplet that is
-already wired up. The full triplet wires into CI as a single
-`pre-pr.sh` job on top of `ruff` / `mypy` / `pytest`.
+All three layers are wired up. The artifact linters and the
+aggregation hook run in CI via
+[`.github/workflows/agent-artifacts.yml`](../.github/workflows/agent-artifacts.yml);
+the existing [`ci.yml`](../.github/workflows/ci.yml) keeps running the
+language gates (`ruff` / `mypy` / `pytest`) independently on the
+Python matrix.
 
 ## Scaling profiles
 
@@ -432,8 +434,8 @@ files, not through edits to the agent bodies.
 
 The same work-loop can run unattended — a fresh Claude Code session
 per iteration, state in files only. That's a Ralph loop. The harness
-and operating instructions land at `tools/ralph.sh` and
-[`tools/RALPH.md`](../tools/RALPH.md) in PR-4 of RFC-0002 (forthcoming).
+and operating instructions live at [`tools/ralph.sh`](../tools/ralph.sh)
+and [`tools/RALPH.md`](../tools/RALPH.md).
 
 Reach for Ralph only when *all* of these hold:
 
