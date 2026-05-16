@@ -34,3 +34,8 @@ htmlcov/
 # To commit a config, add `!wiki/.wiki-search/config.yaml` after this line.
 .wiki-search/
 .wiki-search-index/   # legacy location — pre-2026 wiki-search builds
+
+# Work-loop session scratch (per docs/CONVENTIONS.md § Work-loop state)
+docs/specs/*/state.json
+docs/specs/*/notes/
+.worktrees/
