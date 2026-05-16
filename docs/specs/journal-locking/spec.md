@@ -77,7 +77,10 @@ contract.
   file is older than 24 hours (configurable; see Invariants).
 - **Two new event classes**:
   - `LockAcquiredEvent(timestamp, by, reason: str | None = None)`
-  - `LockReleasedEvent(timestamp, by)`
+  - `LockReleasedEvent(timestamp, by, reason: str | None = None)` —
+    the optional `reason` carries the audit string for the
+    stale-holder reclaim path (`reason="stale lock reclaimed"`,
+    see §Edge cases). Defaults to `None` for ordinary releases.
   Both go into the `Event` discriminated union per ADR-0002's additive
   schema-evolution rule.
 
@@ -87,7 +90,9 @@ contract.
 
 1. `append_event(journal_path, event)` opens the journal in append mode.
 2. Calls `fcntl.flock(fh.fileno(), LOCK_EX)` — blocks if another
-   process holds it; the kit prefers blocking to racing.
+   process holds it; the kit prefers blocking to racing for every
+   writer except `wiki lock acquire`, which probes with `LOCK_NB`
+   (see "Acquire-side contention semantics" below).
 3. Validates `event` via the existing Pydantic discriminated union.
 4. Writes the JSON line + `\n`.
 5. `fh.flush(); os.fsync(fh.fileno())` — the line is durable on disk
@@ -110,6 +115,20 @@ contract.
 5. On block exit (exception), still appends `LockReleasedEvent` (in a
    `finally` clause) before re-raising. The lock never outlives the
    process.
+
+### Acquire-side contention semantics — non-blocking CLI
+
+`append_event` takes `LOCK_EX` (blocking) so two concurrent writers
+serialize cleanly. `wiki lock acquire` is the exception: a CLI user who
+sees their shell hang on a held lock cannot easily reason about
+who's holding it or when it'll release, and ctrl-C against a blocked
+`flock(2)` is platform-dependent. The CLI therefore probes with
+`LOCK_EX | LOCK_NB` against a transient fd and exits
+`LOCK_HELD_EXIT` (= 3) on `EAGAIN`/`EWOULDBLOCK`. Only the CLI
+acquire path takes this non-blocking shortcut — every other caller
+(every `append_event`, every `transaction()` from the runner) stays
+blocking. The `wiki-lock` SKILL.md treats a non-zero exit as
+"surface to the user, do not retry", which is the agreed UX.
 
 ### Happy path — Claude-session manual hold (`wiki lock acquire`)
 
@@ -191,7 +210,10 @@ across several tool calls, and releases at the end. This is the
   (`journal_path.parent.mkdir(parents=True, exist_ok=True)`).
   Unchanged.
 - **`release --by` mismatch without `--force`** — `WIKI_ERROR_EXIT`
-  with `lock held by <other>; pass --force to override`.
+  with `lock held by <other> since <iso>; pass --force to override`.
+  The acquired-at timestamp is included so an operator running the
+  command can decide whether the holder is stale (and worth
+  ``--force``-ing) without consulting `wiki doctor` separately.
 
 ## Invariants
 
