@@ -49,9 +49,8 @@ entry:
 {"id": "K-0001", "kind": "gotcha", "scope": "llm_wiki_kit/**", "title": "Never bypass write_helper.safe_write() for vault writes", "body": "Drift detection is load-bearing. Any kit code that writes into a user's vault must route through write_helper.safe_write(); raw open()/write_text() calls escape the journal and break wiki doctor's reconciliation. See AGENTS.md § Things you should not do without asking.", "source": "AGENTS.md", "created": "2026-05-16", "updated": "2026-05-16"}
 ```
 
-<!-- schema-drift test in tools/lint-knowledge.sh (lands in PR-5 of
-     RFC-0002) parses the field table below and the `kind` row. Keep
-     each field's name backticked in the first column on a single line;
+<!-- The schema below is enforced by tools/lint-knowledge.sh. Keep each
+     field's name backticked in the first column on a single line;
      keep every kind backticked on the kind row. Don't split rows
      across lines. -->
 
@@ -63,14 +62,14 @@ entry:
 | `title` | string | One-line summary; aim for under 80 characters. |
 | `body` | string | The lesson itself. A paragraph or two is enough; if you find yourself writing more, the entry probably wants to be split. |
 | `source` | string | Where this came from: `AGENTS.md`, `ADR-0003`, `RFC-0002`, `PR#42`, `issue#13`, etc. |
-| `created` | `YYYY-MM-DD` | Date the entry was first added. |
-| `updated` | `YYYY-MM-DD` | Date the entry was last clerically corrected; equal to `created` until then. |
+| `created` | `YYYY-MM-DD` | Date the entry was first added. **Kit-specific extension** (not in the upstream `agent-ready-repo` schema). |
+| `updated` | `YYYY-MM-DD` | Date the entry was last clerically corrected; equal to `created` until then. **Kit-specific extension** (not in the upstream `agent-ready-repo` schema). |
 
 The format is JSONL (one JSON object per line, no commas, no wrapping
 array) so it grows by append and reads line-by-line.
-`tools/lint-knowledge.sh` validates the file and
-`tools/hooks/session-start.sh` reads it (both land in PR-5 of
-RFC-0002).
+[`tools/lint-knowledge.sh`](../../tools/lint-knowledge.sh) validates
+the file and [`tools/hooks/session-start.sh`](../../tools/hooks/session-start.sh)
+reads it.
 
 ## Curation
 
@@ -103,7 +102,8 @@ shape, the canonical home is here. Other kinds of learning still go
 where they already belong (AGENTS.md, ADRs, `docs/architecture/`,
 skill bodies).
 
-The session-start hook (`tools/hooks/session-start.sh`, lands in PR-5
-of RFC-0002) reads this file and prints the entries — optionally
-filtered by glob — so a fresh agent session starts with the relevant
-patterns already in context.
+The session-start hook
+([`tools/hooks/session-start.sh`](../../tools/hooks/session-start.sh))
+reads this file and prints the entries — optionally filtered by glob
+— so a fresh agent session starts with the relevant patterns already
+in context.

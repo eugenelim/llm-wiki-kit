@@ -1,0 +1,88 @@
+name: agent-artifacts
+
+# Mirrors the enforcement triplet documented in
+# docs/CONVENTIONS.md § Enforcement (the triplet):
+#   caps        — tools/check-done.py
+#   artifacts   — the four lint-*.sh scripts
+#   aggregation — tools/hooks/pre-pr.sh
+#
+# Independent of ci.yml; ci.yml continues to run ruff/mypy/pytest on
+# its own matrix. The `aggregation` job here will re-run those gates
+# end-to-end via pre-pr.sh, which is mild duplication and the point —
+# pre-pr.sh is the gate a contributor runs locally, so CI checks the
+# gate itself.
+
+on:
+  pull_request:
+    paths:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'docs/**'
+      - '.claude/**'
+      - 'tools/**'
+      - '.github/workflows/agent-artifacts.yml'
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  artifacts:
+    name: Artifact hygiene (linters)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: AGENTS.md hygiene
+        run: bash tools/lint-agents-md.sh
+      - name: Agent-artifact frontmatter
+        run: bash tools/lint-agent-artifacts.sh
+      - name: Skill-dep manifests
+        run: bash tools/lint-skill-deps.sh
+      - name: Knowledge base
+        run: bash tools/lint-knowledge.sh
+
+  caps:
+    name: Caps enforcer (check-done.py)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Seed a healthy state.json so check-done exercises a real input
+        run: |
+          mkdir -p docs/specs/_ci-smoke
+          sed 's/"pending"/"approved"/' docs/_templates/state.json \
+            > docs/specs/_ci-smoke/state.json
+      - name: check-done.py --phase plan
+        run: python3 tools/check-done.py docs/specs/_ci-smoke/state.json --phase plan
+      - name: check-done.py --phase implement
+        run: python3 tools/check-done.py docs/specs/_ci-smoke/state.json --phase implement
+      - name: check-done.py --phase review
+        run: python3 tools/check-done.py docs/specs/_ci-smoke/state.json --phase review
+
+  aggregation:
+    name: Aggregation (pre-pr.sh end-to-end)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Seed a healthy state.json so the aggregator exercises check-done
+        run: |
+          mkdir -p docs/specs/_ci-smoke
+          sed 's/"pending"/"approved"/' docs/_templates/state.json \
+            > docs/specs/_ci-smoke/state.json
+      - name: Run pre-pr aggregator
+        run: bash tools/hooks/pre-pr.sh
