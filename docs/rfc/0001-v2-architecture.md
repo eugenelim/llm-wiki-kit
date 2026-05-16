@@ -1,0 +1,306 @@
+# RFC-0001: v2 — common core + primitives + recipes architecture
+
+- **Status:** Accepted
+- **Author:** maintainer
+- **Created:** 2026-05-15
+- **Discussion:** PR opened against `main` from the porting branch
+- **Resolves to:** ADRs 0001–0005, the 22 migration tasks listed below,
+  and (eventually) the `v2.0.0` tag
+
+> This RFC is the migration plan. It summarizes the goal architecture,
+> the rationale, and the task-by-task sequence to land it. Each task is
+> one Claude Code session (~60–90 min) producing one PR.
+
+## Summary
+
+Evolve `llm-wiki-kit` from a hand-shaped three-variant template repo
+(family / work / personal) into a Python package + template catalog
+architecture: a common core that's always installed, a catalog of
+droppable primitives (ontologies, content-types, operations,
+infrastructure), and a small set of recipes that compose primitives
+for specific audiences.
+
+The migration lives on a working branch alongside `main`; the existing
+v1 tree is preserved under `archive/v1-*/` for reference. v2 ships as
+`pip install llm-wiki-kit==2.0.0` once all 22 tasks land.
+
+## Motivation
+
+v1 ships three forks of the same wiki (`vault-templates/{family,work,personal}/`)
+plus a `shared/` directory the sync scripts copy into each. This worked
+to bootstrap the concept but produces three growing failure modes:
+
+1. **Drift between variants.** Each variant is hand-edited. Improvements
+   to one don't propagate. The `scripts/sync-shared.sh` / `check-sync.sh`
+   pair patches one slice of this but the rest is manual.
+2. **No upgrade path for users.** A user who installed v1 family and
+   wants the latest medical-record handling has no way to pull it in
+   without manually diffing against the template repo.
+3. **Adding a primitive is a multi-variant edit.** Every new content
+   type touches at least one variant's CLAUDE.md, schema, and skill
+   directory. The friction discourages incremental contribution.
+4. **No journal, no drift detection.** v1 has no model of "what the kit
+   wrote vs. what the user changed." Any future automation has to
+   reinvent this.
+
+v2 replaces the multi-variant template tree with a primitive catalog
+plus recipes that compose primitives. The user installs a CLI
+(`pipx install llm-wiki-kit`), runs `wiki init --recipe family`, and
+gets a vault with skills, schemas, and journal already wired up. They
+upgrade by re-running `wiki upgrade`. They add capabilities with
+`wiki add content-type:interview`. Drift detection prevents the kit
+from clobbering their edits.
+
+## Proposal
+
+### Goal architecture
+
+Three layers:
+
+1. **Common core** (`core/`) — the always-installed engine. The
+   AGENTS-style contract for the vault, the frontmatter schema baseline,
+   the journal, the write-helper, the `wiki-conflict` skill, the
+   `wiki-lock` skill, the ingest orchestrator's routing logic, lint
+   baseline, search baseline.
+2. **Catalog of primitives** (`templates/`) — independently-versioned,
+   droppable building blocks. Four kinds:
+   - *Ontology primitives* — folder shapes with seed files (`people/`,
+     `food/`, `medical/`, `projects/`, `customers/`, …).
+   - *Content-type primitives* — an ingester plus page template plus
+     frontmatter contribution (`meeting`, `recipe`, `medical-record`,
+     `decision`, …).
+   - *Operation primitives* — a contract plus skill plus eval fixture
+     (`weekly-digest`, `meal-planning`, `stakeholder-map-refresh`, …).
+   - *Infrastructure primitives* — cross-cutting (`research` dispatch,
+     `research-perplexity`, `research-gemini`,
+     `research-semantic-scholar`, search backends).
+3. **Recipes** (`recipes/`) — named YAML files that compose primitives
+   into a coherent vault for one audience. Initial recipes: `family`,
+   `work-os`, `personal`.
+
+### Foundational decisions (the five ADRs)
+
+The shape rests on five load-bearing decisions, captured as ADRs:
+
+- **[ADR-0001](../adr/0001-stdlib-rendering-not-jinja.md)** — stdlib
+  `str.format_map` for the handful of files that need interpolation,
+  byte-for-byte copy for everything else. No Jinja, no delimiter
+  collision with Obsidian Templater.
+- **[ADR-0002](../adr/0002-journal-as-state-truth.md)** — a single
+  append-only JSONL at `.wiki.journal/journal.jsonl` is the source of
+  truth for vault state. No separate manifest or lockfile.
+- **[ADR-0003](../adr/0003-managed-regions-for-shared-files.md)** —
+  shared infrastructure files (`AGENTS.md`,
+  `frontmatter.schema.yaml`, `.claude/research-providers.yaml`) use
+  `<!-- BEGIN MANAGED: id --> ... <!-- END MANAGED: id -->` markers so
+  multiple primitives can contribute without clobbering user edits.
+- **[ADR-0004](../adr/0004-drift-detection-and-proposal-flow.md)** —
+  every kit write to a user vault goes through `safe_write`; on hash
+  drift, a `.proposed` sidecar is written and the `wiki-conflict`
+  skill helps the user merge.
+- **[ADR-0005](../adr/0005-pydantic-for-disk-bound-schemas.md)** —
+  every type that crosses disk is a Pydantic v2 model; the journal
+  uses Pydantic's native discriminated-union support.
+
+### Runtime constraints
+
+- Python ≥3.11.
+- Runtime deps: `pyyaml`, `pydantic>=2`, stdlib. New runtime deps
+  require a new ADR.
+- The kit is a CLI + library. It does not include an LLM; the user
+  brings their own Claude (or other agent) which reads `AGENTS.md` and
+  the SKILL.md files.
+
+### CLI surface (target)
+
+```
+wiki init --recipe <name> <path>     # create a new vault
+wiki add <kind>:<name>               # install a primitive into the current vault
+wiki upgrade [--primitive <name>]    # upgrade installed primitives to latest
+wiki doctor                          # validate vault state against journal
+wiki ingest <source>                 # route to the right ingester
+wiki run <operation>                 # run an operation
+wiki research <query>                # dispatch to a configured research provider
+wiki search <query>                  # ripgrep/FTS5 over the vault
+wiki journal {tail,grep,explain}     # read the journal
+```
+
+### What changes vs. v1
+
+| v1 | v2 |
+|---|---|
+| Three hand-edited vault templates | One core + a catalog + three recipes |
+| `shared/` copied via shell scripts | Primitive contributions composed by Python |
+| No state model | Append-only Pydantic-validated JSONL journal |
+| No drift detection | `safe_write` + proposal sidecars + `wiki-conflict` skill |
+| Bash sync scripts | `pip install llm-wiki-kit`; `wiki upgrade` |
+| Per-variant CLAUDE.md | One `core/files/AGENTS.md` with managed regions |
+| Research-provider configs in `.claude/` per variant | `infrastructure/research-*` primitives, opt-in across all recipes |
+
+### Migration sequence (the 22 tasks)
+
+Each task is one Claude Code session producing one PR. Inputs/outputs/
+acceptance are in the migration plan artifact retained at
+`.context/attachments/pasted_text_2026-05-15_22-00-26.txt` for the full
+detail.
+
+#### Phase A — Foundation (sequential)
+
+1. **Task 1 — Charter, RFC, ADRs.** AGENTS.md, CHARTER, this RFC, ADRs
+   0001–0005, doc templates. *(This task.)*
+1. **Task 2 — Python package skeleton.** `pyproject.toml`, `wiki` CLI
+   entry point with stubbed subcommands, CI workflow.
+1. **Task 3 — Pydantic models.** `models.py` with `Primitive`, `Recipe`,
+   the discriminated `Event` union (one class per event type),
+   `OperationContract`, plus `errors.py`.
+1. **Task 4 — Journal module.** `journal.py` with append / read /
+   replay over the validated event union.
+1. **Task 5 — Write helper.** `write_helper.py` with `safe_write` and
+   the proposal sidecar flow.
+
+#### Phase B — Render and load (sequential)
+
+6. **Task 6 — Managed-region parser.** `managed_regions.py` and
+   integration with `safe_write`.
+1. **Task 7 — Render module.** `render.py` with `SafeDict` and the
+   `INTERPOLATED_FILES` allowlist.
+1. **Task 8 — Primitive loader + the `core` primitive.** First real
+   primitive, with all baseline skills.
+1. **Task 9 — Recipe loader.** `recipes.py` and the three initial
+   recipe files.
+1. **Task 10 — `wiki init` end-to-end.** First working command — a
+   vault with only the core primitive renders correctly.
+
+#### Phase C — Primitives (parallelizable after Task 11)
+
+11. **Task 11 — Three primitives end-to-end.** `people` (ontology),
+    `meeting` (content-type), `weekly-digest` (operation). Proves the
+    primitive model.
+1. **Task 12 — `wiki add` and `wiki doctor`.** Lifecycle commands.
+1. **Task 13 — Family-recipe primitives.** `food`, `medical`, `trips`,
+    `vendors` ontologies; `recipe`, `medical-record`, `trip-doc`,
+    `receipt`, `tax-document`, `action-item` content-types;
+    `meal-planning`, `trip-prep`, `follow-up-tracker`,
+    `medical-summary` operations. Biggest task — split across two
+    sessions if needed.
+1. **Task 14 — Work-os-recipe primitives.** `projects`, `domains`,
+    `customers` ontologies; `stakeholder-update`, `vendor-contract`,
+    `customer-feedback`, `interview`, `decision` content-types;
+    `stakeholder-map-refresh`, `action-item-rollup`,
+    `renewal-reminders`, `onboarding-pack`, `status-synthesis`
+    operations.
+1. **Task 15 — Personal recipe.** Mostly the recipe file plus identity
+    stubs; reuses primitives from the other two.
+
+#### Phase D — Runtime (sequential)
+
+16. **Task 16 — `wiki ingest` + orchestrator.** Content-type routing,
+    detection signals.
+1. **Task 17 — `wiki run` + operation execution.** Contract-driven.
+1. **Task 18 — Research dispatch + Perplexity.** Port v1 research code
+    from `archive/v1-skills/shared/` and `archive/v1-scripts/`. Becomes
+    `infrastructure:research` + `infrastructure:research-perplexity`.
+1. **Task 19 — Gemini Deep Research + Semantic Scholar providers.**
+    Complete the research-provider trio. All three are opt-in.
+
+#### Phase E — Quality and ship (sequential)
+
+20. **Task 20 — Eval harness.** `trigger/`, `outcome/`, `provenance/`,
+    `conflict/`, `research/` evals. Drives Claude Code via subprocess.
+1. **Task 21 — Example vaults and tutorials.** `family-mini/`,
+    `work-os-mini/`, the first two tutorials, conflict-resolution
+    how-to.
+1. **Task 22 — README, ROADMAP, v2.0.0.** Final pass, merge to main,
+    tag the release.
+
+The pre-flight (v2 branch creation, v1-tree archive) is described in
+the migration plan artifact section 2. The archive step was deferred
+to a later task once it becomes necessary — Tasks 1–17 don't require
+the v1 tree to be moved.
+
+### Per-task prompt template
+
+For each task, open a fresh Claude Code session and use:
+
+```
+Work on Task <N> from docs/rfc/0001-v2-architecture.md.
+
+Read:
+- docs/rfc/0001-v2-architecture.md (section "Task <N>")
+- docs/adr/000<X>-*.md (the relevant ADRs)
+- The most recent commits on the working branch
+- Anything under archive/v1-*/ that's relevant
+
+Produce exactly the outputs listed for Task <N>, nothing more. Don't
+preview or start later tasks. Don't add runtime dependencies beyond
+pyyaml, pydantic, and stdlib without writing a new ADR first.
+
+Acceptance criteria are in the task spec. When you're done, run the
+tests, run `wiki doctor` if it exists yet, and commit with a message
+in the format: `v2: task <N> - <one-line summary>`.
+
+If anything in the task spec is unclear, stop and ask before proceeding.
+```
+
+## Alternatives
+
+### Alt 1: Start a fresh repo (`llm-wiki-kit-v2`)
+
+Considered. Loses because the v1 git history, issue tracker, and stars
+all live under the existing name, and the v1 tree is genuinely useful
+reference material during migration. Evolving in place under a working
+branch (with `archive/v1-*/` for reference) preserves continuity at
+the cost of a busier branch graph for ~3 months.
+
+### Alt 2: Keep multi-variant templates, add a sync engine
+
+Considered. Loses because the variants drift faster than scripted sync
+can keep up, and there's no clean upgrade path for end users. The
+primitive model is the structural fix; sync is a workaround.
+
+### Alt 3: Build on an existing tool (cookiecutter, copier, yeoman)
+
+Considered. Cookiecutter and Copier are template-rendering CLIs but
+don't model state, drift, or composition of multiple primitives into
+one output. We'd be reimplementing most of the kit *and* paying their
+dep cost. Stdlib + Pydantic costs less.
+
+### Alt 4: One monolithic recipe (skip primitives)
+
+Considered. Loses because the audiences are too different — a family
+doesn't need `stakeholder-map-refresh`, a CX lead doesn't need
+`meal-planning`. Without primitives, recipes become forks again.
+
+## Drawbacks
+
+- **Three months of two-branch maintenance.** `main` stays on v1 while
+  `v2`-work-branch progresses. Mitigated by keeping `main` frozen
+  (no v1 feature work) during the migration.
+- **The kit's API is bigger than v1's.** A CLI with nine subcommands
+  plus a primitive-authoring contract is more surface than `git clone`
+  + edit-in-place. Mitigated by the recipes hiding most of it from
+  end users; primitive authors are a smaller audience.
+- **Pydantic v2 + Python ≥3.11 floor.** Excludes users on older
+  Python installs. Mitigated: 3.11 is two years old at v2 release; we
+  document the version requirement clearly.
+
+## Unresolved questions
+
+- **What's the exact CLI library?** Migration plan suggests Click; ADR
+  not yet written. Decided at Task 2.
+- **Does `wiki init` over a non-empty folder refuse, or offer an
+  `--adopt` path?** Likely refuse by default with an explicit
+  `--adopt` flag that journals every existing file. Decided at Task 10.
+- **Recipe inheritance (`extends:`)?** Out of scope for v2.0. Tier 3
+  roadmap item.
+
+## Outcome
+
+On acceptance, this RFC produced:
+
+- Five ADRs (0001–0005) capturing the load-bearing decisions.
+- The 22-task migration sequence, with Task 1 (this set of docs)
+  shipped first.
+- A path to `v2.0.0` over ~3 months of incremental PRs.
+
+Tracking PR: opened against `main`.
