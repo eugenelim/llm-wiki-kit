@@ -158,6 +158,25 @@ across several tool calls, and releases at the end. This is the
   multi-device-syncs gets the existing pre-spec behaviour (no
   protection) plus, where flock works at all, single-device
   protection. The `wiki-lock` SKILL.md already warns about this.
+- **Filesystem rejects `flock` outright** — iCloud Drive, some SMB
+  mounts, and NFS without `lockd` raise `OSError` with one of
+  `EOPNOTSUPP` / `ENOTSUP` / `ENOLCK` (the set differs by platform
+  and mount). Behavior on the filesystem families named in the
+  previous bullet is mount- and config-dependent: an iCloud Drive
+  vault may either succeed-locally-but-not-cross-device (previous
+  bullet) or raise outright (this bullet), and the kit accepts both
+  fallback paths. On the raise path, `append_event` catches that
+  errno set, logs one `WARNING` through the `journal` module's
+  logger (`logging.getLogger(__name__)`, which resolves to
+  `llm_wiki_kit.journal`) naming ADR-0002, and continues without
+  locking — pre-spec behavior, no crash. Any other `OSError`
+  propagates (it's a real disk error); `EINTR` specifically is *not*
+  in the fallback set so PEP 475 auto-retry semantics on CPython
+  remain intact and a future refactor can't silently swallow it.
+  Warning is gated to once-per-resolved-path per process so a long
+  `wiki run` on an unsupported filesystem produces one informative
+  line, not one per event; the resolved-path keying collapses
+  symlink / relative-vs-absolute spellings of the same file.
 
 ### Error cases
 
@@ -337,3 +356,13 @@ The same list translates 1-to-1 into the construction tests in
 - **Not `wiki lock list` / introspection.** The CLI surface is
   `acquire` + `release` only. `wiki doctor` is the read path for "is
   the lock held?" — there's no need for a second tool.
+- **Not a structured journal-event signal for the unsupported-flock
+  fallback.** When `append_event` engages the fallback on an
+  unsupported filesystem the only operator-facing signal is the
+  one-shot `WARNING` log record. There is no `lock.unsupported`
+  audit event recorded in the journal itself; an operator answering
+  "did this vault run under a degraded lock regime?" reads logs, not
+  the journal. Recording a structured event is a follow-up — it's
+  an additive schema change that fits ADR-0002's evolution rule and
+  belongs with the doctor work (step 6) if `wiki doctor` ever needs
+  to surface "this vault has run unlocked".
