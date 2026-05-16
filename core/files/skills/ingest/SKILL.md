@@ -25,6 +25,27 @@ already a finished wiki page. Examples:
 If the user just wants to read or query content already in `wiki/`,
 load `wiki-search` instead.
 
+## The kit-side route step (`wiki ingest`)
+
+When the user runs `wiki ingest <source>` from a shell, the CLI does
+deterministic routing on filename, extension, URL host, and URL path
+(plus `--as <name>` for an explicit override), and appends an
+`ingest.routed` event to the journal. Three outcomes:
+
+| Outcome | Exit | What it means |
+|---|---|---|
+| single match | 0 | One content-type primitive's `routing:` rules fired. Load `skills/ingest-<name>/SKILL.md` and run its synthesis flow. |
+| ambiguous | 2 | Two or more primitives' rules matched. The CLI refuses to pick. Re-run with `--as <name>` after deciding. |
+| no match | 2 | Nothing claimed the source. Re-run with `--as <name>`, or capture the source manually. |
+
+See the latest decision any time with `wiki journal tail -n 5`. The
+kit's CLI never fetches the URL, parses the PDF, or invokes you — that
+content-type SKILL.md does, once the route is in the journal.
+
+When the user just *describes* a source in chat (no shell), there is no
+journaled route. Follow the detection guidance below to pick the
+content-type yourself, then run the same shared flow.
+
 ## The two axes
 
 ```
@@ -110,9 +131,12 @@ ingest runs these steps:
    conflicting claims about the same entity / decision. Use
    `wiki-search` with a tight query. If found, surface the conflict
    and ask whether to update the old page, merge, or note divergence.
-3. **Write.** Run `wiki ingest <source>` (or save through the CLI from
-   your tool harness). The CLI routes the write through the kit's
-   drift-protected write path, journals it, and creates the page.
+3. **Write.** The content-type ingester produces the structured page
+   body; emit it through the kit's drift-protected write path so the
+   journal records the page. `wiki ingest <source>` only handles the
+   *routing* decision (see the kit-side route step above) — the page
+   write itself happens via the same `safe_write`-backed path every
+   primitive uses.
 4. **Extract facts / tasks.** Anything the page asserts about a person,
    project, or domain should propagate: pull facts into the relevant
    wiki pages, push action items into the appropriate tasks list.

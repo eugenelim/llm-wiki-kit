@@ -9,6 +9,10 @@ description: >-
   `wiki/vendors/`; warranty and tax-relevant items surface as flags.
 requires:
   - vendors
+routing:
+  filename_patterns:
+    - "*receipt*"
+    - "*-receipt-*"
 contributes_to:
   - file: frontmatter.schema.yaml
     region: types

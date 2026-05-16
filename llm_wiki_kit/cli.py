@@ -22,9 +22,11 @@ from pathlib import Path
 from llm_wiki_kit import __version__
 from llm_wiki_kit.doctor import format_issue, run_doctor
 from llm_wiki_kit.errors import WikiError
+from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
 from llm_wiki_kit.install import install_primitives, validate_contributions
 from llm_wiki_kit.journal import append_event, read_events, replay_state
 from llm_wiki_kit.models import (
+    IngestRoutedEvent,
     Primitive,
     PrimitiveKind,
     Recipe,
@@ -39,10 +41,12 @@ from llm_wiki_kit.recipes import CORE_PRIMITIVE_NAME, load_recipe, resolve_recip
 
 INSTALL_VEHICLE_INIT = "wiki-init"
 INSTALL_VEHICLE_ADD = "wiki-add"
+INGEST_VEHICLE = "wiki-ingest"
 
 NOT_IMPLEMENTED_EXIT = 1
 WIKI_ERROR_EXIT = 2
 DOCTOR_ISSUES_EXIT = 1
+INGEST_ROUTE_FAILED_EXIT = 2
 
 # Where the kit's bundled assets (``recipes/``, ``core/``, ``templates/``)
 # live at runtime. We resolve them as siblings of the installed package via
@@ -374,7 +378,103 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
-    return _stub("ingest")
+    """Route ``<source>`` to a content-type primitive and journal the decision.
+
+    Operates on the vault at :func:`Path.cwd`, like ``wiki add`` and
+    ``wiki doctor``. The orchestrator is pure (see ``llm_wiki_kit.ingest``);
+    this handler is the I/O boundary: load the installed catalog, walk
+    routing rules, append one :class:`IngestRoutedEvent`, print a
+    one-liner to stdout or stderr, exit. The CLI never invokes Claude or
+    fetches the URL — the vault-side ``ingest-<name>/SKILL.md`` does
+    that when the user's session picks up the journaled route.
+    """
+
+    try:
+        vault_root = Path.cwd().resolve()
+        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+        if not journal_path.is_file():
+            raise WikiError(
+                f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+                "Run `wiki init <path> --recipe <name>` first."
+            )
+
+        state = replay_state(read_events(journal_path))
+
+        _, core_dir, templates_dir = _kit_paths()
+        catalog: list[Primitive] = [load_primitive(core_dir)]
+        catalog.extend(discover_primitives(templates_dir))
+        installed = [p for p in catalog if p.name in state.installed_primitives]
+
+        result = route(args.source, installed, as_override=args.as_content_type)
+
+        now = datetime.now(UTC)
+        event = _ingest_event_from_result(args.source, result, now)
+        append_event(journal_path, event)
+    except WikiError as exc:
+        print(str(exc), file=sys.stderr)
+        return WIKI_ERROR_EXIT
+
+    if isinstance(result, Routed):
+        print(
+            f"Routed {args.source} -> content-type:{result.content_type}. "
+            f"Run `ingest-{result.content_type}` in your Claude session."
+        )
+        return 0
+    if isinstance(result, Ambiguous):
+        print(
+            f"Ambiguous: {args.source} matched multiple content-types: "
+            f"{', '.join(result.candidates)}. Re-run with --as <name>.",
+            file=sys.stderr,
+        )
+        return INGEST_ROUTE_FAILED_EXIT
+    # NoMatch
+    available = ", ".join(result.available) or "(none installed)"
+    print(
+        f"No content-type matched {args.source}. Available: {available}. Re-run with --as <name>.",
+        file=sys.stderr,
+    )
+    return INGEST_ROUTE_FAILED_EXIT
+
+
+def _ingest_event_from_result(
+    source: str, result: Routed | Ambiguous | NoMatch, now: datetime
+) -> IngestRoutedEvent:
+    """Translate a ``RouteResult`` into the journaled event shape.
+
+    Every outcome — single match, ambiguous, no match — produces one
+    ``ingest.routed`` line so ``wiki doctor`` and future
+    ``journal explain`` can reconstruct what the user tried.
+    """
+
+    if isinstance(result, Routed):
+        return IngestRoutedEvent(
+            timestamp=now,
+            by=INGEST_VEHICLE,
+            source=source,
+            content_type=result.content_type,
+            candidates=[result.content_type],
+            via=result.via,  # type: ignore[arg-type]
+            signals=result.signals,
+        )
+    if isinstance(result, Ambiguous):
+        return IngestRoutedEvent(
+            timestamp=now,
+            by=INGEST_VEHICLE,
+            source=source,
+            content_type=None,
+            candidates=result.candidates,
+            via="auto",
+            signals=[],
+        )
+    return IngestRoutedEvent(
+        timestamp=now,
+        by=INGEST_VEHICLE,
+        source=source,
+        content_type=None,
+        candidates=[],
+        via="auto",
+        signals=[],
+    )
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -444,7 +544,14 @@ def build_parser() -> argparse.ArgumentParser:
     ingest = subparsers.add_parser(
         "ingest", help="Route source material to the right content-type ingester."
     )
-    ingest.add_argument("source", help="Path or URL to ingest.")
+    ingest.add_argument("source", help="Path or URL to ingest, or '-' for stdin.")
+    ingest.add_argument(
+        "--as",
+        dest="as_content_type",
+        default=None,
+        metavar="<name>",
+        help="Override auto-detection with an explicit content-type primitive name.",
+    )
     ingest.set_defaults(func=_cmd_ingest)
 
     run = subparsers.add_parser("run", help="Run a named operation.")

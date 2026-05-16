@@ -17,9 +17,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 NAME_PATTERN = r"^[a-z][a-z0-9-]*$"
 SEMVER_PATTERN = r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
@@ -55,6 +55,25 @@ class Contribution(_StrictModel):
     region: str
 
 
+class PrimitiveRouting(_StrictModel):
+    """Auto-routing rules for ``wiki ingest`` (Task 16).
+
+    Only meaningful on content-type primitives. Every list is optional; an
+    empty ``PrimitiveRouting`` is the same as having no ``routing:`` block at
+    all — the primitive is only reachable via ``wiki ingest --as <name>``.
+
+    Pattern semantics: ``filename_patterns``, ``url_domains``, and
+    ``url_path_patterns`` are matched with ``fnmatch`` (case-insensitive).
+    ``file_extensions`` are compared case-insensitively against the
+    suffix including the leading dot (``".pdf"``, not ``"pdf"``).
+    """
+
+    file_extensions: list[str] = Field(default_factory=list)
+    filename_patterns: list[str] = Field(default_factory=list)
+    url_domains: list[str] = Field(default_factory=list)
+    url_path_patterns: list[str] = Field(default_factory=list)
+
+
 class Primitive(_StrictModel):
     """The schema of a ``primitive.yaml`` manifest."""
 
@@ -64,7 +83,17 @@ class Primitive(_StrictModel):
     description: str
     requires: list[str] = Field(default_factory=list)
     contributes_to: list[Contribution] = Field(default_factory=list)
+    routing: PrimitiveRouting | None = None
     config: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _routing_only_on_content_types(self) -> Self:
+        if self.routing is not None and self.kind is not PrimitiveKind.CONTENT_TYPE:
+            raise ValueError(
+                f"primitive '{self.name}' declares routing but kind is "
+                f"'{self.kind.value}'; routing is only valid on content-type primitives"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +172,24 @@ class ManagedRegionWriteEvent(_EventBase):
     hash_algo: str = "sha256"
 
 
+class IngestRoutedEvent(_EventBase):
+    """Recorded by ``wiki ingest`` after the orchestrator picks a route.
+
+    Written on every outcome — single match, ambiguous, and no match —
+    so ``wiki doctor`` and (future) ``journal explain`` can reconstruct
+    what the user tried. Successful synthesis is recorded separately
+    by :class:`SourceIngestEvent` after the vault-side ingester writes
+    its pages.
+    """
+
+    type: Literal["ingest.routed"] = "ingest.routed"
+    source: str
+    content_type: str | None = None
+    candidates: list[str] = Field(default_factory=list)
+    via: Literal["auto", "as_flag"] = "auto"
+    signals: list[str] = Field(default_factory=list)
+
+
 class SourceIngestEvent(_EventBase):
     type: Literal["source.ingest"] = "source.ingest"
     source: str
@@ -206,6 +253,7 @@ Event = Annotated[
     | PrimitiveRemoveEvent
     | PrimitiveUpgradeEvent
     | ManagedRegionWriteEvent
+    | IngestRoutedEvent
     | SourceIngestEvent
     | PageWriteEvent
     | PageProposalEvent
