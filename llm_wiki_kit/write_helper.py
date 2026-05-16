@@ -29,8 +29,11 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
+from llm_wiki_kit import managed_regions
+from llm_wiki_kit.errors import ManagedRegionError
 from llm_wiki_kit.journal import append_event, read_events
 from llm_wiki_kit.models import (
+    ManagedRegionWriteEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -144,6 +147,105 @@ def resolve_proposal(
         journal_path,
         PageConflictResolvedEvent(timestamp=now, by=by, path=relative_path, hash=new_hash),
     )
+
+
+def safe_write_region(
+    file_path: Path,
+    region_id: str,
+    new_content: str,
+    by: str,
+    journal_path: Path,
+) -> WriteResult:
+    """Write ``new_content`` into a kit-owned managed region of a shared file.
+
+    ADR-0003 names this as the write path for shared infra files like
+    ``AGENTS.md``, ``frontmatter.schema.yaml``, ``.gitignore``, and
+    ``.claude/research-providers.yaml`` — files multiple primitives
+    contribute to via `<!-- BEGIN MANAGED: id -->` (or `# BEGIN MANAGED: id`)
+    delimiters.
+
+    Drift detection is region-scoped, not file-scoped. The kit looks up
+    the most recent ``managed_region.write`` event for ``(file, region)``
+    and compares its ``content_hash`` to the hash of the region's current
+    on-disk body. On match (or with no prior event), the region is
+    rewritten in place, the rest of the file is preserved verbatim
+    (including user edits to unmanaged content — which are invisible to
+    the kit by design, per ADR-0003 §Decision), and a
+    ``ManagedRegionWriteEvent`` is appended.
+
+    On intra-region drift, the kit doesn't touch ``file_path``. Instead
+    it writes ``<file_path>.proposed`` containing the file as it would
+    look after applying the region update (so the unmanaged user edits
+    flow through, but the user can inspect just the region delta), emits
+    a ``PageProposalEvent`` for the shared file, and updates
+    ``.obsidianignore``. The user resolves via the vault-side
+    ``wiki-conflict`` skill and the same
+    :func:`resolve_proposal` bypass as page proposals.
+
+    Raises :class:`FileNotFoundError` if ``file_path`` does not exist —
+    shared files are seeded by ``wiki init`` and the kit relies on their
+    presence to find the region markers. Raises
+    :class:`llm_wiki_kit.errors.ManagedRegionError` if ``region_id`` is
+    not present in the file.
+    """
+
+    vault_root = _vault_root(journal_path)
+    abs_path = file_path if file_path.is_absolute() else (vault_root / file_path)
+    relative_path = _relative_to_vault(abs_path, vault_root)
+
+    on_disk_text = abs_path.read_text(encoding="utf-8")
+    current_regions = managed_regions.parse(on_disk_text)
+    if region_id not in current_regions:
+        raise ManagedRegionError(f"file '{relative_path}' has no managed region '{region_id}'")
+
+    current_region_hash = _hash(current_regions[region_id].encode("utf-8"))
+    baseline_hash = _managed_region_baseline_hash(journal_path, relative_path, region_id)
+    new_region_hash = _hash(new_content.encode("utf-8"))
+    rewritten = managed_regions.update(on_disk_text, region_id, new_content)
+    now = datetime.now(UTC)
+
+    if baseline_hash is None or current_region_hash == baseline_hash:
+        abs_path.write_text(rewritten, encoding="utf-8")
+        append_event(
+            journal_path,
+            ManagedRegionWriteEvent(
+                timestamp=now,
+                by=by,
+                file=relative_path,
+                region=region_id,
+                content_hash=new_region_hash,
+            ),
+        )
+        return WriteResult.WRITTEN
+
+    proposed_abs = abs_path.with_name(abs_path.name + ".proposed")
+    proposed_abs.parent.mkdir(parents=True, exist_ok=True)
+    proposed_abs.write_text(rewritten, encoding="utf-8")
+    append_event(
+        journal_path,
+        PageProposalEvent(
+            timestamp=now,
+            by=by,
+            path=relative_path,
+            proposed_path=_relative_to_vault(proposed_abs, vault_root),
+            hash=_hash(rewritten.encode("utf-8")),
+        ),
+    )
+    _ensure_obsidianignore(vault_root)
+    return WriteResult.PROPOSAL
+
+
+def _managed_region_baseline_hash(
+    journal_path: Path, relative_file: str, region_id: str
+) -> str | None:
+    for event in reversed(read_events(journal_path)):
+        if (
+            isinstance(event, ManagedRegionWriteEvent)
+            and event.file == relative_file
+            and event.region == region_id
+        ):
+            return event.content_hash
+    return None
 
 
 def _vault_root(journal_path: Path) -> Path:
