@@ -62,3 +62,16 @@ class ManagedRegionError(WikiError):
     public contract), and ``update`` calls naming a region the file
     doesn't contain.
     """
+
+
+class PrimitiveError(WikiError):
+    """Raised by ``primitives`` for non-schema failures.
+
+    Schema failures (a malformed ``primitive.yaml`` field) flow through
+    :class:`ValidationError` so Pydantic's structured errors stay legible.
+    This class covers the kit-side concerns the migration plan calls out:
+    a missing primitive directory or manifest, malformed YAML, a closed
+    set passed to :func:`primitives.resolve_dependencies` that references
+    a primitive it doesn't contain, a duplicate primitive name in the
+    same set, and ``requires:`` cycles.
+    """
