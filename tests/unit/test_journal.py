@@ -13,11 +13,15 @@ replaying 1000 events in under 100ms.
 from __future__ import annotations
 
 import errno
+import fcntl
 import json
+import logging
+import multiprocessing
 import os
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -48,6 +52,90 @@ NOW = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
 
 def _at(seconds: int) -> datetime:
     return NOW + timedelta(seconds=seconds)
+
+
+# ---------------------------------------------------------------------------
+# Multiprocessing workers for the flock-around-append_event tests (plan step 3)
+#
+# Workers must live at module top level so ``multiprocessing`` with the
+# ``spawn`` start method can pickle and re-import them in the child process.
+# ``spawn`` is the macOS default and the safer cross-platform choice — ``fork``
+# would copy pytest's monkeypatched state into the child, which is exactly the
+# kind of cross-process leakage these tests are meant to falsify.
+# ---------------------------------------------------------------------------
+
+
+def _appender_worker(journal_str: str, by: str, count: int) -> None:
+    """Append ``count`` distinguishable ``VaultInitEvent``s as one subprocess."""
+
+    from llm_wiki_kit.journal import append_event as _append_event
+    from llm_wiki_kit.models import VaultInitEvent as _VaultInitEvent
+
+    journal = Path(journal_str)
+    for i in range(count):
+        _append_event(
+            journal,
+            _VaultInitEvent(
+                timestamp=NOW,
+                by=by,
+                vault_name=f"{by}-{i:03d}",
+                recipe="family",
+            ),
+        )
+
+
+def _flock_holder_worker(
+    journal_str: str,
+    ready_event: Any,
+    release_event: Any,
+) -> None:
+    """Open the journal, take ``LOCK_EX``, signal ready, wait for release.
+
+    Mirrors ``append_event``'s open/flock pattern so a second process's
+    ``append_event`` is forced to block in the kernel until this fd closes.
+    The lock is released implicitly at the ``with`` block exit; we never
+    write to the journal here, so the file's line count is governed entirely
+    by what the other process does.
+
+    Note: ``open("a", encoding="utf-8")`` mirrors ``append_event`` exactly
+    on purpose. Do not "simplify" to ``open(journal, "rb")`` — the lock
+    semantics are tied to the open mode and the test power depends on the
+    holder taking the same kind of fd ``append_event`` will try to take.
+    """
+
+    journal = Path(journal_str)
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    with journal.open("a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        ready_event.set()
+        # 30s is well over any plausible test scheduling delay; if the
+        # release signal never arrives the test has already failed elsewhere
+        # and we just want the holder to exit cleanly so pytest can collect
+        # the report rather than hang.
+        release_event.wait(timeout=30)
+
+
+def _blocked_appender_worker(
+    journal_str: str,
+    started_event: Any,
+    done_event: Any,
+) -> None:
+    """Signal ``started``, call ``append_event``, signal ``done``."""
+
+    from llm_wiki_kit.journal import append_event as _append_event
+    from llm_wiki_kit.models import VaultInitEvent as _VaultInitEvent
+
+    started_event.set()
+    _append_event(
+        Path(journal_str),
+        _VaultInitEvent(
+            timestamp=NOW,
+            by="blocked-appender",
+            vault_name="home",
+            recipe="family",
+        ),
+    )
+    done_event.set()
 
 
 # ---------------------------------------------------------------------------
@@ -560,3 +648,344 @@ def test_replay_1000_events_under_100ms() -> None:
     elapsed = time.perf_counter() - start
     assert elapsed < 0.1, f"replay of 1000 events took {elapsed * 1000:.1f}ms (budget: 100ms)"
     assert len(state.page_writes) == 50
+
+
+# ---------------------------------------------------------------------------
+# Mutual exclusion: fcntl.flock around append_event (journal-locking plan
+# step 3 / spec §Mutual exclusion / qB2)
+# ---------------------------------------------------------------------------
+
+
+def test_append_event_takes_lock_ex_on_journal_fd_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``append_event`` calls ``fcntl.flock(LOCK_EX)`` on the journal fd
+    before writing.
+
+    Discriminating test for plan step 3: the load-style concurrent test
+    above can pass even when locking is broken on macOS APFS with small
+    lines (single-syscall atomic writes), and the standalone-holder test
+    only asserts behavior under a *foreign* lock. A future refactor that
+    skipped ``flock`` under some condition (e.g. step 4's planned
+    ``ContextVar`` reuse) could regress per-call locking without either
+    test failing. This counter-style probe pins "every ``append_event``
+    call takes ``LOCK_EX`` on the journal fd it just opened" — the same
+    pattern used by ``test_append_event_fsyncs_before_returning`` for
+    fsync. Matched-inode check is the same proof shape as the fsync-fd
+    test (``os.fstat(fd).st_ino``).
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    calls: list[tuple[int, int]] = []
+    real_flock = fcntl.flock
+
+    def capturing_flock(fd: int, operation: int) -> None:
+        calls.append((os.fstat(fd).st_ino, operation))
+        real_flock(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", capturing_flock)
+    append_event(
+        journal,
+        VaultInitEvent(timestamp=NOW, by="core", vault_name="home", recipe="family"),
+    )
+
+    journal_inode = os.stat(journal).st_ino
+    assert calls == [(journal_inode, fcntl.LOCK_EX)], (
+        f"expected exactly one flock(LOCK_EX) on the journal fd; got {calls}"
+    )
+
+
+def test_concurrent_append_does_not_interleave_lines(tmp_path: Path) -> None:
+    """Two processes appending 100 events each produce 200 valid JSONL lines.
+
+    Spec invariant (``docs/specs/journal-locking/spec.md`` §Mutual
+    exclusion, qB2): two simultaneous ``append_event`` calls in different
+    processes cannot interleave bytes within a single line. Order across
+    processes is not asserted — only well-formedness, count, and that
+    each process contributed its full 100.
+
+    Note on test power: small JSONL lines on macOS/Linux APFS+ext4 happen
+    to land in a single atomic ``os.write()`` syscall even without flock,
+    so this test alone wouldn't catch a regression that dropped flock on
+    this platform with these line sizes. It catches gross interleaving
+    (multi-syscall lines, future longer events, looser-semantic
+    filesystems) and pins the parses-to-200 invariant for the rest of
+    the suite to rely on; the discriminating test for "flock is actually
+    called" is ``test_append_event_blocks_when_another_process_holds_lock``
+    below, which would fail under a no-op flock.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    ctx = multiprocessing.get_context("spawn")
+    p1 = ctx.Process(target=_appender_worker, args=(str(journal), "proc-a", 100))
+    p2 = ctx.Process(target=_appender_worker, args=(str(journal), "proc-b", 100))
+    p1.start()
+    p2.start()
+    p1.join(timeout=60)
+    p2.join(timeout=60)
+    assert p1.exitcode == 0, f"proc-a exited with {p1.exitcode}"
+    assert p2.exitcode == 0, f"proc-b exited with {p2.exitcode}"
+
+    lines = journal.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 200, f"expected 200 lines, got {len(lines)}"
+    counts = {"proc-a": 0, "proc-b": 0}
+    for n, line in enumerate(lines, start=1):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            pytest.fail(
+                f"line {n} is not valid JSON (interleaved?): {exc}; line head={line[:80]!r}"
+            )
+        assert payload["type"] == "vault.init", f"line {n} unexpected type: {payload}"
+        counts[payload["by"]] = counts.get(payload["by"], 0) + 1
+    assert counts == {"proc-a": 100, "proc-b": 100}, f"per-process counts wrong: {counts}"
+
+
+def test_append_event_blocks_when_another_process_holds_lock(tmp_path: Path) -> None:
+    """``append_event`` returns only after a foreign ``LOCK_EX`` holder releases.
+
+    Standalone-holder fixture (plan step 3 §Verification): a helper
+    subprocess opens the journal, takes ``fcntl.flock(LOCK_EX)``, signals
+    ``ready``, then waits on a ``multiprocessing.Event`` to release. A
+    second subprocess calls ``append_event`` — it must remain blocked
+    until the holder releases. We assert ordering through Events rather
+    than a minimum-block wall-clock window (plan §Risks calls out the
+    latter as CI-flaky): ``done`` must be unset before ``release`` fires
+    and set within a generous timeout after.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    ctx = multiprocessing.get_context("spawn")
+    ready = ctx.Event()
+    release = ctx.Event()
+    started = ctx.Event()
+    done = ctx.Event()
+
+    holder = ctx.Process(
+        target=_flock_holder_worker,
+        args=(str(journal), ready, release),
+    )
+    appender = ctx.Process(
+        target=_blocked_appender_worker,
+        args=(str(journal), started, done),
+    )
+
+    holder.start()
+    try:
+        try:
+            assert ready.wait(timeout=10), "holder did not signal ready"
+            appender.start()
+            assert started.wait(timeout=10), "appender did not start"
+            # The appender signaled ``started`` and is now inside
+            # ``append_event``, blocked on ``fcntl.flock``. A 500ms grace
+            # window is far more than enough for a JSON-line write + fsync
+            # if the lock were broken; ``done`` firing in that window
+            # means locking failed open. The check is generous on purpose
+            # — we are not asserting a *minimum* block duration (the
+            # flaky pattern), we are asserting that ``done`` never
+            # precedes ``release``.
+            assert not done.wait(timeout=0.5), (
+                "appender completed before holder released its lock — flock is not blocking"
+            )
+            release.set()
+            assert done.wait(timeout=10), "appender did not complete after holder released"
+        finally:
+            # Idempotent — guarantees the appender unblocks regardless of
+            # which assert above failed, including assertions reached
+            # before ``appender.start()`` (in which case ``pid`` is None
+            # and there's nothing to join).
+            release.set()
+            if appender.pid is not None:
+                appender.join(timeout=10)
+                if appender.is_alive():
+                    appender.kill()
+                    appender.join(timeout=5)
+        # After inner ``finally`` the appender has been joined; exitcode
+        # is now meaningful. On any inner-try failure we never reach
+        # here (the exception has already propagated through the inner
+        # finally), so this only runs on the happy path.
+        assert appender.exitcode == 0, f"appender exited with {appender.exitcode}"
+    finally:
+        release.set()
+        holder.join(timeout=10)
+        if holder.is_alive():
+            # Wedged holder — kill so a subsequent test inheriting this
+            # process tree doesn't see an orphaned flock holder.
+            holder.kill()
+            holder.join(timeout=5)
+
+    # Sanity: the appender's line is the only line — the holder never wrote.
+    lines = journal.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["by"] == "blocked-appender"
+
+
+def test_append_event_falls_back_when_flock_unsupported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``EOPNOTSUPP`` from ``fcntl.flock`` logs a warning and writes anyway.
+
+    Spec §Edge cases ("NFS / iCloud Drive / SMB"): on a filesystem that
+    rejects advisory locking the kit falls back to pre-spec behavior —
+    no concurrent-writer protection, but the journal still gets written.
+    Plan §Risks names this fallback explicitly and points at ADR-0002 as
+    the contract the warning should cite, so a user reading logs has a
+    pointer to "why locking is not in effect here".
+    """
+
+    journal = tmp_path / "journal.jsonl"
+
+    calls: list[int] = []
+
+    def failing_flock(fd: int, operation: int) -> None:
+        calls.append(operation)
+        raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+
+    monkeypatch.setattr(fcntl, "flock", failing_flock)
+
+    with caplog.at_level(logging.WARNING, logger="llm_wiki_kit.journal"):
+        append_event(
+            journal,
+            VaultInitEvent(timestamp=NOW, by="core", vault_name="home", recipe="family"),
+        )
+
+    assert calls, "fcntl.flock was not called"
+    assert calls[0] == fcntl.LOCK_EX, f"expected LOCK_EX, got operation={calls[0]}"
+    assert journal.exists()
+    lines = journal.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["type"] == "vault.init"
+
+    warning_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("ADR-0002" in msg for msg in warning_msgs), (
+        f"expected a warning mentioning ADR-0002, got: {warning_msgs}"
+    )
+
+
+def test_append_event_warns_once_per_journal_path_on_unsupported_flock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Repeated unsupported-FS appends emit one warning, not one per event.
+
+    Spec §Edge cases pins the once-per-path-per-process gate so a
+    ``wiki run`` on iCloud doesn't spam the same paragraph dozens of
+    times. Without the gate (and without this test) a future refactor
+    that dropped the suppression would slip through both prior tests:
+    ``test_append_event_falls_back_when_flock_unsupported`` only
+    exercises the first call.
+    """
+
+    # ``_LOCK_FALLBACK_WARNED`` is module-global and not cleared between
+    # tests by design — tmp_path gives a unique journal per test, so
+    # cross-test contamination doesn't happen in practice. Still, reset
+    # it here so the second-call assertion is unambiguous when the test
+    # is run with ``--count`` or under ``pytest-repeat``.
+    import llm_wiki_kit.journal as _journal_mod
+
+    monkeypatch.setattr(_journal_mod, "_LOCK_FALLBACK_WARNED", set())
+
+    journal = tmp_path / "journal.jsonl"
+
+    def failing_flock(fd: int, operation: int) -> None:
+        raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+
+    monkeypatch.setattr(fcntl, "flock", failing_flock)
+
+    with caplog.at_level(logging.WARNING, logger="llm_wiki_kit.journal"):
+        for i in range(3):
+            append_event(
+                journal,
+                VaultInitEvent(timestamp=NOW, by="core", vault_name=f"home-{i}", recipe="family"),
+            )
+
+    lines = journal.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3, "all three events should still be written despite no locking"
+
+    adr_warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and "ADR-0002" in r.getMessage()
+    ]
+    assert len(adr_warnings) == 1, (
+        f"expected exactly one ADR-0002 warning across three appends; got {len(adr_warnings)}"
+    )
+
+
+def test_append_event_fallback_warns_once_across_path_spellings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two ``Path`` spellings of the same on-disk journal collapse to one warning.
+
+    Spec §Edge cases keys the once-per-path gate on the resolved path, not
+    on ``Path``-object identity. A caller invoking ``append_event`` once
+    via a symlinked directory and once via the real directory points at
+    the same file with different ``Path`` instances; the suppression must
+    collapse them. Without ``.resolve()`` keying the set, each spelling
+    would hash to a different key and the warning would re-fire — exactly
+    the per-event noise the gate exists to prevent.
+    """
+
+    import llm_wiki_kit.journal as _journal_mod
+
+    monkeypatch.setattr(_journal_mod, "_LOCK_FALLBACK_WARNED", set())
+
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link_dir = tmp_path / "link"
+    link_dir.symlink_to(real_dir)
+
+    journal_via_real = real_dir / "journal.jsonl"
+    journal_via_link = link_dir / "journal.jsonl"
+    assert journal_via_real != journal_via_link, "test setup: paths should not be == as objects"
+    assert journal_via_real.resolve() == journal_via_link.resolve(), (
+        "test setup: paths should resolve to the same file"
+    )
+
+    def failing_flock(fd: int, operation: int) -> None:
+        raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+
+    monkeypatch.setattr(fcntl, "flock", failing_flock)
+
+    with caplog.at_level(logging.WARNING, logger="llm_wiki_kit.journal"):
+        append_event(
+            journal_via_real,
+            VaultInitEvent(timestamp=NOW, by="core", vault_name="home-1", recipe="family"),
+        )
+        append_event(
+            journal_via_link,
+            VaultInitEvent(timestamp=NOW, by="core", vault_name="home-2", recipe="family"),
+        )
+
+    adr_warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and "ADR-0002" in r.getMessage()
+    ]
+    assert len(adr_warnings) == 1, (
+        f"expected one warning across two spellings of the same file; got {len(adr_warnings)}"
+    )
+
+
+def test_append_event_propagates_oserror_eintr_from_flock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``OSError(EINTR)`` from ``fcntl.flock`` propagates — not in the fallback set.
+
+    PEP 475 auto-retries ``EINTR`` on CPython for native ``fcntl`` calls,
+    so in production the caller never sees it. This test injects ``EINTR``
+    through a monkeypatched ``fcntl.flock`` to pin the *userspace* boundary:
+    a future refactor (e.g. step 4) that broadens the fallback errno set
+    must not silently swallow ``EINTR`` as "filesystem unsupported".
+    """
+
+    journal = tmp_path / "journal.jsonl"
+
+    def eintr_flock(fd: int, operation: int) -> None:
+        raise OSError(errno.EINTR, "Interrupted system call")
+
+    monkeypatch.setattr(fcntl, "flock", eintr_flock)
+
+    with pytest.raises(OSError) as excinfo:
+        append_event(
+            journal,
+            VaultInitEvent(timestamp=NOW, by="core", vault_name="home", recipe="family"),
+        )
+    assert excinfo.value.errno == errno.EINTR

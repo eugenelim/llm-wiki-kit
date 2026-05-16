@@ -177,13 +177,16 @@ And the spec's acceptance-criteria checkboxes are all ticked.
 - **`fcntl.flock` semantics on macOS vs. Linux.** On macOS, `flock`
   works on local filesystems but iCloud Drive (`~/Library/Mobile
   Documents/com~apple~CloudDocs/`) is documented as "do not run
-  POSIX-locking programs here." Step 3 surfaces a clear error if
-  `flock` raises `OSError(EOPNOTSUPP)`; the spec's Non-goals already
-  state this. *Recovery:* the kit logs a `WikiError("vault is on a
-  filesystem that does not support advisory locking; concurrent
-  writers are not safe — see ADR-0002")` and continues without
-  locking, matching pre-spec behavior. (This adds a small `try/except`
-  around the flock call in step 3.)
+  POSIX-locking programs here." The errno on rejection varies by
+  platform and mount: macOS and Linux disagree on whether `flock`
+  on an unsupported FS raises `EOPNOTSUPP` or `ENOTSUP`, and NFS
+  without `lockd` raises `ENOLCK`. *Recovery:* step 3 catches the
+  `{EOPNOTSUPP, ENOTSUP, ENOLCK}` set and logs one `WARNING` per
+  journal path through `logging.getLogger("llm_wiki_kit.journal")`
+  naming ADR-0002, then continues without locking — matching
+  pre-spec behavior. Any other `OSError` from `flock` propagates
+  (it's a real disk error, not a "this FS is unsupported" signal).
+  Spec §Edge cases carries the full contract.
 - **`fsync` cost.** sha256-on-a-line + an `fsync` per event is a few
   ms on SSD, more on rotational. The journal grows at ~1 line per
   CLI invocation; the cost is invisible to the user except during a
