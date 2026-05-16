@@ -47,7 +47,11 @@ Step 6 cleans up notices and the ADR.
 
 1. **Lock + release event types validate and round-trip through the journal.**
    - Add `LockAcquiredEvent` (timestamp, by, reason: str | None) and
-     `LockReleasedEvent` (timestamp, by) to `llm_wiki_kit/models.py`;
+     `LockReleasedEvent` (timestamp, by, reason: str | None) to
+     `llm_wiki_kit/models.py`; the optional `reason` on `LockReleasedEvent`
+     was added retroactively by step 5 (this PR — `feat: wiki lock
+     acquire|release CLI`) for the stale-holder reclaim audit pair
+     (spec §Edge cases). Original step 1 (PR #27) shipped without it;
      extend the `Event` union; extend `VaultState` with `held_lock:
      HeldLock | None` where `HeldLock` is a small frozen dataclass
      (`by`, `acquired_at`, `reason`).
@@ -116,6 +120,18 @@ Step 6 cleans up notices and the ADR.
        - `test_wiki_lock_release_refuses_by_mismatch_without_force`
        - `test_wiki_lock_release_with_force_overrides_holder`
        - `test_wiki_lock_release_on_unheld_is_silent_zero`
+     - Review-driven additions (same file):
+       - `test_wiki_lock_acquire_requires_by_argument` (argparse boundary)
+       - `test_wiki_lock_acquire_reclaims_stale_holder` (audit pair)
+       - `test_wiki_lock_acquire_unsupported_fs_skips_reclaim_audit`
+       - `test_wiki_lock_acquire_raceloss_after_stale_reclaim_exits_three`
+       - `test_wiki_lock_acquire_rejects_newline_in_by_or_reason`
+         (parameterized over `--by`/`--reason` × `\n`/`\r`)
+       - `test_wiki_lock_release_without_by_uses_holder`
+       - `test_wiki_lock_acquire_outside_a_vault_is_wiki_error`
+       - `test_wiki_lock_release_outside_a_vault_is_wiki_error`
+     - `tests/unit/test_journal.py::test_transaction_nonblocking_raises_lockunavailable_when_held`
+       (clean-unwind invariants for the new `transaction(nonblocking=True)` path)
 
 1. **`wiki doctor` reports stale locks and survives a corrupt journal.**
    - A new sibling function `journal.read_events_lenient(path) ->

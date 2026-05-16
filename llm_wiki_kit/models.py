@@ -262,9 +262,16 @@ class LockAcquiredEvent(_EventBase):
 
 
 class LockReleasedEvent(_EventBase):
-    """Recorded when ``journal.transaction()`` (or ``wiki lock release``) exits."""
+    """Recorded when ``journal.transaction()`` (or ``wiki lock release``) exits.
+
+    ``reason`` is optional and defaults to ``None``. ``wiki lock acquire``
+    sets it to ``"stale lock reclaimed"`` on the audit pair emitted when
+    a dead-PID holder is reclaimed (spec §Edge cases, "Lock held by a
+    dead PID"). Ordinary release paths leave it ``None``.
+    """
 
     type: Literal["lock.released"] = "lock.released"
+    reason: str | None = None
 
 
 Event = Annotated[

@@ -140,7 +140,23 @@ def _release_persisted_fd(journal_path: Path) -> None:
         fh.close()
 
 
-def _take_exclusive_lock(fh: IO[str], journal_path: Path) -> None:
+class LockUnavailableError(OSError):
+    """``LOCK_NB`` probe found the journal lock already held by another writer.
+
+    Raised by :func:`transaction` when called with ``nonblocking=True`` and
+    the OS-level ``flock(LOCK_EX | LOCK_NB)`` returns
+    ``EAGAIN``/``EWOULDBLOCK``. Step 5's ``wiki lock acquire`` catches this
+    to exit ``LOCK_HELD_EXIT`` instead of blocking the user's shell on a
+    held lock. Subclasses ``OSError`` so existing ``append_event`` error
+    handling continues to catch it as a normal disk-like error if a
+    caller forgets the ``LockUnavailableError`` arm; the dedicated
+    subclass exists so the CLI's contention path can distinguish
+    "another process holds it" from a real disk error without sniffing
+    errno values at the boundary.
+    """
+
+
+def _take_exclusive_lock(fh: IO[str], journal_path: Path, *, nonblocking: bool = False) -> None:
     """Take ``LOCK_EX`` on ``fh``; fall back warn-once on unsupported FS.
 
     Single source of truth for the lock-or-fallback decision so
@@ -149,11 +165,22 @@ def _take_exclusive_lock(fh: IO[str], journal_path: Path) -> None:
     "filesystem unsupported." Other ``OSError``s propagate — including
     ``EINTR``, which PEP 475 auto-retries on CPython but a userspace
     mock must surface so the fallback boundary stays narrow.
+
+    ``nonblocking=True`` ORs ``LOCK_NB`` into the flock operation. On
+    ``EAGAIN``/``EWOULDBLOCK`` we raise :class:`LockUnavailableError`
+    instead of blocking; the CLI's ``wiki lock acquire`` is the only
+    caller that takes this branch today. The unsupported-FS fallback
+    behaves identically whether blocking or not — the warning fires
+    once, the function returns, and the caller proceeds without a
+    serializer (matching pre-spec behavior).
     """
 
+    op = fcntl.LOCK_EX | (fcntl.LOCK_NB if nonblocking else 0)
     try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        fcntl.flock(fh.fileno(), op)
     except OSError as exc:
+        if nonblocking and exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+            raise LockUnavailableError(exc.errno, "journal lock unavailable (LOCK_NB)") from exc
         if exc.errno not in _LOCK_UNSUPPORTED_ERRNOS:
             raise
         _warn_lock_fallback_once(journal_path, exc)
@@ -193,7 +220,15 @@ def _write_holder_file(
     lines = [by, acquired_at.isoformat()]
     if reason is not None:
         lines.append(reason)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Atomic write: a SIGKILL or crash between truncate and write would
+    # leave a partial holder file (which ``_read_holder_file`` then
+    # treats as "no holder", silently allowing the next acquire to
+    # overwrite without an audit trail). ``os.replace`` is atomic on
+    # POSIX, so readers either see the prior content or the new content,
+    # never a torn line. Same parent directory keeps it on one filesystem.
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def _warn_lock_fallback_once(journal_path: Path, exc: OSError) -> None:
@@ -246,7 +281,7 @@ def _summarize(exc: PydanticValidationError) -> str:
     return f"{loc}: {msg}" if loc else msg
 
 
-def append_event(journal_path: Path, event: Event) -> None:
+def append_event(journal_path: Path, event: Event, *, nonblocking: bool = False) -> None:
     """Append one validated event as a single JSON line, durable before returning.
 
     The write block is serialized by ``fcntl.flock(LOCK_EX)`` on the
@@ -283,6 +318,14 @@ def append_event(journal_path: Path, event: Event) -> None:
     (§Durability, qB1). An ``fsync`` failure (EIO) propagates as
     ``OSError`` to the caller. ADR-0002's "Concurrent writers are not
     safe" note will be amended to point at this spec in plan step 7.
+
+    ``nonblocking=True`` runs the per-call flock with ``LOCK_NB`` so the
+    write raises :class:`LockUnavailableError` instead of blocking on
+    contention. Only ``wiki lock acquire``'s stale-holder reclaim path
+    uses this — it must not hang on a competitor that won the race
+    between the contention probe and the reclaim write. The
+    nested-transaction reuse path is unaffected (the lock is already
+    held, no flock is taken).
     """
 
     journal_path.parent.mkdir(parents=True, exist_ok=True)
@@ -302,7 +345,7 @@ def append_event(journal_path: Path, event: Event) -> None:
         return
 
     with journal_path.open("a", encoding="utf-8") as fh:
-        _take_exclusive_lock(fh, journal_path)
+        _take_exclusive_lock(fh, journal_path, nonblocking=nonblocking)
         fh.write(line)
         fh.flush()
         os.fsync(fh.fileno())
@@ -314,6 +357,7 @@ def transaction(
     by: str,
     reason: str | None = None,
     persist: bool = False,
+    nonblocking: bool = False,
 ) -> Iterator[None]:
     """Bracket a multi-event sequence with one ``LOCK_EX`` and one acquire/release pair.
 
@@ -376,6 +420,15 @@ def transaction(
     handlers — strictly serial. Future async / parallel runners must
     serialize at the caller; this contract will be tightened when
     such a runner ships.
+
+    ``nonblocking=True`` runs the entry-side flock with ``LOCK_NB``.
+    On contention the flock raises ``LockUnavailableError`` *before*
+    the ``LockAcquiredEvent`` is appended or the holder file is
+    written — the ``finally`` block then closes the fd cleanly and
+    no journal state is left half-applied. Step 5's
+    ``wiki lock acquire`` is the only caller that takes this branch;
+    the runner stays blocking so a queued operation eventually wins
+    rather than failing fast on transient contention.
     """
 
     if _HELD_FD.get() is not None:
@@ -411,7 +464,7 @@ def transaction(
     holder_written = False
     detach = False  # set on persist=True clean exit so finally skips cleanup
     try:
-        _take_exclusive_lock(fh, journal_path)
+        _take_exclusive_lock(fh, journal_path, nonblocking=nonblocking)
         if persist:
             _write_holder_file(
                 holder_path,
