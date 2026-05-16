@@ -393,10 +393,6 @@ RECIPES_DIR = REPO_ROOT / "recipes"
 CORE_DIR = REPO_ROOT / "core"
 TEMPLATES_DIR = REPO_ROOT / "templates"
 INITIAL_RECIPES: list[str] = ["family", "personal", "work-os"]
-# Recipes that still resolve to ``[core]`` until their primitives ship.
-# ``family`` expanded in Task 13 and ``work-os`` in Task 14; each is
-# covered separately below. ``personal`` keeps this shape until Task 15.
-CORE_ONLY_RECIPES: list[str] = ["personal"]
 
 
 def test_initial_recipes_present() -> None:
@@ -413,22 +409,6 @@ def test_initial_recipes_load() -> None:
 def test_discover_recipes_finds_three_initial_recipes() -> None:
     found = discover_recipes(RECIPES_DIR)
     assert [r.name for r in found] == INITIAL_RECIPES
-
-
-def test_core_only_recipes_resolve_to_core() -> None:
-    """``personal`` still resolves to ``[core]`` until Task 15 ships its
-    primitives. A recipe that names a future primitive would break this
-    test until that primitive ships."""
-
-    from llm_wiki_kit.primitives import load_primitive
-
-    catalog = [load_primitive(CORE_DIR)]
-    for name in CORE_ONLY_RECIPES:
-        recipe = load_recipe(RECIPES_DIR / f"{name}.yaml")
-        ordered = resolve_recipe_primitives(recipe, catalog)
-        assert [p.name for p in ordered] == ["core"], (
-            f"recipe '{name}' must resolve to [core] until its task ships"
-        )
 
 
 def test_family_recipe_resolves_against_live_catalog() -> None:
@@ -481,5 +461,36 @@ def test_work_os_recipe_resolves_against_live_catalog() -> None:
         "stakeholder-update",
         "status-synthesis",
         "vendor-contract",
+    }
+    assert {p.name for p in ordered} == expected
+
+
+def test_personal_recipe_resolves_against_live_catalog() -> None:
+    """The ``personal`` recipe was expanded in Task 15. The closure is
+    a deliberate composition of Task-11 / Task-13 / Task-14 primitives
+    plus the new ``identity`` ontology — see the comment block in
+    ``recipes/personal.yaml`` for the rationale."""
+
+    from llm_wiki_kit.primitives import discover_primitives, load_primitive
+
+    catalog = [load_primitive(CORE_DIR), *discover_primitives(TEMPLATES_DIR)]
+    recipe = load_recipe(RECIPES_DIR / "personal.yaml")
+    ordered = resolve_recipe_primitives(recipe, catalog)
+
+    expected = {
+        "action-item",
+        "core",
+        "decision",
+        "follow-up-tracker",
+        "food",
+        "identity",
+        "meal-planning",
+        "meeting",
+        "people",
+        "recipe",
+        "trip-doc",
+        "trip-prep",
+        "trips",
+        "weekly-digest",
     }
     assert {p.name for p in ordered} == expected
