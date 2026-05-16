@@ -29,6 +29,7 @@ import pytest
 from llm_wiki_kit.errors import JournalCorruptError
 from llm_wiki_kit.journal import (
     Corruption,
+    LockUnavailableError,
     append_event,
     read_events,
     read_events_lenient,
@@ -1735,3 +1736,83 @@ def test_release_persisted_fd_is_noop_when_no_entry(tmp_path: Path) -> None:
     _release_persisted_fd(journal)  # must not raise
 
     assert journal.resolve() not in _PERSISTED_FDS
+
+
+def _hold_lock_blocking_worker(
+    journal_str: str,
+    ready_event: Any,
+    release_event: Any,
+) -> None:
+    """Hold the journal's OS lock via a raw flock so a sibling process can probe.
+
+    Step 5's ``transaction(nonblocking=True)`` test uses this to keep
+    the lock held across the parent's call without involving the
+    higher-level ``transaction()`` machinery (which has its own
+    teardown that would interfere with what we're trying to assert).
+    """
+
+    import fcntl as _fcntl
+    from pathlib import Path as _Path
+
+    journal = _Path(journal_str)
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    with journal.open("a", encoding="utf-8") as fh:
+        _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX)
+        ready_event.set()
+        release_event.wait(timeout=30)
+
+
+def test_transaction_nonblocking_raises_lockunavailable_when_held(tmp_path: Path) -> None:
+    """``transaction(nonblocking=True)`` against a held lock raises without side effects.
+
+    Pins the four invariants that the CLI's race-loss catch path
+    depends on:
+
+    1. The raise is a :class:`LockUnavailableError`, not a plain
+       ``OSError`` — so the CLI's narrow ``except`` doesn't swallow
+       real disk errors.
+    2. ``_PERSISTED_FDS`` is empty afterward — the failed acquire
+       never installs a persisted entry.
+    3. ``_HELD_FD`` is back to ``None`` — the ContextVar token was
+       never set (the flock raise happens before the set).
+    4. The holder file is not written — the rollback isn't required
+       because the holder write happens *after* a successful flock.
+    """
+
+    import multiprocessing as mp
+
+    from llm_wiki_kit.journal import _HELD_FD, _PERSISTED_FDS, _lock_holder_path
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    holder_path = _lock_holder_path(journal)
+
+    ctx = mp.get_context("spawn")
+    ready = ctx.Event()
+    release = ctx.Event()
+    holder = ctx.Process(
+        target=_hold_lock_blocking_worker,
+        args=(str(journal), ready, release),
+    )
+    holder.start()
+    try:
+        assert ready.wait(timeout=10)
+
+        with pytest.raises(LockUnavailableError):
+            with transaction(
+                journal,
+                by="alice",
+                reason="probe",
+                persist=True,
+                nonblocking=True,
+            ):
+                pytest.fail("transaction body must not run when flock fails")
+
+        assert _PERSISTED_FDS == {}, "failed acquire must not stash a persisted fd"
+        assert _HELD_FD.get() is None, "ContextVar must not survive a failed acquire"
+        assert not holder_path.exists(), "holder file must not be written before flock succeeds"
+    finally:
+        release.set()
+        holder.join(timeout=10)
+        if holder.is_alive():
+            holder.terminate()
+            holder.join(timeout=5)
