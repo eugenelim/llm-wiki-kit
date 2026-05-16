@@ -270,6 +270,6 @@ def test_route_as_override_does_not_consult_signals() -> None:
 
 def test_source_kind_values_are_stable() -> None:
     # The CLI prints these labels; pinning them keeps log messages stable.
-    assert SourceKind.URL == "url"
-    assert SourceKind.FILE == "file"
-    assert SourceKind.STDIN == "stdin"
+    assert SourceKind.URL.value == "url"
+    assert SourceKind.FILE.value == "file"
+    assert SourceKind.STDIN.value == "stdin"
