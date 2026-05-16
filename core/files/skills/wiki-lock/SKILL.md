@@ -6,6 +6,19 @@ license: MIT
 
 # wiki-lock
 
+> **⚠️ Not yet shipped in v2.0.0.dev.** The CLI surface this skill
+> describes (`wiki journal lock acquire|release`), the corresponding
+> `lock.acquired` / `lock.released` event types, and the `wiki doctor`
+> stale-lock check are all planned for Phase F of the v2 migration
+> (see RFC-0001 and the retro-review finding `F-B3` at
+> `docs/specs/retro-review-tasks-1-16/findings.md`). Until that work
+> lands, treat this SKILL.md as the *design spec*, not an executable
+> playbook: a multi-file workflow on a current v2 vault is
+> single-writer-only by convention. If you (the agent) try to run
+> `wiki journal lock acquire`, the CLI will reject the subcommand. Ask
+> the user to confirm no other agent is touching the vault and proceed
+> without the lock.
+
 A cooperative advisory lock over the vault. Acquire it before a
 multi-file write, release it when you're done. The journal records the
 acquire/release pair so `wiki doctor` can detect a stale lock from a
