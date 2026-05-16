@@ -19,6 +19,7 @@ The module depends only on ``models`` and ``errors`` (see
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -62,19 +63,23 @@ def _summarize(exc: PydanticValidationError) -> str:
 
 
 def append_event(journal_path: Path, event: Event) -> None:
-    """Append one validated event as a single JSON line.
+    """Append one validated event as a single JSON line, durable before returning.
 
-    Creates the parent directory if it does not exist. The write is one
-    ``write`` syscall on a file opened in append mode — atomic enough for
-    a single-writer journal but not strict POSIX atomicity across crashes
-    (ADR-0002 names this as an accepted tradeoff and ``wiki doctor`` as
-    the reconciler).
+    After the line is written, ``fh.flush()`` drains Python's buffer and
+    ``os.fsync()`` forces the kernel to commit the journal file to disk —
+    so a crash after ``append_event`` returns cannot lose the line
+    (``docs/specs/journal-locking/spec.md`` §Durability, qB1). An
+    ``fsync`` failure (EIO) propagates as ``OSError`` to the caller.
+    ADR-0002's "Concurrent writers are not safe" note will be amended to
+    point at this spec in plan step 7.
     """
 
     journal_path.parent.mkdir(parents=True, exist_ok=True)
     line = _EVENT_ADAPTER.dump_json(event).decode() + "\n"
     with journal_path.open("a", encoding="utf-8") as fh:
         fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def read_events(journal_path: Path) -> list[Event]:
