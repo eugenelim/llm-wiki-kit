@@ -31,7 +31,7 @@ against what's actually on disk, and reports the differences.
 | Drift                  | On-disk hash differs from the latest `page.write` hash. (`wiki ingest` already detects per-write drift; doctor catches batch drift.) |
 | Managed-region damage  | A shared file is missing markers the kit expects, has duplicate region ids, or has unclosed markers. |
 | Pending proposals      | `<path>.proposed` files with corresponding `page.proposal` events. |
-| Stale locks            | `lock.acquired` with no matching `lock.released` older than a threshold. *(Not yet shipped in v2.0.0.dev — see `wiki-lock/SKILL.md` header.)* |
+| Stale locks            | `lock.acquired` with no matching `lock.released` older than a threshold. |
 | Schema violations      | Journal events that no longer validate (e.g. after a kit upgrade). |
 | Uninstalled primitives | A page's `type:` references a content type whose primitive isn't installed. |
 
@@ -86,10 +86,7 @@ errors. Skip it for a routine check; use it before a release / commit.
 - **Pending proposals.** Load `wiki-conflict` and walk them.
 
 - **Stale lock.** Confirm no other session is mid-flight, then
-  `wiki journal lock release --force --by <name>`. *(Not yet shipped
-  in v2.0.0.dev. If the user reports a "stale lock" issue today, it
-  is a future-Phase-F category and `wiki doctor` cannot raise it; see
-  `wiki-lock/SKILL.md` header.)*
+  `wiki lock release --force --by <name>`.
 
 - **Schema violation.** The kit upgraded and the journal grew an
   event type it doesn't recognize, or vice versa. The kit's

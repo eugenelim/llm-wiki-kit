@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*; the
 > plan says *how, in what order, with what verification*.
 
-- **Status:** Drafting
+- **Status:** Done
 - **Spec:** [`docs/specs/journal-locking/spec.md`](spec.md)
 - **Owner:** TBD (maintainer)
 
@@ -184,6 +184,7 @@ Step 6 cleans up notices and the ADR.
    - **Verification:**
      - `grep -r "F-B3a" core/ docs/adr/` returns no hits.
      - Spec frontmatter `Status: Implemented`.
+     - Plan frontmatter `Status: Done`.
      - Issue #23 checkboxes for qB1, qB2, qC5, F-B3b checked.
 
 ## Verification gate

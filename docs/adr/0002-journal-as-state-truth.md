@@ -40,17 +40,29 @@ forensics.
 
 > **A single append-only JSONL file at `.wiki.journal/journal.jsonl` is
 > the source of truth for vault state. Every state-changing kit operation
-> appends one validated event before touching disk. Current state is
-> derived by replay.**
+> appends one validated event before touching disk, guarded by
+> `fcntl.flock` exclusive locking (where the filesystem supports it)
+> and an `fsync` on the journal fd before the call returns. Current
+> state is derived by replay.**
 
 Mechanics:
 
 - Each line is a JSON object with a `type` discriminator field and
   event-specific payload, validated through a Pydantic v2 discriminated
   union (`Event`) defined in `models.py`.
-- `journal.append_event(path, event)` validates and appends. Atomic-enough
-  semantics (single `write` syscall, file open in append mode); we do
-  not promise strict POSIX atomicity across crashes.
+- `journal.append_event(path, event)` validates, takes `fcntl.flock`
+  (`LOCK_EX`) on the journal fd, appends one JSONL line, then
+  `fsync`s before releasing the lock. Two simultaneous appends from
+  different processes serialize cleanly; the line is durable on disk
+  before the call returns. Multi-event sequences (e.g. an operation
+  run) wrap the work in `journal.transaction(path, by, reason)`,
+  which holds the lock for the duration of the `with` block and
+  brackets the body with `lock.acquired` / `lock.released` events.
+  Filesystems that reject `flock` (iCloud Drive, some SMB / NFS
+  mounts) fall back to the pre-spec append-without-locking behavior
+  with a one-shot `WARNING` log; see
+  [`docs/specs/journal-locking/spec.md`](../specs/journal-locking/spec.md)
+  §Edge cases.
 - `journal.read_events(path)` parses and validates every line; on the
   first malformed line, raises `JournalCorruptError(line=N)` with field
   context. We fail loudly — corrupted state is the user's signal, not
@@ -95,16 +107,14 @@ prefixed home-dir cache.
 - **Schema evolution requires care.** Adding a field to an existing
   event type must default-populate for older lines. Pydantic v2 makes
   this explicit via `default=` and `model_validator(mode="before")`.
-- **Concurrent writers are not safe.** The journal assumes a single
-  writer at a time. Mitigated by the `wiki-lock` skill plus an
-  `operation.lock` file at `.wiki.journal/operation.lock`. *(2026-05-16
-  amendment: the mitigation is not yet implemented in v2.0.0.dev — no
-  `fcntl.flock` wraps `append_event`, no `wiki journal lock
-  acquire|release` CLI exists, and no `lock.acquired` / `lock.released`
-  event types are modelled. Tracked at retro-review finding `F-B3`
-  (`docs/specs/retro-review-tasks-1-16/findings.md`); the runtime
-  implementation lands in Phase F via a separate spec. On the current
-  release the journal is single-writer-by-convention.)*
+- **Concurrent writers require an advisory lock.** The journal
+  assumes a single writer at a time; concurrent processes are
+  serialized by `fcntl.flock` around every `append_event` call, and
+  long multi-event sequences hold the lock via
+  `journal.transaction()`. Implemented in
+  [`docs/specs/journal-locking/spec.md`](../specs/journal-locking/spec.md)
+  on 2026-05-16; the `wiki-lock` skill and `wiki doctor`'s stale-lock
+  check are the user-facing surface.
 
 ### Neutral / monitor
 

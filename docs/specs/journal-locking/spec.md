@@ -3,22 +3,23 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit.journal` + `llm_wiki_kit.cli`
 - **Related:** [ADR-0002](../../adr/0002-journal-as-state-truth.md) (journal as state truth — amended by this spec), [ADR-0005](../../adr/0005-pydantic-for-disk-bound-schemas.md) (schemas), [`docs/specs/journal-locking/plan.md`](plan.md), retro-review issue [#23](https://github.com/eugenelim/llm-wiki-kit/issues/23) (findings `F-B3b`, `qB1`, `qC5` absorbed into recovery)
 - **Supersedes:** the F-B3a "not yet shipped" notices in
-  [`core/files/skills/wiki-lock/SKILL.md`](../../../core/files/skills/wiki-lock/SKILL.md), [`core/files/skills/wiki-doctor/SKILL.md`](../../../core/files/skills/wiki-doctor/SKILL.md), and [`core/files/AGENTS.md`](../../../core/files/AGENTS.md) — those headers come off once this lands.
+  [`core/files/skills/wiki-lock/SKILL.md`](../../../core/files/skills/wiki-lock/SKILL.md), [`core/files/skills/wiki-doctor/SKILL.md`](../../../core/files/skills/wiki-doctor/SKILL.md), and [`core/files/AGENTS.md`](../../../core/files/AGENTS.md) — those headers were removed in the PR that landed this spec.
 
 ## What this is
 
-The journal is the kit's source of truth (ADR-0002). Today every kit
-command writes to `.wiki.journal/journal.jsonl` through one `fh.write`
-in append mode and returns — no `fsync`, no advisory lock. Two failure
-modes follow: a hard crash between `write()` and the kernel's page-cache
-flush loses the most recent intent event (qB1); two concurrent
-invocations (two terminals, an automation crossing a manual run, a
-device sync) can interleave a single event line across processes and
-corrupt the journal beyond `read_events`'s tolerance (F-B3 / qB2).
+The journal is the kit's source of truth (ADR-0002). Before this spec
+landed, every kit command wrote to `.wiki.journal/journal.jsonl`
+through one `fh.write` in append mode and returned — no `fsync`, no
+advisory lock. Two failure modes followed: a hard crash between
+`write()` and the kernel's page-cache flush lost the most recent
+intent event (qB1); two concurrent invocations (two terminals, an
+automation crossing a manual run, a device sync) could interleave a
+single event line across processes and corrupt the journal beyond
+`read_events`'s tolerance (F-B3 / qB2).
 
 This spec defines the contract for the kit's concurrent-writer story:
 an `fcntl.flock`-based advisory exclusive lock around every
@@ -275,54 +276,54 @@ The same list translates 1-to-1 into the construction tests in
 
 ### Durability (qB1)
 
-- [ ] `test_append_event_fsyncs_before_returning` — `os.fsync` patched
+- [x] `test_append_event_fsyncs_before_returning` — `os.fsync` patched
       to a counter; `append_event` raises if the counter doesn't tick
       between `write` and return.
-- [ ] `test_append_event_fsync_fileno_is_journal_fd` — the call passes
+- [x] `test_append_event_fsync_fileno_is_journal_fd` — the call passes
       the journal fd specifically, not an unrelated fd.
 
 ### Mutual exclusion (qB2 / F-B3b)
 
-- [ ] `test_concurrent_append_does_not_interleave_lines` — two
+- [x] `test_concurrent_append_does_not_interleave_lines` — two
       subprocesses each call `append_event` 100 times; the resulting
       journal parses as exactly 200 valid JSONL lines.
-- [ ] `test_append_event_blocks_when_another_process_holds_lock` —
+- [x] `test_append_event_blocks_when_another_process_holds_lock` —
       one process holds via `transaction(persist=True)`; the second's
       `append_event` blocks for ≥100ms; releases when the first does.
 
 ### Transaction context manager
 
-- [ ] `test_transaction_emits_lock_acquired_and_released_on_clean_exit` —
+- [x] `test_transaction_emits_lock_acquired_and_released_on_clean_exit` —
       events bracket the body's events in journal order.
-- [ ] `test_transaction_emits_lock_released_on_exception` — body
+- [x] `test_transaction_emits_lock_released_on_exception` — body
       raises; `LockReleasedEvent` is still the last event; exception
       re-raises.
-- [ ] `test_nested_append_event_reuses_held_lock` — `append_event`
+- [x] `test_nested_append_event_reuses_held_lock` — `append_event`
       called inside `transaction` does not call `flock` twice (assert
       via monkeypatched `fcntl.flock` counter).
 
 ### CLI surface
 
-- [ ] `test_wiki_lock_acquire_exits_zero_on_first_acquire`
-- [ ] `test_wiki_lock_acquire_exits_three_when_held` — second
+- [x] `test_wiki_lock_acquire_exits_zero_on_first_acquire`
+- [x] `test_wiki_lock_acquire_exits_three_when_held` — second
       invocation against an existing holder file exits `LOCK_HELD_EXIT`
       with stderr naming the holder.
-- [ ] `test_wiki_lock_release_clears_holder_and_journals_release_event`
-- [ ] `test_wiki_lock_release_refuses_by_mismatch_without_force`
-- [ ] `test_wiki_lock_release_with_force_overrides_holder`
-- [ ] `test_wiki_lock_release_on_unheld_is_silent_zero`
+- [x] `test_wiki_lock_release_clears_holder_and_journals_release_event`
+- [x] `test_wiki_lock_release_refuses_by_mismatch_without_force`
+- [x] `test_wiki_lock_release_with_force_overrides_holder`
+- [x] `test_wiki_lock_release_on_unheld_is_silent_zero`
 
 ### Doctor
 
-- [ ] `test_doctor_reports_stale_lock_after_threshold` — acquire,
+- [x] `test_doctor_reports_stale_lock_after_threshold` — acquire,
       sleep-past-threshold (monkeypatch the wall clock), no release;
       `wiki doctor` reports `stale-lock: <holder>`.
-- [ ] `test_doctor_does_not_report_stale_lock_within_threshold`
-- [ ] `test_doctor_does_not_report_when_release_event_follows_acquire`
+- [x] `test_doctor_does_not_report_stale_lock_within_threshold`
+- [x] `test_doctor_does_not_report_when_release_event_follows_acquire`
 
 ### Recovery (qC5 absorbed)
 
-- [ ] `test_doctor_runs_against_corrupt_journal_and_reports_journal_corrupt` —
+- [x] `test_doctor_runs_against_corrupt_journal_and_reports_journal_corrupt` —
       a new `journal.read_events_lenient(path) -> tuple[list[Event],
       Corruption | None]` (sibling of strict `read_events`, not a
       flag on it; see plan §Risks) returns the valid-events prefix
@@ -334,15 +335,15 @@ The same list translates 1-to-1 into the construction tests in
 
 ### Schema evolution (ADR-0002 §Negative)
 
-- [ ] `test_old_journal_without_lock_events_replays_cleanly` — a
+- [x] `test_old_journal_without_lock_events_replays_cleanly` — a
       journal written before this spec lands replays without raising;
       `VaultState.held_lock is None`.
-- [ ] `test_lock_event_round_trips_through_pydantic_union` —
+- [x] `test_lock_event_round_trips_through_pydantic_union` —
       dump + load + dump produces identical bytes.
 
 ### ADR amendment
 
-- [ ] `docs/adr/0002-journal-as-state-truth.md` §Decision text and
+- [x] `docs/adr/0002-journal-as-state-truth.md` §Decision text and
       §Negative ("Concurrent writers are not safe.") updated in the
       same PR. The F-B3a 2026-05-16 amendment in §Negative is
       replaced by an "Implemented in `docs/specs/journal-locking/spec.md`
@@ -350,10 +351,10 @@ The same list translates 1-to-1 into the construction tests in
 
 ### Vault-side skill notice removal
 
-- [ ] `core/files/skills/wiki-lock/SKILL.md` — F-B3a header removed.
-- [ ] `core/files/skills/wiki-doctor/SKILL.md` — F-B3a note on the
+- [x] `core/files/skills/wiki-lock/SKILL.md` — F-B3a header removed.
+- [x] `core/files/skills/wiki-doctor/SKILL.md` — F-B3a note on the
       stale-lock row + triage paragraph removed.
-- [ ] `core/files/AGENTS.md` — F-B3a note on the "many files at once"
+- [x] `core/files/AGENTS.md` — F-B3a note on the "many files at once"
       reference replaced with the live instruction.
 
 ## Non-goals
