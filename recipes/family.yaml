@@ -1,21 +1,38 @@
 # Family recipe — vault shape for a household.
 #
-# Minimal for Task 9 (RFC-0001): only ``core`` is referenced. The family
-# audience's intended primitives — ``food``, ``medical``, ``trips``,
-# ``vendors`` ontologies plus their content-types and operations — ship
-# in Task 13 and will be added to ``primitives:`` then. Keeping the list
-# minimal here lets Task 10's ``wiki init`` end-to-end test resolve the
-# recipe against the live catalog without coordinating with Task 13.
+# Task 13 expanded the listing from the Task-10 baseline (just `core`)
+# to the four ontology / six content-type / four operation primitives
+# that the family audience needs out of the box. The recipe loader
+# resolves `requires:` transitively, so listing each leaf primitive is
+# enough — `people` arrives via `meeting`/`medical-record`, `food` via
+# `recipe`, etc.
 #
-# Reading this in the future: the rule is "every primitive named here
-# must already exist in the catalog when this recipe lands on main."
-# Reach for ``wiki add`` for opt-in extensions on top of the baseline.
+# Conventions: alphabetical, one primitive per line, no `core`
+# (always installed). Adding a primitive here is a recipe-level change;
+# adding a content-type at the catalog level is a primitive-level change.
 name: family
-version: 0.1.0
+version: 0.2.0
 description: >-
-  Home knowledge base for a household: people, food, medical, trips, and
-  the operations that keep them coordinated. Expands in Task 13.
+  Home knowledge base for a household: people, food, medical, trips,
+  vendors, and the operations that keep them coordinated (meal planning,
+  trip prep, follow-up tracking, medical summaries, weekly digest).
 primitives:
-  - core
+  - action-item
+  - follow-up-tracker
+  - food
+  - meal-planning
+  - medical
+  - medical-record
+  - medical-summary
+  - meeting
+  - people
+  - receipt
+  - recipe
+  - tax-document
+  - trip-doc
+  - trip-prep
+  - trips
+  - vendors
+  - weekly-digest
 variables:
   recipe_name: family

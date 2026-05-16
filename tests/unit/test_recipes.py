@@ -394,9 +394,9 @@ CORE_DIR = REPO_ROOT / "core"
 TEMPLATES_DIR = REPO_ROOT / "templates"
 INITIAL_RECIPES: list[str] = ["family", "personal", "work-os"]
 # Recipes that still resolve to ``[core]`` until their primitives ship.
-# ``family`` and ``personal`` keep this shape until Tasks 13 and 15;
-# ``work-os`` expanded in Task 14 and is covered separately below.
-CORE_ONLY_RECIPES: list[str] = ["family", "personal"]
+# ``family`` expanded in Task 13 and ``work-os`` in Task 14; each is
+# covered separately below. ``personal`` keeps this shape until Task 15.
+CORE_ONLY_RECIPES: list[str] = ["personal"]
 
 
 def test_initial_recipes_present() -> None:
@@ -416,9 +416,9 @@ def test_discover_recipes_finds_three_initial_recipes() -> None:
 
 
 def test_core_only_recipes_resolve_to_core() -> None:
-    """``family`` and ``personal`` still resolve to ``[core]`` until
-    Tasks 13 and 15 ship their primitives. A recipe that names a future
-    primitive would break this test until that primitive ships."""
+    """``personal`` still resolves to ``[core]`` until Task 15 ships its
+    primitives. A recipe that names a future primitive would break this
+    test until that primitive ships."""
 
     from llm_wiki_kit.primitives import load_primitive
 
@@ -429,6 +429,27 @@ def test_core_only_recipes_resolve_to_core() -> None:
         assert [p.name for p in ordered] == ["core"], (
             f"recipe '{name}' must resolve to [core] until its task ships"
         )
+
+
+def test_family_recipe_resolves_against_live_catalog() -> None:
+    """The ``family`` recipe was expanded in Task 13. It must resolve
+    against the full live catalog (core plus every primitive under
+    ``templates/``) to a closure that includes every leaf primitive
+    listed in the recipe plus the transitive ``requires:`` chain."""
+
+    from llm_wiki_kit.primitives import discover_primitives, load_primitive
+
+    catalog = [load_primitive(CORE_DIR), *discover_primitives(TEMPLATES_DIR)]
+    recipe = load_recipe(RECIPES_DIR / "family.yaml")
+    ordered = resolve_recipe_primitives(recipe, catalog)
+    ordered_names = {p.name for p in ordered}
+
+    # Every leaf primitive the recipe lists is in the closure, plus
+    # ``core`` (always installed) and ``people`` (pulled in by both
+    # ``meeting`` and ``trip-doc``).
+    assert set(recipe.primitives).issubset(ordered_names)
+    assert "core" in ordered_names
+    assert "people" in ordered_names
 
 
 def test_work_os_recipe_resolves_against_live_catalog() -> None:

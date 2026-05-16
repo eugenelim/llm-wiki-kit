@@ -21,10 +21,11 @@ from llm_wiki_kit.models import (
     VaultInitEvent,
 )
 
-# ``work-os`` is omitted here because Task 14 expanded it past the
-# core-only shape. Its primitive set, schema regions, and replayed
-# state are exercised in ``test_work_os_recipe.py``.
-CORE_ONLY_RECIPES = ["family", "personal"]
+# ``family`` (Task 13) and ``work-os`` (Task 14) both grew past the
+# core-only shape. Each has its own integration suite — see
+# ``test_family_recipe.py`` and ``test_work_os_recipe.py`` — and only
+# ``personal`` still installs core-only (until Task 15 expands it).
+CORE_ONLY_RECIPES = ["personal"]
 
 
 def _journal_path(vault: Path) -> Path:
