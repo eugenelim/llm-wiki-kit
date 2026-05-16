@@ -14,12 +14,11 @@ from llm_wiki_kit import __version__
 from llm_wiki_kit.cli import NOT_IMPLEMENTED_EXIT, build_parser, main
 
 SUBCOMMANDS_WITH_ARGS: list[list[str]] = [
-    # ``init`` graduated from stub to real handler in Task 10 — it has its
-    # own integration suite under ``tests/integration/test_wiki_init.py``.
-    ["add", "content-type:interview"],
+    # ``init`` graduated from stub to real handler in Task 10; ``add``
+    # and ``doctor`` graduated in Task 12. Both have their own
+    # integration suites under ``tests/integration/``.
     ["upgrade"],
     ["upgrade", "--primitive", "people"],
-    ["doctor"],
     ["ingest", "/tmp/transcript.txt"],
     ["run", "weekly-digest"],
     ["research", "what is rust"],

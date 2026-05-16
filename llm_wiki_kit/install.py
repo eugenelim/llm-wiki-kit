@@ -33,10 +33,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from llm_wiki_kit.errors import PrimitiveError
-from llm_wiki_kit.models import Contribution, Primitive
+from llm_wiki_kit.journal import append_event
+from llm_wiki_kit.models import Contribution, Primitive, PrimitiveInstallEvent
+from llm_wiki_kit.render import render_tree
 from llm_wiki_kit.write_helper import safe_write_region
 
 _REGIONS_SUBDIR = "regions"
@@ -194,3 +197,61 @@ def aggregate_region_contributions(
             by=by,
             journal_path=journal_path,
         )
+
+
+def install_primitives(
+    *,
+    to_install: Sequence[Primitive],
+    all_installed: Sequence[Primitive],
+    sources: Mapping[str, Path],
+    journal_path: Path,
+    context: Mapping[str, str],
+    install_vehicle: str,
+    now: datetime,
+) -> None:
+    """Render ``to_install`` and run the region aggregator over ``all_installed``.
+
+    Shared between ``wiki init`` and ``wiki add``. The split between the
+    two sequences is what lets ``wiki add`` re-aggregate every region
+    over the full installed set (so existing bodies survive) without
+    re-rendering primitives that have already landed (which would emit
+    duplicate ``page.write`` events).
+
+    Pre-condition: every primitive in ``to_install`` has already passed
+    :func:`validate_contributions`. The caller (``_cmd_init``,
+    ``_cmd_add``) owns that pre-flight so a malformed primitive cannot
+    leak into the half-installed state this function would produce.
+    ``sources`` must cover every primitive in ``all_installed``.
+
+    ``install_vehicle`` is the ``by`` attribution recorded on the
+    aggregator's ``managed_region.write`` events — ``"wiki-init"`` for
+    initial vault creation, ``"wiki-add"`` for subsequent ``wiki add``
+    installs. Per-primitive ``files/`` renders attribute to the
+    primitive name itself, matching the existing render contract.
+    """
+
+    vault_root = journal_path.parent.parent
+    for primitive in to_install:
+        append_event(
+            journal_path,
+            PrimitiveInstallEvent(
+                timestamp=now,
+                by=install_vehicle,
+                primitive=primitive.name,
+                version=primitive.version,
+            ),
+        )
+        render_tree(
+            sources[primitive.name] / "files",
+            vault_root,
+            context,
+            journal_path,
+            by=primitive.name,
+        )
+
+    aggregate_region_contributions(
+        all_installed,
+        sources,
+        journal_path,
+        by=install_vehicle,
+    )
