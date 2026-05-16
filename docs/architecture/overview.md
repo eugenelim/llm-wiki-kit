@@ -37,7 +37,8 @@ any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
 │   ├── write_helper.py        # drift detection + proposal sidecar flow
 │   ├── managed_regions.py     # region parsing + merging
 │   ├── doctor.py              # vault state validation
-│   └── conflict.py            # 3-way merge helpers
+│   ├── ingest.py              # `wiki ingest` routing logic
+│   └── install.py             # region-contribution aggregator (used by init/add)
 ├── core/                      # the common-core primitive (always installed)
 │   ├── primitive.yaml
 │   └── files/                 # rendered into every vault
@@ -75,14 +76,13 @@ any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
 │   ├── reference/             # Diátaxis: reference
 │   ├── tutorials/             # Diátaxis: tutorials
 │   └── _templates/            # templates for adr / rfc / spec / plan
-├── archive/v1-*/              # the v1 tree, preserved for reference
 └── .github/                   # CI workflows, issue/PR templates
 ```
 
 ## The Python package
 
-`llm_wiki_kit/` is small on purpose — ~500 lines across nine modules. Each
-module has one job and is independently testable.
+`llm_wiki_kit/` is small on purpose — one job per module, each independently
+testable.
 
 The dependency graph is intentionally a shallow DAG. `models.py` has no
 internal imports; `journal.py` depends only on `models.py`; `write_helper.py`
@@ -101,8 +101,9 @@ inside `safe_write()`.
 |`primitives.py`     |`load_primitive(path) -> Primitive`, `discover_primitives(templates_dir)`, `resolve_dependencies()` for transitive `requires:` resolution.                                                                                                                    |
 |`recipes.py`        |`load_recipe(path) -> Recipe`, `resolve_recipe_primitives()`. Validates that every primitive a recipe references exists.                                                                                                                                      |
 |`doctor.py`         |Replays the journal, computes expected vault state, diffs against disk, reports drift in managed regions, orphan files, missing files.                                                                                                                        |
-|`conflict.py`       |3-way merge helpers used by the vault-side `wiki-conflict` skill. Reads `.proposed` sidecars and the journal to produce candidate merges; Claude does the actual reconciliation.                                                                              |
-|`cli.py`            |Click-based entry point. Thin wrappers around `init`, `add`, `upgrade`, `doctor`, `ingest`, `run`, `research`, `search`, `journal`.                                                                                                                           |
+|`ingest.py`         |`wiki ingest` routing: classifies a source via per-primitive `routing:` signals (extension, filename glob, URL host/path) and records the decision as an `IngestRoutedEvent`. Pure string parsing — no I/O, no LLM.                                            |
+|`install.py`        |Region-contribution aggregator used by `wiki init` and `wiki add`. Validates `contributes_to` against on-disk snippet files, groups by `(file, region)`, concatenates in install order, and writes each region once via `safe_write_region`.                  |
+|`cli.py`            |Argparse-based entry point. Thin wrappers around `init`, `add`, `upgrade`, `doctor`, `ingest`, `run`, `research`, `search`, `journal`. (Phase D/E subcommands are stubs in v2.0.0.dev.)                                                                       |
 
 ## The template catalog
 

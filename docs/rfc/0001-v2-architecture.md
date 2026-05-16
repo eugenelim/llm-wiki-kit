@@ -20,8 +20,10 @@ droppable primitives (ontologies, content-types, operations,
 infrastructure), and a small set of recipes that compose primitives
 for specific audiences.
 
-The migration lives on a working branch alongside `main`; the existing
-v1 tree is preserved under `archive/v1-*/` for reference. v2 ships as
+The migration lives on a working branch alongside `main`. The v1 tree
+was deleted in flight rather than archived under `archive/v1-*/` (see
+§"Pre-flight" below for the actual sequence); reference material from
+v1 is recoverable through git history. v2 ships as
 `pip install llm-wiki-kit==2.0.0` once all 22 tasks land.
 
 ## Motivation
@@ -198,7 +200,8 @@ detail.
     detection signals.
 1. **Task 17 — `wiki run` + operation execution.** Contract-driven.
 1. **Task 18 — Research dispatch + Perplexity.** Port v1 research code
-    from `archive/v1-skills/shared/` and `archive/v1-scripts/`. Becomes
+    from the v1 tree (now reachable via `git log main -- shared/skills/`
+    and `git log main -- scripts/`; see §"Pre-flight"). Becomes
     `infrastructure:research` + `infrastructure:research-perplexity`.
 1. **Task 19 — Gemini Deep Research + Semantic Scholar providers.**
     Complete the research-provider trio. All three are opt-in.
@@ -213,10 +216,22 @@ detail.
 1. **Task 22 — README, ROADMAP, v2.0.0.** Final pass, merge to main,
     tag the release.
 
-The pre-flight (v2 branch creation, v1-tree archive) is described in
-the migration plan artifact section 2. The archive step was deferred
-to a later task once it becomes necessary — Tasks 1–17 don't require
-the v1 tree to be moved.
+### Pre-flight (what actually happened)
+
+The original plan called for archiving the v1 tree under `archive/v1-*/`
+before v2 work began. In flight we made a different call: the v1
+files (`vault-templates/`, `shared/`, the v1 `scripts/sync-shared.sh`
+and `check-sync.sh`, the `.github/workflows/check-sync.yml`) were
+deleted on the v2 branch rather than moved under `archive/`. Git
+history on `main` preserves anything a future maintainer needs to
+reference, and no v2 task reads from the v1 tree at runtime — so the
+archive directory would have been carry-only weight. Concern B4
+(retro-review 2026-05-16) tracked the cleanup of the dangling
+`check-sync` workflow and scripts that the archive plan had implied
+would still be needed.
+
+The migration plan artifact section 2 originally described the
+v1-tree archive as a deferred step; this RFC supersedes that note.
 
 ### Per-task prompt template
 
@@ -229,7 +244,8 @@ Read:
 - docs/rfc/0001-v2-architecture.md (section "Task <N>")
 - docs/adr/000<X>-*.md (the relevant ADRs)
 - The most recent commits on the working branch
-- Anything under archive/v1-*/ that's relevant
+- v1 history via `git log main -- <path>` if a task needs it
+  (the v1 tree was deleted in-flight; see §"Pre-flight")
 
 Produce exactly the outputs listed for Task <N>, nothing more. Don't
 preview or start later tasks. Don't add runtime dependencies beyond
@@ -249,8 +265,8 @@ If anything in the task spec is unclear, stop and ask before proceeding.
 Considered. Loses because the v1 git history, issue tracker, and stars
 all live under the existing name, and the v1 tree is genuinely useful
 reference material during migration. Evolving in place under a working
-branch (with `archive/v1-*/` for reference) preserves continuity at
-the cost of a busier branch graph for ~3 months.
+branch (with v1 history reachable via `git log main`) preserves
+continuity at the cost of a busier branch graph for ~3 months.
 
 ### Alt 2: Keep multi-variant templates, add a sync engine
 
