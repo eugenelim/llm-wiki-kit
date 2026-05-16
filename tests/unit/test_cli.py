@@ -14,7 +14,8 @@ from llm_wiki_kit import __version__
 from llm_wiki_kit.cli import NOT_IMPLEMENTED_EXIT, build_parser, main
 
 SUBCOMMANDS_WITH_ARGS: list[list[str]] = [
-    ["init", "/tmp/vault", "--recipe", "family"],
+    # ``init`` graduated from stub to real handler in Task 10 — it has its
+    # own integration suite under ``tests/integration/test_wiki_init.py``.
     ["add", "content-type:interview"],
     ["upgrade"],
     ["upgrade", "--primitive", "people"],
