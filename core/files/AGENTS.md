@@ -157,8 +157,11 @@ the right invocation in chat.
 - For ambiguous routing during ingest: ask the user to confirm content
   type before writing the page. Default routing decisions are listed in
   `skills/ingest/SKILL.md`.
-- For anything that would touch many files at once: acquire the lock
-  via `skills/wiki-lock/SKILL.md` first.
+- For anything that would touch many files at once: in a future
+  Phase-F release, acquire the lock via `skills/wiki-lock/SKILL.md`
+  first. On v2.0.0.dev the lock CLI is not yet implemented — read
+  the `wiki-lock/SKILL.md` header for the current single-writer
+  convention.
 - For a `.proposed` sidecar: load `skills/wiki-conflict/SKILL.md`.
 - For a discrepancy between the journal and disk: load
   `skills/wiki-doctor/SKILL.md`.
