@@ -20,12 +20,14 @@ import pytest
 
 from llm_wiki_kit.journal import read_events
 from llm_wiki_kit.models import (
+    PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
 )
 from llm_wiki_kit.write_helper import (
     OBSIDIAN_IGNORE_PROPOSED_PATTERN,
     WriteResult,
+    resolve_proposal,
     safe_write,
 )
 
@@ -218,3 +220,98 @@ def test_drift_does_not_emit_a_page_write_event(vault: Path, journal: Path) -> N
 
     page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
     assert len(page_writes) == 1  # only the original; the drifted write is a proposal
+
+
+# ---------------------------------------------------------------------------
+# resolve_proposal: the documented bypass per ADR-0004 step 6 (2026-05-15
+# revision). Vault-side `wiki-conflict` skill calls this with the user's
+# confirmed merge; it writes content directly, deletes the sidecar, and
+# emits PageWrite + PageConflictResolved.
+# ---------------------------------------------------------------------------
+
+
+def _drive_to_proposal(vault: Path, journal: Path) -> Path:
+    target = vault / "page.md"
+    safe_write(target, "v1", by="core", journal_path=journal)
+    target.write_text("user edits")
+    safe_write(target, "v2", by="core", journal_path=journal)
+    return target
+
+
+def test_resolve_proposal_writes_content_bypassing_drift(vault: Path, journal: Path) -> None:
+    target = _drive_to_proposal(vault, journal)
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+    assert target.read_text() == "merged"
+
+
+def test_resolve_proposal_deletes_the_sidecar(vault: Path, journal: Path) -> None:
+    target = _drive_to_proposal(vault, journal)
+    sidecar = vault / "page.md.proposed"
+    assert sidecar.exists()
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+    assert not sidecar.exists()
+
+
+def test_resolve_proposal_handles_missing_sidecar(vault: Path, journal: Path) -> None:
+    target = _drive_to_proposal(vault, journal)
+    (vault / "page.md.proposed").unlink()  # user manually removed it before resolving
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+    assert target.read_text() == "merged"
+
+
+def test_resolve_proposal_emits_page_write_and_conflict_resolved(
+    vault: Path, journal: Path
+) -> None:
+    target = _drive_to_proposal(vault, journal)
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+
+    events = read_events(journal)
+    write_event = events[-2]
+    audit_event = events[-1]
+    assert isinstance(write_event, PageWriteEvent)
+    assert isinstance(audit_event, PageConflictResolvedEvent)
+    assert write_event.hash == _sha256("merged")
+    assert audit_event.hash == _sha256("merged")
+    assert write_event.path == "page.md"
+    assert audit_event.path == "page.md"
+    assert write_event.by == "wiki-conflict"
+    assert audit_event.by == "wiki-conflict"
+
+
+def test_after_resolve_subsequent_safe_write_sees_no_drift(vault: Path, journal: Path) -> None:
+    target = _drive_to_proposal(vault, journal)
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+
+    result = safe_write(target, "next kit version", by="core", journal_path=journal)
+    assert result is WriteResult.WRITTEN
+    assert target.read_text() == "next kit version"
+
+
+def test_resolve_proposal_accepts_the_kit_version_unchanged(vault: Path, journal: Path) -> None:
+    """User chose 'accept proposed' — content is the sidecar's content verbatim."""
+    target = _drive_to_proposal(vault, journal)
+    proposed_content = (vault / "page.md.proposed").read_text()
+    resolve_proposal(target, proposed_content, by="wiki-conflict", journal_path=journal)
+    assert target.read_text() == "v2"
+
+
+def test_resolve_proposal_keeps_the_user_version(vault: Path, journal: Path) -> None:
+    """User chose 'keep mine' — content is the user's current on-disk content."""
+    target = _drive_to_proposal(vault, journal)
+    user_content = target.read_text()
+    resolve_proposal(target, user_content, by="wiki-conflict", journal_path=journal)
+    assert target.read_text() == "user edits"
+
+    result = safe_write(target, "kit again", by="core", journal_path=journal)
+    assert result is WriteResult.WRITTEN
+
+
+def test_resolve_proposal_creates_baseline_when_no_prior_writes(vault: Path, journal: Path) -> None:
+    """resolve_proposal works even without a preceding safe_write history."""
+    target = vault / "page.md"
+    resolve_proposal(target, "fresh", by="wiki-conflict", journal_path=journal)
+    assert target.read_text() == "fresh"
+    events = read_events(journal)
+    assert len(events) == 2
+    assert isinstance(events[0], PageWriteEvent)
+    assert isinstance(events[1], PageConflictResolvedEvent)
