@@ -212,9 +212,14 @@ across several tool calls, and releases at the end. This is the
   multi-event sequences. (Today every other handler emits one event
   or a tight sequence inside one CLI invocation; per-event locking is
   sufficient.)
-- **`doctor.py`** gains `check_stale_lock(events, vault_root) ->
-  list[Issue]`. Wired into `run_doctor` in the same place the existing
-  checks are.
+- **`doctor.py`** gains `check_stale_lock(state, threshold_hours) ->
+  list[Issue]`. Reads `state.held_lock` directly — the
+  last-acquire-wins / release-clears semantics live in
+  `replay_state` (one source of truth, no parallel walk). Wired into
+  `run_doctor` in the same place the existing checks are.
+  Pattern-matches `check_page_drift`, `check_pending_proposals`,
+  `check_orphans`, `check_missing`, and `check_primitive_missing` —
+  every other doctor check takes the replayed `VaultState`.
 - **`models.py`** gains `LockAcquiredEvent` + `LockReleasedEvent`; both
   added to the `Event` discriminated union; `replay_state` records the
   current holder into `VaultState.held_lock: HeldLock | None`.
@@ -277,11 +282,14 @@ The same list translates 1-to-1 into the construction tests in
 ### Recovery (qC5 absorbed)
 
 - [ ] `test_doctor_runs_against_corrupt_journal_and_reports_journal_corrupt` —
-      `read_events` gains a `stop_on_corruption=True` mode; doctor uses
-      it; corruption surfaces as `Issue("journal-corrupt", line=N)`
-      rather than crashing the doctor itself. Pairs with the locking
-      work because corrupt journals are the most common state the
-      stale-lock recovery hits.
+      a new `journal.read_events_lenient(path) -> tuple[list[Event],
+      Corruption | None]` (sibling of strict `read_events`, not a
+      flag on it; see plan §Risks) returns the valid-events prefix
+      plus a `Corruption(line, reason)` row; doctor uses it;
+      corruption surfaces as `Issue("journal-corrupt", str(line),
+      reason)` rather than crashing the doctor itself. Pairs with
+      the locking work because corrupt journals are the most common
+      state the stale-lock recovery hits.
 
 ### Schema evolution (ADR-0002 §Negative)
 

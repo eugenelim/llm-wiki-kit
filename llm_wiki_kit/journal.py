@@ -1,12 +1,17 @@
 """Append-only journal at ``.wiki.journal/journal.jsonl``.
 
-ADR-0002 names this module the source of truth for vault state. Three
+ADR-0002 names this module the source of truth for vault state. Four
 operations cover its surface:
 
 - ``append_event`` validates a Pydantic ``Event`` and appends one JSON line.
 - ``read_events`` parses every line through the discriminated ``Event``
   union and raises ``JournalCorruptError(line=N)`` on the first malformed
   line. We fail loudly — corrupted state is the user's signal.
+- ``read_events_lenient`` returns ``(events, Corruption | None)`` instead
+  of raising. Only ``wiki doctor`` consumes this shape (it has to keep
+  reporting the *other* checks even when the journal is partially
+  corrupt); every other caller stays on strict ``read_events`` because
+  silently swallowing corruption is exactly the bug ADR-0002 forbids.
 - ``replay_state`` walks an ordered iterable of events and returns the
   derived ``VaultState`` (installed primitives, latest page writes per
   path, outstanding proposals, ingested sources, most recent operation
@@ -21,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import TypeAdapter
@@ -50,6 +56,20 @@ from llm_wiki_kit.models import (
 )
 
 _EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Event)
+
+
+@dataclass(frozen=True)
+class Corruption:
+    """One bad line found by ``read_events_lenient``.
+
+    Mirrors ``JournalCorruptError(line, reason)`` so the two corruption
+    surfaces — the strict-mode exception and the lenient-mode return
+    value — carry the same information shape. Frozen because doctor
+    treats it as a value, not an aggregate.
+    """
+
+    line: int
+    reason: str
 
 
 def _summarize(exc: PydanticValidationError) -> str:
@@ -82,6 +102,29 @@ def append_event(journal_path: Path, event: Event) -> None:
         os.fsync(fh.fileno())
 
 
+def _parse_line(line_number: int, raw: str) -> Event | None:
+    """Parse one journal line.
+
+    Returns ``None`` for a blank line (trailing newline on an append-only
+    file is normal). Raises ``JournalCorruptError`` with the 1-based
+    ``line_number`` on malformed JSON or a payload that fails Pydantic
+    validation. Shared between ``read_events`` and ``read_events_lenient``
+    so the two paths can't drift on what counts as "bad".
+    """
+
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        raise JournalCorruptError(line=line_number, reason=f"invalid JSON: {exc.msg}") from exc
+    try:
+        return _EVENT_ADAPTER.validate_python(payload)
+    except PydanticValidationError as exc:
+        raise JournalCorruptError(line=line_number, reason=_summarize(exc)) from exc
+
+
 def read_events(journal_path: Path) -> list[Event]:
     """Parse and validate every line in the journal.
 
@@ -98,21 +141,49 @@ def read_events(journal_path: Path) -> list[Event]:
     events: list[Event] = []
     with journal_path.open("r", encoding="utf-8") as fh:
         for line_number, raw in enumerate(fh, start=1):
-            stripped = raw.strip()
-            if not stripped:
-                continue
-            try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError as exc:
-                raise JournalCorruptError(
-                    line=line_number, reason=f"invalid JSON: {exc.msg}"
-                ) from exc
-            try:
-                events.append(_EVENT_ADAPTER.validate_python(payload))
-            except PydanticValidationError as exc:
-                raise JournalCorruptError(line=line_number, reason=_summarize(exc)) from exc
+            event = _parse_line(line_number, raw)
+            if event is not None:
+                events.append(event)
 
     return events
+
+
+def read_events_lenient(journal_path: Path) -> tuple[list[Event], Corruption | None]:
+    """Strict ``read_events``'s sibling for the recovery path.
+
+    Returns ``(events, None)`` on a clean journal — the same list strict
+    would have returned. On the first malformed line, returns
+    ``(events_before, Corruption(line, reason))`` instead of raising:
+    every event before the bad line is parsed and handed back, and the
+    rest of the file is left unread.
+
+    Stopping at the first bad line is a conservative convention, not a
+    claim that the kit knows the tail is torn: a hand-edited bogus row
+    surrounded by valid ones is a real shape (it shows up in this
+    module's own corruption tests). Surfacing one corruption row per
+    pass keeps the doctor's output digestible and forces the user (or
+    Claude) to repair the journal before re-running rather than chasing
+    a cascade of half-overlapping reports.
+
+    Only ``wiki doctor`` consumes this — see ``journal-locking`` spec
+    §Recovery. Every other caller stays on strict ``read_events`` so a
+    silent corruption-swallow can't ship through the back door.
+    """
+
+    if not journal_path.exists():
+        return [], None
+
+    events: list[Event] = []
+    with journal_path.open("r", encoding="utf-8") as fh:
+        for line_number, raw in enumerate(fh, start=1):
+            try:
+                event = _parse_line(line_number, raw)
+            except JournalCorruptError as exc:
+                return events, Corruption(line=exc.line, reason=exc.reason)
+            if event is not None:
+                events.append(event)
+
+    return events, None
 
 
 def replay_state(events: Iterable[Event]) -> VaultState:

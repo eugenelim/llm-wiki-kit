@@ -22,7 +22,13 @@ from pathlib import Path
 import pytest
 
 from llm_wiki_kit.errors import JournalCorruptError
-from llm_wiki_kit.journal import append_event, read_events, replay_state
+from llm_wiki_kit.journal import (
+    Corruption,
+    append_event,
+    read_events,
+    read_events_lenient,
+    replay_state,
+)
 from llm_wiki_kit.models import (
     ConfigSetEvent,
     Event,
@@ -538,6 +544,88 @@ def test_old_journal_without_lock_events_replays_cleanly(tmp_path: Path) -> None
     assert state.vault_name == "home"
     assert state.installed_primitives == {"core": "0.1.0"}
     assert "AGENTS.md" in state.page_writes
+
+
+# ---------------------------------------------------------------------------
+# read_events_lenient (journal-locking spec, plan step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_read_events_lenient_returns_none_corruption_on_clean_journal(tmp_path: Path) -> None:
+    """A well-formed journal: lenient returns the same events as strict, corruption is None.
+
+    The §Risks resolution in ``plan.md`` keeps ``read_events(path) -> list[Event]``
+    strict and adds ``read_events_lenient`` as a separate function returning
+    ``(events, Corruption | None)``. This test pins the "no corruption" branch:
+    same parse output as strict, plus an explicit ``None`` sentinel.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    append_event(
+        journal, VaultInitEvent(timestamp=_at(0), by="core", vault_name="home", recipe="family")
+    )
+    append_event(
+        journal,
+        PrimitiveInstallEvent(timestamp=_at(1), by="core", primitive="core", version="0.1.0"),
+    )
+
+    events, corruption = read_events_lenient(journal)
+    assert corruption is None
+    assert events == read_events(journal)
+
+
+def test_read_events_lenient_returns_partial_events_and_corruption_at_bad_line(
+    tmp_path: Path,
+) -> None:
+    """A malformed line: lenient returns the valid prefix and a ``Corruption`` row.
+
+    Doctor (plan step 6) consumes this shape: it surfaces the corruption as
+    a ``journal-corrupt`` issue and runs the rest of its checks against the
+    partial event list rather than crashing the whole pass. Strict
+    ``read_events`` would raise ``JournalCorruptError`` at the same line.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    append_event(
+        journal, VaultInitEvent(timestamp=_at(0), by="core", vault_name="home", recipe="family")
+    )
+    append_event(
+        journal,
+        PrimitiveInstallEvent(timestamp=_at(1), by="core", primitive="core", version="0.1.0"),
+    )
+    with journal.open("a") as fh:
+        fh.write("{not json\n")
+    # A valid line after the bad one — proves lenient stops at the first bad
+    # line rather than silently swallowing more corruption downstream.
+    append_event(
+        journal,
+        PrimitiveInstallEvent(timestamp=_at(2), by="core", primitive="people", version="0.1.0"),
+    )
+
+    events, corruption = read_events_lenient(journal)
+    assert corruption is not None
+    assert corruption.line == 3
+    assert "invalid JSON" in corruption.reason
+    # Only the two pre-corruption events survive; the post-corruption line
+    # is unread on purpose (the journal is append-only, so anything after
+    # the bad line is in a state doctor can't trust).
+    assert len(events) == 2
+    assert isinstance(events[0], VaultInitEvent)
+    assert isinstance(events[1], PrimitiveInstallEvent)
+
+
+def test_corruption_is_frozen_dataclass() -> None:
+    """``Corruption`` is a value, not an aggregate: immutable after construction.
+
+    Pins the ``frozen=True`` invariant so a future refactor that
+    promotes it to a mutable container (or removes the dataclass
+    decorator) trips this test. Attribute storage itself is a
+    ``@dataclass`` guarantee from the stdlib — no need to re-assert.
+    """
+
+    corruption = Corruption(line=42, reason="invalid JSON: Expecting value")
+    with pytest.raises(AttributeError):
+        corruption.line = 43  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
