@@ -316,8 +316,25 @@ def append_event(journal_path: Path, event: Event, *, nonblocking: bool = False)
     ``os.fsync()`` forces the kernel to commit the journal file to disk
     so a crash after ``append_event`` returns cannot lose the line
     (§Durability, qB1). An ``fsync`` failure (EIO) propagates as
-    ``OSError`` to the caller. ADR-0002's "Concurrent writers are not
-    safe" note will be amended to point at this spec in plan step 7.
+    ``OSError`` to the caller. ADR-0002 §Negative ("Concurrent writers
+    require an advisory lock") points at this spec for the writer
+    contract.
+
+    Concurrent *readers* (``read_events`` / ``read_events_lenient``,
+    ``replay_state`` over a freshly-read list) take no lock and may
+    open the journal while a writer is mid-append. The contract is
+    weaker than the writer-vs-writer one: ``O_APPEND`` plus a single
+    ``write(2)`` per event line means a reader sees either the
+    complete line or no line at all on Linux/macOS for line sizes
+    that fit the kernel's atomic-append window (a journal event is
+    ≪PIPE_BUF in practice). A reader that opens the file *before*
+    the writer's ``write`` simply doesn't observe the new line; it
+    shows up on the next read. The lenient reader's ``Corruption``
+    surface exists for hand-edited journals and on-disk corruption,
+    not for partial-write recovery — the kit never produces a torn
+    line of its own accord, and offers no defense against a hostile
+    external writer that bypasses ``append_event``.
+
 
     ``nonblocking=True`` runs the per-call flock with ``LOCK_NB`` so the
     write raises :class:`LockUnavailableError` instead of blocking on
