@@ -40,6 +40,7 @@ from llm_wiki_kit.models import (
     ConfigSetEvent,
     Event,
     HeldLock,
+    IngestRoutedEvent,
     LintRunEvent,
     LockAcquiredEvent,
     LockReleasedEvent,
@@ -620,6 +621,50 @@ def test_replay_ignores_events_that_dont_affect_state() -> None:
     )
     # No crash, no state contribution.
     assert state.installed_primitives == {}
+    assert state.page_writes == {}
+
+
+def test_ingest_routed_event_round_trips_through_journal(tmp_path: Path) -> None:
+    """``IngestRoutedEvent`` survives append → read → replay unchanged (qC11).
+
+    ``replay_state`` deliberately ignores ``IngestRoutedEvent`` today —
+    the future ``journal explain`` is its consumer (Phase D). This pin
+    test exists so a maintainer who notices "this field has no
+    consumer" can't quietly drop the schema without the test going red.
+    Round-tripping the field through the discriminated-union read path
+    is enough to prove the journal still carries every field the
+    routing event declares.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    event = IngestRoutedEvent(
+        timestamp=_at(0),
+        by="wiki-ingest",
+        source="https://allrecipes.com/recipe/12345/",
+        content_type="recipe",
+        candidates=["recipe"],
+        via="auto",
+        signals=["url_domains:allrecipes.com", "url_path_patterns:/recipe/*"],
+    )
+    append_event(journal, event)
+
+    loaded = read_events(journal)
+    assert loaded == [event]
+    # Field-by-field guard so a silent schema narrowing (e.g. dropping
+    # ``signals``) fails this test even if equality on the union stays
+    # green by coincidence.
+    routed = loaded[0]
+    assert isinstance(routed, IngestRoutedEvent)
+    assert routed.source == event.source
+    assert routed.content_type == event.content_type
+    assert routed.candidates == event.candidates
+    assert routed.via == event.via
+    assert routed.signals == event.signals
+
+    # Replay still ignores the event (documented in journal.py
+    # replay_state); the round trip is the contract, not derived state.
+    state = replay_state(loaded)
+    assert state.ingested_sources == {}
     assert state.page_writes == {}
 
 
