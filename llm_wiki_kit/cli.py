@@ -477,6 +477,70 @@ def _ingest_event_from_result(
     )
 
 
+RESOLVE_VEHICLE = "wiki-conflict"
+
+
+def _cmd_resolve(args: argparse.Namespace) -> int:
+    """Commit a user-mediated merge of a ``<path>.proposed`` sidecar.
+
+    Vault-side ``wiki-conflict`` skill drives this after the user picks a
+    resolution. Three input modes — ``--keep`` (re-baseline to the user's
+    on-disk version, discard the kit's proposal), ``--accept`` (write the
+    sidecar's content verbatim), or stdin (a custom merge the user typed
+    or piped). Wired to :func:`write_helper.resolve_proposal` (ADR-0004
+    §Mechanics step 6).
+
+    The subcommand exists because retro-review #F-B2 found the
+    vault-side SKILL.md calling a CLI verb that didn't exist; argparse
+    refused on every fresh `wiki init`.
+    """
+
+    from llm_wiki_kit.write_helper import resolve_proposal
+
+    try:
+        vault_root = Path.cwd().resolve()
+        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+        if not journal_path.is_file():
+            raise WikiError(
+                f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+                "Run `wiki init <path> --recipe <name>` first."
+            )
+
+        path = Path(args.path)
+        abs_path = path if path.is_absolute() else (vault_root / path)
+
+        if args.keep:
+            if not abs_path.is_file():
+                raise WikiError(
+                    f"--keep needs '{path}' to exist on disk (the user's version "
+                    "to re-baseline to); the file is missing"
+                )
+            content = abs_path.read_text(encoding="utf-8")
+        elif args.accept:
+            sidecar = abs_path.with_name(abs_path.name + ".proposed")
+            if not sidecar.is_file():
+                raise WikiError(
+                    f"--accept needs '{sidecar.relative_to(vault_root)}' on disk "
+                    "but no .proposed sidecar is present for this path"
+                )
+            content = sidecar.read_text(encoding="utf-8")
+        else:
+            content = sys.stdin.read()
+
+        resolve_proposal(
+            path=abs_path,
+            content=content,
+            by=RESOLVE_VEHICLE,
+            journal_path=journal_path,
+        )
+    except WikiError as exc:
+        print(str(exc), file=sys.stderr)
+        return WIKI_ERROR_EXIT
+
+    print(f"Resolved {args.path}.")
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     return _stub("run")
 
@@ -553,6 +617,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override auto-detection with an explicit content-type primitive name.",
     )
     ingest.set_defaults(func=_cmd_ingest)
+
+    resolve = subparsers.add_parser(
+        "resolve",
+        help="Commit a user-mediated merge of a <path>.proposed sidecar.",
+    )
+    resolve.add_argument(
+        "path",
+        help="Vault-relative path of the conflicted page (without the `.proposed` suffix).",
+    )
+    resolve_mode = resolve.add_mutually_exclusive_group()
+    resolve_mode.add_argument(
+        "--keep",
+        action="store_true",
+        help="Discard the kit's proposal; re-baseline to the on-disk content.",
+    )
+    resolve_mode.add_argument(
+        "--accept",
+        action="store_true",
+        help="Discard user edits; write the .proposed sidecar's content verbatim.",
+    )
+    resolve.set_defaults(func=_cmd_resolve)
 
     run = subparsers.add_parser("run", help="Run a named operation.")
     run.add_argument("operation", help="Operation name (e.g. weekly-digest).")
