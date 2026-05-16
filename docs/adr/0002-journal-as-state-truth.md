@@ -97,7 +97,14 @@ prefixed home-dir cache.
   this explicit via `default=` and `model_validator(mode="before")`.
 - **Concurrent writers are not safe.** The journal assumes a single
   writer at a time. Mitigated by the `wiki-lock` skill plus an
-  `operation.lock` file at `.wiki.journal/operation.lock`.
+  `operation.lock` file at `.wiki.journal/operation.lock`. *(2026-05-16
+  amendment: the mitigation is not yet implemented in v2.0.0.dev — no
+  `fcntl.flock` wraps `append_event`, no `wiki journal lock
+  acquire|release` CLI exists, and no `lock.acquired` / `lock.released`
+  event types are modelled. Tracked at retro-review finding `F-B3`
+  (`docs/specs/retro-review-tasks-1-16/findings.md`); the runtime
+  implementation lands in Phase F via a separate spec. On the current
+  release the journal is single-writer-by-convention.)*
 
 ### Neutral / monitor
 
