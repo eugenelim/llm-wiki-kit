@@ -145,7 +145,7 @@ def test_managed_region_drift_clean_match(tmp_path: Path) -> None:
         content_hash=_hash("  - meeting"),  # parse strips the trailing newline
     )
 
-    assert check_managed_region_drift([event], vault) == []
+    assert check_managed_region_drift([event], vault, VaultState()) == []
 
 
 def test_managed_region_drift_reports_edited_body(tmp_path: Path) -> None:
@@ -161,7 +161,7 @@ def test_managed_region_drift_reports_edited_body(tmp_path: Path) -> None:
         content_hash=_hash("  - meeting"),
     )
 
-    issues = check_managed_region_drift([event], vault)
+    issues = check_managed_region_drift([event], vault, VaultState())
     assert issues == [Issue("managed-region-drift", "frontmatter.schema.yaml:types")]
 
 
@@ -177,7 +177,7 @@ def test_managed_region_drift_reports_removed_region(tmp_path: Path) -> None:
         content_hash=_hash("  - meeting"),
     )
 
-    issues = check_managed_region_drift([event], vault)
+    issues = check_managed_region_drift([event], vault, VaultState())
     assert issues == [
         Issue("managed-region-drift", "frontmatter.schema.yaml:types", "region missing")
     ]
@@ -204,7 +204,39 @@ def test_managed_region_drift_uses_latest_event_per_region(tmp_path: Path) -> No
     )
 
     # The second event shadows the first — no drift.
-    assert check_managed_region_drift([stale, latest], vault) == []
+    assert check_managed_region_drift([stale, latest], vault, VaultState()) == []
+
+
+def test_managed_region_drift_skips_files_with_pending_proposal(tmp_path: Path) -> None:
+    """Retro-review #B6: a file with an open ``.proposed`` sidecar has
+    already been flagged as ``pending-proposal``; reporting it again as
+    ``managed-region-drift`` is double-counting the same user-actionable
+    state. Pairs with #F-B1's resolve fix.
+    """
+
+    from llm_wiki_kit.models import PageProposalEvent
+
+    vault = _vault(tmp_path)
+    schema = SCHEMA_TEMPLATE.format(types_body="  - injected by the user\n")
+    (vault / "frontmatter.schema.yaml").write_text(schema, encoding="utf-8")
+
+    event = ManagedRegionWriteEvent(
+        timestamp=NOW,
+        by="wiki-init",
+        file="frontmatter.schema.yaml",
+        region="types",
+        content_hash=_hash("  - meeting"),
+    )
+    proposal = PageProposalEvent(
+        timestamp=NOW,
+        by="core",
+        path="frontmatter.schema.yaml",
+        proposed_path="frontmatter.schema.yaml.proposed",
+        hash=_hash("anything"),
+    )
+    state = VaultState(pending_proposals={"frontmatter.schema.yaml": proposal})
+
+    assert check_managed_region_drift([event], vault, state) == []
 
 
 # ---------------------------------------------------------------------------
