@@ -11,6 +11,9 @@
 # Reading this in the future: the rule is "every primitive named here
 # must already exist in the catalog when this recipe lands on main."
 # Reach for `wiki add` for opt-in extensions on top of the baseline.
+#
+# Conventions: alphabetical, one primitive per line, no `core`
+# (always installed). Matches `family.yaml` / `personal.yaml`.
 name: work-os
 version: 0.2.0
 description: >-
@@ -21,7 +24,6 @@ description: >-
   top of them.
 primitives:
   - action-item-rollup
-  - core
   - customer-feedback
   - customers
   - decision
