@@ -19,6 +19,7 @@ import logging
 import multiprocessing
 import os
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from llm_wiki_kit.journal import (
     read_events,
     read_events_lenient,
     replay_state,
+    transaction,
 )
 from llm_wiki_kit.models import (
     ConfigSetEvent,
@@ -58,6 +60,34 @@ NOW = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
 
 def _at(seconds: int) -> datetime:
     return NOW + timedelta(seconds=seconds)
+
+
+@pytest.fixture(autouse=True)
+def _reset_journal_module_state() -> Iterator[None]:
+    """Reset ``_PERSISTED_FDS`` and ``_LOCK_FALLBACK_WARNED`` around every test.
+
+    Two module-level mutable sets / dicts in ``llm_wiki_kit.journal``
+    survive across tests: the persist-fd stash (populated by
+    ``transaction(persist=True)`` clean exit; never popped except by
+    ``_release_persisted_fd`` or process exit) and the fallback-warn-
+    once registry (populated on the unsupported-flock path). Without
+    teardown they'd accumulate entries and could mask test failures —
+    a future test reusing a journal path would skip the warning, or
+    hit the new ``persist=True`` re-entry guard for the wrong reason.
+    The fixture pops the entries and closes any leaked fds.
+    """
+
+    import llm_wiki_kit.journal as _journal
+
+    yield
+
+    for fh in list(_journal._PERSISTED_FDS.values()):
+        try:
+            fh.close()
+        except OSError:
+            pass
+    _journal._PERSISTED_FDS.clear()
+    _journal._LOCK_FALLBACK_WARNED.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +172,69 @@ def _blocked_appender_worker(
         ),
     )
     done_event.set()
+
+
+def _transaction_persist_holder_worker(
+    journal_str: str,
+    ready_event: Any,
+    release_event: Any,
+) -> None:
+    """Hold the journal lock via ``transaction(persist=True)`` until released.
+
+    The ``persist=True`` plumbing (plan step 4) keeps the OS-level lock
+    alive across the context manager's ``__exit__`` so a subsequent CLI
+    invocation (step 5) can return control to the shell with the lock
+    still held. From a test fixture's perspective that means: the lock is
+    taken on enter and released when *this worker process* exits, not
+    when the ``with`` block ends. That makes ``transaction(persist=True)``
+    swappable with the raw-``flock`` standalone holder in
+    ``test_append_event_blocks_when_another_process_holds_lock`` — the
+    second holder shape this PR back-fills per plan step 3 §Verification.
+    """
+
+    from llm_wiki_kit.journal import transaction as _transaction
+
+    journal = Path(journal_str)
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    with _transaction(journal, by="persist-holder", reason="fixture", persist=True):
+        ready_event.set()
+        # Matches the raw-flock holder's 30s ceiling. If the release
+        # signal never arrives the test has already failed elsewhere; we
+        # just want the holder to exit cleanly so pytest can collect the
+        # report rather than hang.
+        release_event.wait(timeout=30)
+    # ``persist=True`` clean exit leaves the fd open + lock held. The
+    # lock auto-releases when this process exits — which happens as soon
+    # as this function returns.
+
+
+def _persist_post_exit_holder_worker(
+    journal_str: str,
+    post_exit_event: Any,
+    release_event: Any,
+) -> None:
+    """Enter+exit a ``transaction(persist=True)`` block, then wait — lock must survive.
+
+    Discriminating fixture for the Blocker the adversarial review caught:
+    if ``persist=True`` leaks the fd at generator-frame teardown, the
+    OS-level lock dies the instant ``__exit__`` runs, and the spec
+    promise ("future flock attempts block until release runs") is empty.
+    The worker enters the ``with`` block, exits it normally, signals
+    ``post_exit``, and only then waits on ``release`` — so the main
+    process's ``LOCK_EX | LOCK_NB`` probe is timed strictly *after*
+    ``__exit__`` returned.
+    """
+
+    from llm_wiki_kit.journal import transaction as _transaction
+
+    journal = Path(journal_str)
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    with _transaction(journal, by="post-exit-holder", reason="probe", persist=True):
+        pass
+    # ``__exit__`` has run. If persist=True is doing its job the fd is
+    # still open at module level and the OS lock is still held.
+    post_exit_event.set()
+    release_event.wait(timeout=30)
 
 
 # ---------------------------------------------------------------------------
@@ -1077,3 +1170,568 @@ def test_append_event_propagates_oserror_eintr_from_flock(
             VaultInitEvent(timestamp=NOW, by="core", vault_name="home", recipe="family"),
         )
     assert excinfo.value.errno == errno.EINTR
+
+
+# ---------------------------------------------------------------------------
+# Transaction context manager (journal-locking plan step 4 / spec §Transaction)
+# ---------------------------------------------------------------------------
+
+
+def test_transaction_emits_lock_acquired_and_released_on_clean_exit(
+    tmp_path: Path,
+) -> None:
+    """``transaction()`` brackets the body's events with lock.acquired/released.
+
+    Spec §Behavior happy-path multi-event: a multi-event operation enters
+    ``transaction``, the runner appends N events inside the block, and
+    the manager emits a single ``LockAcquiredEvent`` before yielding and
+    a single ``LockReleasedEvent`` on clean exit. The two events must
+    bracket the body's events in journal order; otherwise replay can't
+    derive "the lock was held while these N events were written."
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    with transaction(journal, by="weekly-digest", reason="2026-W20"):
+        append_event(
+            journal,
+            PageWriteEvent(timestamp=_at(1), by="weekly-digest", path="digest.md", hash="a" * 64),
+        )
+        append_event(
+            journal,
+            PageWriteEvent(timestamp=_at(2), by="weekly-digest", path="index.md", hash="b" * 64),
+        )
+
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types == [
+        "LockAcquiredEvent",
+        "PageWriteEvent",
+        "PageWriteEvent",
+        "LockReleasedEvent",
+    ], f"transaction did not bracket body events: {types}"
+    acquired = events[0]
+    released = events[-1]
+    assert isinstance(acquired, LockAcquiredEvent)
+    assert isinstance(released, LockReleasedEvent)
+    assert acquired.by == "weekly-digest"
+    assert acquired.reason == "2026-W20"
+    assert released.by == "weekly-digest"
+
+
+def test_transaction_emits_lock_released_on_exception(tmp_path: Path) -> None:
+    """Body raises: ``LockReleasedEvent`` is still last; the exception re-raises.
+
+    Spec §Invariants: ``LockAcquiredEvent`` always pairs with a
+    ``LockReleasedEvent`` in the same process lifetime, except on a hard
+    crash. A Python exception inside the block must not break the pair —
+    the ``finally`` is the kit's contract. Pinning this here means a
+    future refactor that swaps the ``finally`` for ``except`` (and
+    silently swallows on success) trips the test.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    boom = RuntimeError("body failed mid-sequence")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        with transaction(journal, by="bulk-ingest", reason="inbox"):
+            append_event(
+                journal,
+                PageWriteEvent(timestamp=_at(1), by="bulk-ingest", path="doc.md", hash="c" * 64),
+            )
+            raise boom
+
+    assert excinfo.value is boom, "transaction must re-raise the original exception"
+
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types == [
+        "LockAcquiredEvent",
+        "PageWriteEvent",
+        "LockReleasedEvent",
+    ], f"exception path did not emit terminating release: {types}"
+
+
+def test_nested_append_event_reuses_held_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``append_event`` inside an open ``transaction()`` does not re-flock.
+
+    Plan step 4 §Verification names the contract: the ContextVar-held fd
+    short-circuits the open + flock per nested call so an N-event
+    sequence takes ``LOCK_EX`` exactly once, not N+1 times. A
+    monkeypatched ``fcntl.flock`` counter is the discriminating probe —
+    a regression that drops the ContextVar check would land N additional
+    locks here.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    calls: list[int] = []
+    real_flock = fcntl.flock
+
+    def counting_flock(fd: int, operation: int) -> None:
+        calls.append(operation)
+        real_flock(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", counting_flock)
+
+    with transaction(journal, by="runner"):
+        for i in range(3):
+            append_event(
+                journal,
+                PageWriteEvent(
+                    timestamp=_at(i + 1),
+                    by="runner",
+                    path=f"p{i}.md",
+                    hash=f"{i:064x}",
+                ),
+            )
+
+    # "Exactly one flock per transaction, and it's LOCK_EX." Splitting the
+    # invariant into two asserts catches the silent-regression case where
+    # a refactor adds a LOCK_SH + LOCK_EX pair (count goes to 2; an
+    # ``op == LOCK_EX`` filter would still see one and pass).
+    assert len(calls) == 1, (
+        f"expected exactly one flock call across a transaction with 3 nested "
+        f"appends; got {len(calls)} (full ops: {calls})"
+    )
+    assert calls[0] == fcntl.LOCK_EX, f"expected LOCK_EX; got {calls[0]}"
+
+    # Sanity: all five events landed (acquire + 3 writes + release).
+    events = read_events(journal)
+    assert len(events) == 5
+    assert isinstance(events[0], LockAcquiredEvent)
+    assert isinstance(events[-1], LockReleasedEvent)
+
+
+def test_transaction_blocks_concurrent_append_via_persist_holder(
+    tmp_path: Path,
+) -> None:
+    """A ``transaction(persist=True)`` holder blocks an outside ``append_event``.
+
+    Plan step 3 §Verification anticipated this back-fill: step 3's
+    blocked-appender test used a standalone raw-``flock`` holder because
+    ``transaction`` did not yet exist; step 4 introduces it, and the
+    contract is "the two holder shapes are interchangeable." If
+    ``persist=True`` regresses to releasing the lock on ``__exit__`` (or
+    never takes one), the appender returns before ``release`` fires and
+    the assertion catches it.
+    """
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    ctx = multiprocessing.get_context("spawn")
+    ready = ctx.Event()
+    release = ctx.Event()
+    started = ctx.Event()
+    done = ctx.Event()
+
+    holder = ctx.Process(
+        target=_transaction_persist_holder_worker,
+        args=(str(journal), ready, release),
+    )
+    appender = ctx.Process(
+        target=_blocked_appender_worker,
+        args=(str(journal), started, done),
+    )
+
+    holder.start()
+    try:
+        try:
+            assert ready.wait(timeout=10), "persist holder did not signal ready"
+            # The persist holder has taken the lock AND written the holder
+            # file. Both invariants matter for step 5's CLI; pin the
+            # holder-file half here so a regression that drops the
+            # holder-file write would also surface.
+            holder_file = journal.parent / "lock"
+            assert holder_file.exists(), (
+                "transaction(persist=True) did not write .wiki.journal/lock"
+            )
+
+            appender.start()
+            assert started.wait(timeout=10), "appender did not start"
+            assert not done.wait(timeout=0.5), (
+                "appender completed before holder released — transaction(persist=True) "
+                "did not actually hold the lock past the with-block"
+            )
+            release.set()
+            assert done.wait(timeout=10), "appender did not complete after holder released"
+        finally:
+            release.set()
+            if appender.pid is not None:
+                appender.join(timeout=10)
+                if appender.is_alive():
+                    appender.kill()
+                    appender.join(timeout=5)
+        assert appender.exitcode == 0, f"appender exited with {appender.exitcode}"
+    finally:
+        release.set()
+        holder.join(timeout=10)
+        if holder.is_alive():
+            holder.kill()
+            holder.join(timeout=5)
+
+    # The holder emitted LockAcquiredEvent on enter; persist=True leaves
+    # the journal without a paired LockReleasedEvent (that's the
+    # stale-lock recovery surface in spec step 6, not a bug here). The
+    # appender's line is the third event.
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types[0] == "LockAcquiredEvent", f"first event should be acquire, got {types}"
+    assert "LockReleasedEvent" not in types, (
+        f"persist=True must NOT emit LockReleasedEvent on clean exit (events: {types})"
+    )
+    assert any(getattr(e, "by", None) == "blocked-appender" for e in events), (
+        f"appender's event missing from journal: {types}"
+    )
+
+
+def test_transaction_persist_true_writes_holder_file(tmp_path: Path) -> None:
+    """``transaction(persist=True)`` writes ``.wiki.journal/lock`` on enter.
+
+    Spec §Behavior "Claude-session manual hold" names the format:
+    ``<by>\\n<iso-timestamp>\\n[<reason>]``. Step 5's CLI consumes this
+    file; step 4 ships the writer. Pin the format here so the CLI's
+    parser written in step 5 can target a stable on-disk contract.
+    """
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    with transaction(journal, by="claude-session", reason="weekly digest", persist=True):
+        holder_file = journal.parent / "lock"
+        assert holder_file.exists()
+        lines = holder_file.read_text(encoding="utf-8").splitlines()
+        assert lines[0] == "claude-session", f"holder line 0 must be <by>; got {lines}"
+        # Line 1 is an ISO-8601 timestamp. Cheap shape check: parses.
+        parsed = datetime.fromisoformat(lines[1])
+        assert parsed.tzinfo is not None, "timestamp must be timezone-aware"
+        assert lines[2] == "weekly digest", f"holder line 2 must be <reason>; got {lines}"
+
+
+def test_transaction_persist_true_omits_reason_when_none(tmp_path: Path) -> None:
+    """``persist=True`` without a reason: holder file has two lines, not three.
+
+    Spec §Behavior writes the reason as an *optional* third line — a
+    file with three lines means a reason is recorded, a file with two
+    lines means none. Pin the absent-reason shape so step 5's parser
+    doesn't get a phantom empty-string reason on a no-reason hold.
+    """
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    with transaction(journal, by="claude-session", persist=True):
+        holder_file = journal.parent / "lock"
+        lines = holder_file.read_text(encoding="utf-8").splitlines()
+        assert lines[0] == "claude-session"
+        datetime.fromisoformat(lines[1])
+        assert len(lines) == 2, f"no-reason hold must have 2 lines; got {lines}"
+
+
+def test_transaction_persist_true_leaves_holder_file_on_clean_exit(
+    tmp_path: Path,
+) -> None:
+    """``persist=True`` clean exit: holder file persists, no LockReleasedEvent.
+
+    Spec §Behavior: the CLI returns 0 *without releasing*; the holder
+    file persists so a second ``wiki lock acquire`` can detect it.
+    Pinning this means a future refactor that "tidies up" by deleting
+    the holder file on ``__exit__`` would break the manual-hold flow.
+    """
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    with transaction(journal, by="claude-session", reason="manual", persist=True):
+        pass
+
+    holder_file = journal.parent / "lock"
+    assert holder_file.exists(), "persist=True clean exit must leave holder file in place"
+
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types == ["LockAcquiredEvent"], (
+        f"persist=True clean exit must NOT emit LockReleasedEvent; got {types}"
+    )
+
+
+def test_transaction_persist_true_cleans_up_holder_file_on_exception(
+    tmp_path: Path,
+) -> None:
+    """``persist=True`` body raises: holder file is removed; LockReleasedEvent emitted.
+
+    Quality-engineer concern (and spec §Edge cases by extension): a
+    half-acquired persist that crashes mid-body leaves a phantom
+    holder if cleanup runs only on clean exit. The persist=True path
+    must distinguish "clean exit, keep the lock alive" from "exception,
+    roll back" — otherwise stale-lock detection ends up firing on
+    transactions the user never meant to leave open.
+    """
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    boom = RuntimeError("body failed during persist transaction")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        with transaction(journal, by="claude-session", reason="manual", persist=True):
+            raise boom
+
+    assert excinfo.value is boom
+    holder_file = journal.parent / "lock"
+    assert not holder_file.exists(), (
+        "exception inside persist=True transaction must clean up the holder file"
+    )
+
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types == ["LockAcquiredEvent", "LockReleasedEvent"], (
+        f"exception path must still emit LockReleasedEvent; got {types}"
+    )
+
+
+def test_nested_transaction_raises_runtime_error(tmp_path: Path) -> None:
+    """Transaction-in-transaction raises ``RuntimeError``.
+
+    Spec §Invariants: ``fcntl.flock`` is non-recursive at the OS level.
+    The ContextVar guard makes nested ``append_event`` safe (the held
+    fd is reused), but a *second* ``transaction()`` entry has ambiguous
+    semantics: which ``by`` records the audit event? Whose
+    ``LockReleasedEvent`` closes the bracket? Raising forces the caller
+    to refactor rather than letting two acquire/release pairs interleave
+    silently. The outer transaction must still emit a clean
+    acquire/release pair so a caller catching the inner ``RuntimeError``
+    doesn't leave the journal half-bracketed.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+
+    with pytest.raises(RuntimeError, match="non-recursive"):
+        with transaction(journal, by="outer"):
+            with transaction(journal, by="inner"):
+                pass  # pragma: no cover - the second enter raises
+
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types == [
+        "LockAcquiredEvent",
+        "LockReleasedEvent",
+    ], f"outer transaction should still bracket cleanly; got {types}"
+
+
+def test_transaction_clears_context_var_on_exit(tmp_path: Path) -> None:
+    """After ``transaction()`` exits, ``append_event`` returns to per-call locking.
+
+    Ensures the ContextVar is reset on the way out so a post-transaction
+    ``append_event`` re-opens + re-locks the journal as usual. Without
+    this, a subsequent append in the same process would write to a
+    closed fd (or worse, a recycled fd) and silently corrupt the
+    journal.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    with transaction(journal, by="runner"):
+        append_event(
+            journal,
+            PageWriteEvent(timestamp=_at(1), by="runner", path="in.md", hash="a" * 64),
+        )
+
+    # After exit: a fresh append should land cleanly.
+    append_event(
+        journal,
+        PageWriteEvent(timestamp=_at(2), by="runner", path="out.md", hash="b" * 64),
+    )
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types == [
+        "LockAcquiredEvent",
+        "PageWriteEvent",
+        "LockReleasedEvent",
+        "PageWriteEvent",
+    ], f"post-transaction append did not land outside the bracket: {types}"
+
+
+def test_transaction_persist_true_os_lock_survives_with_block_exit(
+    tmp_path: Path,
+) -> None:
+    """``persist=True``: OS-level lock is still held *after* ``__exit__`` returns.
+
+    The contract that distinguishes ``persist=True`` from ``persist=False``
+    is exactly this: spec §Behavior lines 127-128 promise "future
+    ``fcntl.flock`` attempts from other processes block until ``wiki lock
+    release`` runs." A naive implementation that keeps the fd as a
+    generator-frame local would let CPython close it at ``__exit__``,
+    silently releasing the OS lock — every other test in this file could
+    still pass because they all assert *inside* the ``with`` block.
+
+    This test pins the post-``__exit__`` state by spawning a holder
+    worker that enters+exits the ``with`` block (signals ``post_exit``
+    only *after* ``__exit__`` returned) and then waits. The main process
+    attempts ``fcntl.flock(LOCK_EX | LOCK_NB)`` on the same journal; that
+    must fail with ``EAGAIN`` / ``EWOULDBLOCK`` because the holder's fd
+    is supposed to still be open in the module-level stash.
+    """
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    ctx = multiprocessing.get_context("spawn")
+    post_exit = ctx.Event()
+    release = ctx.Event()
+
+    holder = ctx.Process(
+        target=_persist_post_exit_holder_worker,
+        args=(str(journal), post_exit, release),
+    )
+    holder.start()
+    try:
+        assert post_exit.wait(timeout=10), (
+            "holder did not signal post-__exit__ within 10s — the worker "
+            "may be stuck or transaction(persist=True) raised on exit"
+        )
+        # Holder is past __exit__ and waiting on ``release``. Probe the
+        # OS lock from the main process: a non-blocking exclusive flock
+        # attempt must fail because persist=True must have kept the
+        # holder's fd open.
+        with journal.open("a", encoding="utf-8") as probe_fh:
+            with pytest.raises(OSError) as excinfo:
+                fcntl.flock(probe_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            assert excinfo.value.errno in (errno.EAGAIN, errno.EWOULDBLOCK), (
+                f"expected EAGAIN/EWOULDBLOCK; got errno={excinfo.value.errno} "
+                f"({errno.errorcode.get(excinfo.value.errno or 0, '?')}) — "
+                f"persist=True did not keep the OS lock alive past __exit__"
+            )
+    finally:
+        release.set()
+        holder.join(timeout=10)
+        if holder.is_alive():
+            holder.kill()
+            holder.join(timeout=5)
+
+
+def test_transaction_persist_true_reentry_without_release_raises(tmp_path: Path) -> None:
+    """Same-path ``persist=True`` re-entry refuses loudly.
+
+    Quality-engineer concern: the runtime guard at the top of
+    ``transaction()`` (``persist and resolved in _PERSISTED_FDS``)
+    prevents the silent failure mode where a second ``persist=True``
+    acquire overwrites the stashed fd, leaking the prior fd and then
+    deadlocking on its own ``flock`` call. Without this test, a
+    regression that removes the guard would land with every other test
+    still passing. After ``_release_persisted_fd`` runs, the slot is
+    free and a fresh persist acquire succeeds — proving the lock-step
+    contract step 5's CLI will lean on.
+    """
+
+    from llm_wiki_kit.journal import _release_persisted_fd
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    with transaction(journal, by="claude-session", persist=True):
+        pass
+
+    with pytest.raises(RuntimeError, match="_release_persisted_fd"):
+        with transaction(journal, by="other-session", persist=True):
+            pass  # pragma: no cover — enter raises before yield
+
+    # Release the prior stashed fd; a fresh persist acquire must now work.
+    _release_persisted_fd(journal)
+    with transaction(journal, by="next-session", persist=True):
+        pass
+
+    # Cleanup for the autouse fixture's benefit; not an assertion.
+    _release_persisted_fd(journal)
+
+
+def test_transaction_emits_best_effort_release_when_acquire_event_append_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Failed ``LockAcquiredEvent`` append: best-effort release is still attempted.
+
+    Quality-engineer concern: the inner ``try/except`` around the
+    acquire-event append is the load-bearing branch that keeps a
+    journal from carrying a lone ``LockAcquiredEvent`` when fsync
+    fails. Without this test, commenting it out would pass every other
+    test in the file. The contract: the body never runs (exception
+    bubbles past the yield), the caller sees ``OSError``, and the
+    journal carries a paired ``LockReleasedEvent``. The half-written
+    ``LockAcquiredEvent`` line is already flushed (write+flush ran
+    before fsync), so a subsequent reader sees both events.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+
+    fsync_calls = [0]
+    real_fsync = os.fsync
+
+    def flaky_fsync(fd: int) -> None:
+        fsync_calls[0] += 1
+        # Fail only the first fsync — the one inside the
+        # LockAcquiredEvent append. Subsequent fsyncs (the best-effort
+        # LockReleasedEvent) must succeed so we can observe the
+        # contract from the outside.
+        if fsync_calls[0] == 1:
+            raise OSError(errno.EIO, "I/O error")
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", flaky_fsync)
+
+    body_ran = False
+
+    with caplog.at_level(logging.WARNING, logger="llm_wiki_kit.journal"):
+        with pytest.raises(OSError) as excinfo:
+            with transaction(journal, by="weekly-digest"):
+                body_ran = True  # pragma: no cover — yield never reached
+
+    assert not body_ran, "transaction body must not run when acquire-event append fails"
+    assert excinfo.value.errno == errno.EIO
+
+    # Both lines should be on disk: write+flush ran before each fsync.
+    events = read_events(journal)
+    types = [type(e).__name__ for e in events]
+    assert types == [
+        "LockAcquiredEvent",
+        "LockReleasedEvent",
+    ], f"best-effort release was not attempted after failed acquire append; got {types}"
+
+
+def test_release_persisted_fd_closes_stashed_fd_and_clears_entry(
+    tmp_path: Path,
+) -> None:
+    """``_release_persisted_fd`` pops the entry and closes the fd.
+
+    Quality-engineer concern: this is the contract surface step 5's
+    ``wiki lock release`` will call. Shipping it untested means a
+    refactor between now and step 5 (e.g. raising ``KeyError`` on
+    missing, or forgetting to close) lands silently. Pin the
+    "pops + closes" pair here so step 5 has a stable target.
+    """
+
+    from llm_wiki_kit.journal import _PERSISTED_FDS, _release_persisted_fd
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    with transaction(journal, by="claude-session", persist=True):
+        pass
+
+    resolved = journal.resolve()
+    assert resolved in _PERSISTED_FDS, "persist=True clean exit must stash the fd"
+    stashed_fh = _PERSISTED_FDS[resolved]
+    assert not stashed_fh.closed
+
+    _release_persisted_fd(journal)
+    assert resolved not in _PERSISTED_FDS, "release must pop the entry"
+    assert stashed_fh.closed, "release must close the stashed fd"
+
+
+def test_release_persisted_fd_is_noop_when_no_entry(tmp_path: Path) -> None:
+    """``_release_persisted_fd`` on an unheld journal is a silent no-op.
+
+    Spec §Outputs ("release on an unheld lock") commits to silent zero;
+    the helper carries the same contract. A regression that raised
+    ``KeyError`` here would mean step 5's CLI has to special-case the
+    "lock already released" path, which the spec deliberately puts on
+    the kit instead.
+    """
+
+    from llm_wiki_kit.journal import _PERSISTED_FDS, _release_persisted_fd
+
+    journal = tmp_path / ".wiki.journal" / "journal.jsonl"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    # No transaction has ever run for this path; the stash is empty.
+    assert journal.resolve() not in _PERSISTED_FDS
+
+    _release_persisted_fd(journal)  # must not raise
+
+    assert journal.resolve() not in _PERSISTED_FDS
