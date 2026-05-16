@@ -21,6 +21,7 @@ from pathlib import Path
 
 from llm_wiki_kit import __version__
 from llm_wiki_kit.errors import WikiError
+from llm_wiki_kit.install import aggregate_region_contributions, validate_contributions
 from llm_wiki_kit.journal import append_event
 from llm_wiki_kit.models import (
     Primitive,
@@ -32,6 +33,8 @@ from llm_wiki_kit.models import (
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
 from llm_wiki_kit.recipes import CORE_PRIMITIVE_NAME, load_recipe, resolve_recipe_primitives
 from llm_wiki_kit.render import render_tree
+
+INSTALL_VEHICLE_INIT = "wiki-init"
 
 NOT_IMPLEMENTED_EXIT = 1
 WIKI_ERROR_EXIT = 2
@@ -135,6 +138,16 @@ def _cmd_init(args: argparse.Namespace) -> int:
         catalog.extend(discover_primitives(templates_dir))
         ordered = resolve_recipe_primitives(recipe, catalog)
 
+        # Pre-flight: every primitive's contribution shape must match its
+        # on-disk ``regions/`` directory before any state-changing write.
+        # ADR-0006 §Mechanics step 6 — fail loudly, not half-installed.
+        sources: dict[str, Path] = {
+            primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
+            for primitive in ordered
+        }
+        for primitive in ordered:
+            validate_contributions(primitive, sources[primitive.name])
+
         target.mkdir(parents=True, exist_ok=True)
         journal_path = target / ".wiki.journal" / "journal.jsonl"
         vault_name = target.name
@@ -145,7 +158,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
             journal_path,
             VaultInitEvent(
                 timestamp=now,
-                by="wiki-init",
+                by=INSTALL_VEHICLE_INIT,
                 vault_name=vault_name,
                 recipe=recipe.name,
             ),
@@ -156,19 +169,29 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 journal_path,
                 PrimitiveInstallEvent(
                     timestamp=now,
-                    by="wiki-init",
+                    by=INSTALL_VEHICLE_INIT,
                     primitive=primitive.name,
                     version=primitive.version,
                 ),
             )
-            source = _primitive_source_dir(primitive, core_dir, templates_dir)
             render_tree(
-                source / "files",
+                sources[primitive.name] / "files",
                 target,
                 context,
                 journal_path,
                 by=primitive.name,
             )
+
+        # Second pass: aggregate every ``contributes_to`` declaration into
+        # one ``safe_write_region`` call per ``(file, region)`` bucket
+        # (ADR-0006). The seed shared files are now on disk from the
+        # render loop above, so region markers are available to find.
+        aggregate_region_contributions(
+            ordered,
+            sources,
+            journal_path,
+            by=INSTALL_VEHICLE_INIT,
+        )
     except WikiError as exc:
         print(str(exc), file=sys.stderr)
         return WIKI_ERROR_EXIT
