@@ -15,6 +15,7 @@ new fields so older journal lines keep replaying (ADR-0002).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
@@ -247,6 +248,25 @@ class ConfigSetEvent(_EventBase):
     value: str
 
 
+class LockAcquiredEvent(_EventBase):
+    """Recorded when a multi-event operation takes the journal-wide lock.
+
+    ``reason`` is the free-text label that surfaces in ``wiki journal tail``
+    so a user can see what's running. The journal-locking spec
+    (``docs/specs/journal-locking/spec.md``) names this event as the
+    enter-side bracket emitted by ``journal.transaction()``.
+    """
+
+    type: Literal["lock.acquired"] = "lock.acquired"
+    reason: str | None = None
+
+
+class LockReleasedEvent(_EventBase):
+    """Recorded when ``journal.transaction()`` (or ``wiki lock release``) exits."""
+
+    type: Literal["lock.released"] = "lock.released"
+
+
 Event = Annotated[
     VaultInitEvent
     | PrimitiveInstallEvent
@@ -261,7 +281,9 @@ Event = Annotated[
     | OperationRunEvent
     | ResearchQueryEvent
     | LintRunEvent
-    | ConfigSetEvent,
+    | ConfigSetEvent
+    | LockAcquiredEvent
+    | LockReleasedEvent,
     Field(discriminator="type"),
 ]
 
@@ -269,6 +291,25 @@ Event = Annotated[
 # ---------------------------------------------------------------------------
 # Vault state (derived by replay)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HeldLock:
+    """Snapshot of the journal lock's current holder.
+
+    Populated by ``replay_state`` from a ``LockAcquiredEvent`` and cleared
+    by a ``LockReleasedEvent``. ``acquired_at`` is the holding event's
+    timestamp — ``wiki doctor`` compares it against ``WIKI_LOCK_STALE_HOURS``
+    to surface stale locks (see ``docs/specs/journal-locking/spec.md``
+    plan step 6).
+
+    Frozen because replay treats it as a value, not an aggregate; mutations
+    would let consumer code silently change derived state.
+    """
+
+    by: str
+    acquired_at: datetime
+    reason: str | None = None
 
 
 class VaultState(_StrictModel):
@@ -286,3 +327,4 @@ class VaultState(_StrictModel):
     ingested_sources: dict[str, SourceIngestEvent] = Field(default_factory=dict)
     recent_operations: dict[str, OperationRunEvent] = Field(default_factory=dict)
     recent_research: list[ResearchQueryEvent] = Field(default_factory=list)
+    held_lock: HeldLock | None = None

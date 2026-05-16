@@ -29,8 +29,11 @@ from llm_wiki_kit.errors import JournalCorruptError
 from llm_wiki_kit.models import (
     ConfigSetEvent,
     Event,
+    HeldLock,
     IngestRoutedEvent,
     LintRunEvent,
+    LockAcquiredEvent,
+    LockReleasedEvent,
     ManagedRegionWriteEvent,
     OperationRunEvent,
     PageConflictResolvedEvent,
@@ -141,6 +144,19 @@ def replay_state(events: Iterable[Event]) -> VaultState:
             state.recent_operations[event.operation] = event
         elif isinstance(event, ResearchQueryEvent):
             state.recent_research.append(event)
+        elif isinstance(event, LockAcquiredEvent):
+            # Last write wins: a second acquire without an intervening
+            # release overwrites the holder. The stale-lock check in
+            # ``wiki doctor`` (journal-locking spec plan step 6) catches
+            # the missing-release case; replay itself stays permissive so
+            # a hand-edited journal doesn't make the kit unrunnable.
+            state.held_lock = HeldLock(
+                by=event.by,
+                acquired_at=event.timestamp,
+                reason=event.reason,
+            )
+        elif isinstance(event, LockReleasedEvent):
+            state.held_lock = None
         elif isinstance(
             event,
             ManagedRegionWriteEvent | LintRunEvent | ConfigSetEvent | IngestRoutedEvent,
