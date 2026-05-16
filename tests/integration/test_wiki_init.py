@@ -21,14 +21,17 @@ from llm_wiki_kit.models import (
     VaultInitEvent,
 )
 
-ALL_RECIPES = ["family", "work-os", "personal"]
+# ``work-os`` is omitted here because Task 14 expanded it past the
+# core-only shape. Its primitive set, schema regions, and replayed
+# state are exercised in ``test_work_os_recipe.py``.
+CORE_ONLY_RECIPES = ["family", "personal"]
 
 
 def _journal_path(vault: Path) -> Path:
     return vault / ".wiki.journal" / "journal.jsonl"
 
 
-@pytest.mark.parametrize("recipe_name", ALL_RECIPES)
+@pytest.mark.parametrize("recipe_name", CORE_ONLY_RECIPES)
 def test_init_renders_core_only_vault(tmp_path: Path, recipe_name: str) -> None:
     vault = tmp_path / "my-vault"
 
@@ -66,7 +69,7 @@ def test_init_renders_core_only_vault(tmp_path: Path, recipe_name: str) -> None:
     assert journal.is_file()
 
 
-@pytest.mark.parametrize("recipe_name", ALL_RECIPES)
+@pytest.mark.parametrize("recipe_name", CORE_ONLY_RECIPES)
 def test_init_journal_state_replays_cleanly(tmp_path: Path, recipe_name: str) -> None:
     vault = tmp_path / "another-vault"
 
