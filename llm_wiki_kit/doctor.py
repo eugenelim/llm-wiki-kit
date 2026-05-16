@@ -96,13 +96,21 @@ def check_page_drift(state: VaultState, vault_root: Path) -> list[Issue]:
     return issues
 
 
-def check_managed_region_drift(events: list[Event], vault_root: Path) -> list[Issue]:
+def check_managed_region_drift(
+    events: list[Event], vault_root: Path, state: VaultState
+) -> list[Issue]:
     """Managed regions whose on-disk body diverges from the latest write.
 
     Walks ``events`` (not the replayed state) because
     ``managed_region.write`` events aren't projected into
     :class:`VaultState`. Per-region "latest" is the last event for
     ``(file, region)`` in journal order.
+
+    A file with an outstanding ``page.proposal`` is skipped — the
+    proposal already explains every region inside it, and reporting
+    both ``pending-proposal`` and ``managed-region-drift`` for the
+    same file is double-counting (retro-review #B6, pairs with
+    ``write_helper.resolve_proposal``'s region re-baseline fix #F-B1).
     """
 
     latest: dict[tuple[str, str], ManagedRegionWriteEvent] = {}
@@ -113,6 +121,8 @@ def check_managed_region_drift(events: list[Event], vault_root: Path) -> list[Is
     file_cache: dict[str, dict[str, str] | None] = {}
     issues: list[Issue] = []
     for (file_path, region), event in latest.items():
+        if file_path in state.pending_proposals:
+            continue
         abs_file = vault_root / file_path
         if not abs_file.exists():
             continue  # surfaces via check_missing
@@ -223,7 +233,7 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
 
     issues: list[Issue] = []
     issues.extend(check_page_drift(state, vault_root))
-    issues.extend(check_managed_region_drift(events, vault_root))
+    issues.extend(check_managed_region_drift(events, vault_root, state))
     issues.extend(check_pending_proposals(state))
     issues.extend(check_orphans(state, vault_root))
     issues.extend(check_missing(state, vault_root))

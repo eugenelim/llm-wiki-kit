@@ -195,6 +195,63 @@ def test_doctor_does_not_flag_user_owned_paths(
 # ---------------------------------------------------------------------------
 
 
+def test_doctor_does_not_double_report_pending_managed_region_proposal(
+    tmp_path: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Retro-review #B6: managed-region drift on a file with an open
+    ``.proposed`` sidecar must surface as ``pending-proposal`` only,
+    not also as ``managed-region-drift``. Pairs with #F-B1's resolve fix.
+    """
+
+    from llm_wiki_kit.write_helper import safe_write_region
+
+    vault = _init_vault(tmp_path)
+    journal_path = _journal_path(vault)
+
+    # Seed a managed-region baseline so subsequent drift is detectable.
+    # ``wiki init`` writes AGENTS.md as a whole page (no other primitives
+    # contribute regions in the minimal recipe), so we plant one here.
+    agents = vault / "AGENTS.md"
+    safe_write_region(
+        agents,
+        "content-types",
+        "kit-baseline\n",
+        by="core",
+        journal_path=journal_path,
+    )
+
+    # User edits inside the kit-owned region, then a follow-up region
+    # write produces a sidecar + a PageProposalEvent for AGENTS.md.
+    edited = agents.read_text(encoding="utf-8").replace(
+        "kit-baseline", "user override"
+    )
+    agents.write_text(edited, encoding="utf-8")
+
+    safe_write_region(
+        agents,
+        "content-types",
+        "kit-next\n",
+        by="core",
+        journal_path=journal_path,
+    )
+    assert (vault / "AGENTS.md.proposed").is_file()
+
+    monkeypatch.chdir(vault)
+    capsys.readouterr()
+
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert exit_code == cli.DOCTOR_ISSUES_EXIT
+    assert "pending-proposal: AGENTS.md.proposed" in out
+    assert not any(
+        line.startswith("managed-region-drift: AGENTS.md") for line in out
+    )
+
+
 def test_doctor_refuses_when_cwd_is_not_a_vault(
     tmp_path: Path,
     kit_root: Path,
