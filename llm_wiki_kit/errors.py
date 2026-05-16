@@ -52,3 +52,13 @@ class JournalCorruptError(WikiError):
         self.line = line
         self.reason = reason
         super().__init__(f"Journal corrupt at line {line}: {reason}")
+
+
+class ManagedRegionError(WikiError):
+    """Raised by ``managed_regions`` on malformed input or missing regions.
+
+    Covers nesting, unmatched / unclosed markers, duplicate region ids in
+    the same file (ADR-0003 §Consequences: region ids are part of the
+    public contract), and ``update`` calls naming a region the file
+    doesn't contain.
+    """
