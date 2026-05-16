@@ -64,12 +64,19 @@ Mechanics:
    the same fields plus a `proposed_path`. Return `WriteResult.PROPOSAL`.
    The CLI surface prints a one-line prompt telling the user to run the
    `wiki-conflict` skill.
-6. When the user runs `wiki-conflict`, Claude reads `path`, `path.proposed`,
-   the journal context, and (where available) the originating source,
-   and helps the user produce a merged version. On confirmation, the
-   merged content is written via `safe_write` again (which now matches
-   because the user just saw it), the sidecar is deleted, and a
-   `PageConflictResolved` event is appended.
+6. When the user runs the vault-side `wiki-conflict` skill, Claude
+   reads `path`, `path.proposed`, the journal context, and (where
+   available) the originating source, and helps the user produce a
+   final version — which may be the proposed content, the user's edited
+   content, or a third merged version. On confirmation, the skill calls
+   `write_helper.resolve_proposal(path, content, by, journal_path)`.
+   `resolve_proposal` writes `content` directly to `path` (bypassing
+   the step-1-to-3 drift check because the user has already reviewed
+   both versions and confirmed), deletes the `<path>.proposed` sidecar
+   if present, and appends two events: a `PageWrite` with the merged
+   hash — which becomes the new baseline, so subsequent `safe_write`
+   calls against `path` see no drift — and a `PageConflictResolved` for
+   audit.
 
 This same path applies to managed regions (ADR-0003): when a managed
 region's content has changed on disk vs. its previous journaled
@@ -77,8 +84,12 @@ region's content has changed on disk vs. its previous journaled
 proposal path.
 
 `safe_write` is the *only* sanctioned write path for kit code that
-touches a user's vault. Nothing else calls `Path.write_text()` against
-a vault path. Tests use `tmp_path` and can call `write_text` freely.
+touches a user's vault, with one documented exception:
+`resolve_proposal` (step 6) bypasses the drift check because conflict
+resolution is the explicit user-mediated acknowledgement that on-disk
+state should be overwritten with the merged content. Nothing else
+calls `Path.write_text()` against a vault path. Tests use `tmp_path`
+and can call `write_text` freely.
 
 ## Consequences
 
@@ -159,6 +170,20 @@ five inconsistent behaviors, and the bug surface multiplies.
 Surfaces conflicts loudly but doesn't help the user resolve them.
 A worse UX than proposal sidecars — the user has to choose between
 losing their edits and losing the kit's update without a third path.
+
+## Revisions
+
+- **2026-05-15** — Step 6 (conflict resolution) tightened during the
+  Task 5 implementation. Original wording said the merged content was
+  "written via `safe_write` again (which now matches because the user
+  just saw it)", but neither plausible flow (skill writes the merge
+  first, or `safe_write` is called first) actually produces a matching
+  baseline — the journaled hash is still the kit's pre-drift version,
+  so `safe_write` would loop and emit another proposal. Revised flow
+  names `write_helper.resolve_proposal` as the documented `safe_write`
+  bypass and splits the resolution into one `PageWrite` (re-establishes
+  the baseline) plus one `PageConflictResolved` (audit). No change to
+  the overall decision, event-class shapes, or any other step.
 
 ## References
 
