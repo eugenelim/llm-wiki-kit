@@ -20,6 +20,7 @@ from llm_wiki_kit.models import (
     ConfigSetEvent,
     Contribution,
     Event,
+    IngestRoutedEvent,
     LintRunEvent,
     ManagedRegionWriteEvent,
     OperationContract,
@@ -31,6 +32,7 @@ from llm_wiki_kit.models import (
     PrimitiveInstallEvent,
     PrimitiveKind,
     PrimitiveRemoveEvent,
+    PrimitiveRouting,
     PrimitiveUpgradeEvent,
     Recipe,
     ResearchQueryEvent,
@@ -123,6 +125,55 @@ def test_primitive_requires_is_a_list_of_strings() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PrimitiveRouting + the content-type-only constraint
+# ---------------------------------------------------------------------------
+
+
+def test_primitive_routing_defaults_to_none() -> None:
+    p = Primitive.model_validate(_valid_primitive_dict())
+    assert p.routing is None
+
+
+def test_primitive_routing_parses_all_signal_lists() -> None:
+    data = _valid_primitive_dict()
+    data["routing"] = {
+        "file_extensions": [".pdf", ".jpg"],
+        "filename_patterns": ["EOB-*", "*receipt*"],
+        "url_domains": ["allrecipes.com"],
+        "url_path_patterns": ["/recipe/*"],
+    }
+    p = Primitive.model_validate(data)
+    assert p.routing is not None
+    assert p.routing.file_extensions == [".pdf", ".jpg"]
+    assert p.routing.filename_patterns == ["EOB-*", "*receipt*"]
+    assert p.routing.url_domains == ["allrecipes.com"]
+    assert p.routing.url_path_patterns == ["/recipe/*"]
+
+
+def test_primitive_routing_rejects_extra_signal_kinds() -> None:
+    data = _valid_primitive_dict()
+    data["routing"] = {"magic_bytes": ["%PDF"]}
+    with pytest.raises(PydanticValidationError):
+        Primitive.model_validate(data)
+
+
+def test_primitive_routing_only_valid_on_content_type() -> None:
+    for kind in ("ontology", "operation", "infrastructure"):
+        data = _valid_primitive_dict()
+        data["kind"] = kind
+        data["routing"] = {"file_extensions": [".pdf"]}
+        with pytest.raises(PydanticValidationError):
+            Primitive.model_validate(data)
+
+
+def test_primitive_routing_empty_block_is_allowed() -> None:
+    data = _valid_primitive_dict()
+    data["routing"] = {}
+    p = Primitive.model_validate(data)
+    assert p.routing == PrimitiveRouting()
+
+
+# ---------------------------------------------------------------------------
 # Recipe
 # ---------------------------------------------------------------------------
 
@@ -200,6 +251,7 @@ EVENT_CLASSES_BY_TYPE: dict[str, type] = {
     "primitive.remove": PrimitiveRemoveEvent,
     "primitive.upgrade": PrimitiveUpgradeEvent,
     "managed_region.write": ManagedRegionWriteEvent,
+    "ingest.routed": IngestRoutedEvent,
     "source.ingest": SourceIngestEvent,
     "page.write": PageWriteEvent,
     "page.proposal": PageProposalEvent,
@@ -224,6 +276,13 @@ EVENT_FIXTURES: dict[str, dict[str, object]] = {
         "file": "AGENTS.md",
         "region": "content-types",
         "content_hash": "deadbeef" * 8,
+    },
+    "ingest.routed": {
+        "source": "https://allrecipes.com/recipe/sheet-pan-tacos",
+        "content_type": "recipe",
+        "candidates": ["recipe"],
+        "via": "auto",
+        "signals": ["url_domain:allrecipes.com"],
     },
     "source.ingest": {
         "source": "/tmp/transcript.txt",
@@ -327,6 +386,50 @@ def test_managed_region_event_records_file_and_region() -> None:
     )
     assert e.file == "AGENTS.md"
     assert e.region == "content-types"
+
+
+def test_ingest_routed_event_defaults_match_a_failed_route() -> None:
+    e = IngestRoutedEvent(
+        timestamp=NOW,
+        by="wiki-ingest",
+        source="/tmp/mystery.bin",
+    )
+    assert e.content_type is None
+    assert e.candidates == []
+    assert e.via == "auto"
+    assert e.signals == []
+
+
+def test_ingest_routed_event_carries_full_routing_record() -> None:
+    e = IngestRoutedEvent(
+        timestamp=NOW,
+        by="wiki-ingest",
+        source="EOB-2026-04-15.pdf",
+        content_type="medical-record",
+        candidates=["medical-record"],
+        via="auto",
+        signals=["filename_pattern:EOB-*", "file_extension:.pdf"],
+    )
+    assert e.type == "ingest.routed"
+    assert e.content_type == "medical-record"
+    assert e.candidates == ["medical-record"]
+    assert e.signals == [
+        "filename_pattern:EOB-*",
+        "file_extension:.pdf",
+    ]
+
+
+def test_ingest_routed_event_rejects_unknown_via_value() -> None:
+    with pytest.raises(PydanticValidationError):
+        IngestRoutedEvent.model_validate(
+            {
+                "type": "ingest.routed",
+                "timestamp": NOW.isoformat(),
+                "by": "wiki-ingest",
+                "source": "x",
+                "via": "guessed",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
