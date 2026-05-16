@@ -20,24 +20,29 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_wiki_kit import __version__
+from llm_wiki_kit.doctor import format_issue, run_doctor
 from llm_wiki_kit.errors import WikiError
-from llm_wiki_kit.install import aggregate_region_contributions, validate_contributions
-from llm_wiki_kit.journal import append_event
+from llm_wiki_kit.install import install_primitives, validate_contributions
+from llm_wiki_kit.journal import append_event, read_events, replay_state
 from llm_wiki_kit.models import (
     Primitive,
-    PrimitiveInstallEvent,
     PrimitiveKind,
     Recipe,
     VaultInitEvent,
 )
-from llm_wiki_kit.primitives import discover_primitives, load_primitive
+from llm_wiki_kit.primitives import (
+    discover_primitives,
+    load_primitive,
+    resolve_dependencies,
+)
 from llm_wiki_kit.recipes import CORE_PRIMITIVE_NAME, load_recipe, resolve_recipe_primitives
-from llm_wiki_kit.render import render_tree
 
 INSTALL_VEHICLE_INIT = "wiki-init"
+INSTALL_VEHICLE_ADD = "wiki-add"
 
 NOT_IMPLEMENTED_EXIT = 1
 WIKI_ERROR_EXIT = 2
+DOCTOR_ISSUES_EXIT = 1
 
 # Where the kit's bundled assets (``recipes/``, ``core/``, ``templates/``)
 # live at runtime. We resolve them as siblings of the installed package via
@@ -164,33 +169,18 @@ def _cmd_init(args: argparse.Namespace) -> int:
             ),
         )
 
-        for primitive in ordered:
-            append_event(
-                journal_path,
-                PrimitiveInstallEvent(
-                    timestamp=now,
-                    by=INSTALL_VEHICLE_INIT,
-                    primitive=primitive.name,
-                    version=primitive.version,
-                ),
-            )
-            render_tree(
-                sources[primitive.name] / "files",
-                target,
-                context,
-                journal_path,
-                by=primitive.name,
-            )
-
-        # Second pass: aggregate every ``contributes_to`` declaration into
-        # one ``safe_write_region`` call per ``(file, region)`` bucket
-        # (ADR-0006). The seed shared files are now on disk from the
-        # render loop above, so region markers are available to find.
-        aggregate_region_contributions(
-            ordered,
-            sources,
-            journal_path,
-            by=INSTALL_VEHICLE_INIT,
+        # Per-primitive render + the second-pass region aggregator
+        # (ADR-0006). ``install_primitives`` runs ``to_install`` ==
+        # ``all_installed`` for ``wiki init`` because every primitive in
+        # the closure is new to this vault.
+        install_primitives(
+            to_install=ordered,
+            all_installed=ordered,
+            sources=sources,
+            journal_path=journal_path,
+            context=context,
+            install_vehicle=INSTALL_VEHICLE_INIT,
+            now=now,
         )
     except WikiError as exc:
         print(str(exc), file=sys.stderr)
@@ -199,8 +189,157 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_primitive_spec(spec: str) -> tuple[PrimitiveKind, str]:
+    """Split a ``<kind>:<name>`` argument into a validated ``(kind, name)`` pair.
+
+    ``<kind>`` must be one of the four :class:`PrimitiveKind` values in
+    its canonical dash form (``ontology``, ``content-type``,
+    ``operation``, ``infrastructure``); case-sensitive, per the Task 12
+    spec. Anything else is a one-line :class:`WikiError`.
+    """
+
+    kind_str, sep, name = spec.partition(":")
+    if not sep or not kind_str or not name:
+        raise WikiError(f"invalid primitive specifier '{spec}': expected '<kind>:<name>'")
+    try:
+        kind = PrimitiveKind(kind_str)
+    except ValueError as exc:
+        valid = ", ".join(k.value for k in PrimitiveKind)
+        raise WikiError(f"unknown primitive kind '{kind_str}': expected one of {valid}") from exc
+    return kind, name
+
+
+def _expand_closure(target: Primitive, by_name: dict[str, Primitive]) -> list[Primitive]:
+    """Return ``target`` plus its transitive ``requires:`` closure.
+
+    Missing requires raise :class:`WikiError` with the offending name —
+    a ``wiki add`` against a catalog the user's kit version doesn't
+    carry is a user-facing failure, not an internal one.
+    """
+
+    closed: dict[str, Primitive] = {target.name: target}
+    pending: list[str] = list(target.requires)
+    while pending:
+        name = pending.pop()
+        if name in closed:
+            continue
+        primitive = by_name.get(name)
+        if primitive is None:
+            raise WikiError(
+                f"primitive '{target.name}' requires '{name}' which is not in the catalog"
+            )
+        closed[name] = primitive
+        for required in primitive.requires:
+            if required not in closed:
+                pending.append(required)
+    return list(closed.values())
+
+
 def _cmd_add(args: argparse.Namespace) -> int:
-    return _stub("add")
+    """Install one primitive (and its requires-closure) into the current vault.
+
+    Operates on the vault rooted at ``Path.cwd()``: the spec scopes
+    ``wiki add`` to "the current vault," and the parser deliberately
+    takes no path argument. Refuses when there is no
+    ``.wiki.journal/journal.jsonl`` to anchor against — ``wiki init``
+    is the only way to create a vault.
+
+    The closure is filtered against ``replay_state(...).installed_primitives``
+    so a primitive that's already installed is a no-op, and a re-run
+    against an already-fully-resolved closure emits no new events. The
+    region aggregator still runs against the *full* installed set
+    (existing primitives plus the new closure) so a contribution that
+    used to live alone in its bucket survives the install — running it
+    over only the new additions would clobber the existing body to
+    "new-only" (ADR-0006 §Mechanics step 5 plus the Task-12 design
+    callout).
+    """
+
+    try:
+        kind, name = _parse_primitive_spec(args.primitive)
+
+        vault_root = Path.cwd().resolve()
+        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+        if not journal_path.is_file():
+            raise WikiError(
+                f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+                "Run `wiki init <path> --recipe <name>` first."
+            )
+
+        state = replay_state(read_events(journal_path))
+        if state.recipe is None or state.vault_name is None:
+            raise WikiError(
+                f"vault at {vault_root} has no vault.init event; "
+                "the journal is incomplete and cannot be extended"
+            )
+
+        recipes_dir, core_dir, templates_dir = _kit_paths()
+        catalog: list[Primitive] = [load_primitive(core_dir)]
+        catalog.extend(discover_primitives(templates_dir))
+        by_name: dict[str, Primitive] = {p.name: p for p in catalog}
+
+        target_dir = templates_dir / _KIND_DIRS[kind] / name
+        target = load_primitive(target_dir)
+        if target.kind != kind:
+            raise WikiError(
+                f"primitive '{name}' has kind '{target.kind.value}', "
+                f"not '{kind.value}' as specified"
+            )
+
+        closure_ordered = resolve_dependencies(_expand_closure(target, by_name))
+        to_install = [
+            primitive
+            for primitive in closure_ordered
+            if primitive.name not in state.installed_primitives
+        ]
+
+        if not to_install:
+            # Idempotent re-add: the journal already records every
+            # primitive in the closure as installed. No new events, no
+            # disk writes — the aggregator pass would emit redundant
+            # ``managed_region.write`` events for unchanged bodies.
+            return 0
+
+        # The aggregator needs every currently-installed primitive plus
+        # the new ones, in topological order, with a source dir for each.
+        all_installed_names = set(state.installed_primitives) | {p.name for p in to_install}
+        try:
+            all_installed_primitives = [by_name[n] for n in all_installed_names]
+        except KeyError as exc:
+            raise WikiError(
+                f"installed primitive '{exc.args[0]}' is not in the kit's "
+                "catalog; run `wiki doctor` to inspect"
+            ) from exc
+        all_installed_ordered = resolve_dependencies(all_installed_primitives)
+
+        sources: dict[str, Path] = {
+            primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
+            for primitive in all_installed_ordered
+        }
+
+        # Pre-flight: validate before any state-changing write
+        # (ADR-0006 §Mechanics step 6).
+        for primitive in to_install:
+            validate_contributions(primitive, sources[primitive.name])
+
+        recipe = load_recipe(recipes_dir / f"{state.recipe}.yaml")
+        context = _build_context(recipe, state.vault_name)
+        now = datetime.now(UTC)
+
+        install_primitives(
+            to_install=to_install,
+            all_installed=all_installed_ordered,
+            sources=sources,
+            journal_path=journal_path,
+            context=context,
+            install_vehicle=INSTALL_VEHICLE_ADD,
+            now=now,
+        )
+    except WikiError as exc:
+        print(str(exc), file=sys.stderr)
+        return WIKI_ERROR_EXIT
+
+    return 0
 
 
 def _cmd_upgrade(args: argparse.Namespace) -> int:
@@ -208,7 +347,30 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
-    return _stub("doctor")
+    """Validate the current vault against its journal and report issues.
+
+    Operates on ``Path.cwd()`` like ``wiki add``. Exit codes split
+    cleanly between "found things" (1) and "the run itself failed" (2)
+    so a wrapper script (or CI) can distinguish a noisy vault from a
+    broken invocation. A reserved ``--json`` flag for machine-readable
+    output is deferred to a later task.
+    """
+
+    try:
+        vault_root = Path.cwd().resolve()
+        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+        if not journal_path.is_file():
+            raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
+
+        issues = run_doctor(vault_root, _KIT_ROOT)
+    except WikiError as exc:
+        print(str(exc), file=sys.stderr)
+        return WIKI_ERROR_EXIT
+
+    for issue in issues:
+        print(format_issue(issue))
+
+    return DOCTOR_ISSUES_EXIT if issues else 0
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
