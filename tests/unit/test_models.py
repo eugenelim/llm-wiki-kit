@@ -465,26 +465,23 @@ def test_lock_acquired_event_reason_defaults_to_none() -> None:
     assert e.type == "lock.acquired"
 
 
-def test_lock_released_event_omits_reason_field_by_design() -> None:
-    """``LockReleasedEvent`` is deliberately asymmetric with ``LockAcquiredEvent``.
+def test_lock_released_event_reason_defaults_to_none() -> None:
+    """``LockReleasedEvent.reason`` is the audit hook for the stale-holder reclaim.
 
-    Release events carry no human-readable label because the acquire-side
-    ``reason`` is enough to identify the operation in the audit trail.
-    Pin both the schema-level rejection (caught by ``_StrictModel``'s
-    ``extra="forbid"``) and the field-list intent so a future symmetric
-    refactor fails this test before the schema changes silently.
+    Step 5 added the optional ``reason`` field so ``wiki lock acquire``
+    can record ``LockReleasedEvent(by="wiki-doctor", reason="stale lock
+    reclaimed")`` before its own acquire — the audit pair described in
+    spec §Edge cases ("Lock held by a dead PID"). Pin the default-None
+    so a future caller that doesn't set it produces a wire format
+    identical to the pre-amendment shape.
     """
 
-    assert "reason" not in LockReleasedEvent.model_fields
-    with pytest.raises(PydanticValidationError):
-        LockReleasedEvent.model_validate(
-            {
-                "type": "lock.released",
-                "timestamp": NOW.isoformat(),
-                "by": "weekly-digest",
-                "reason": "extra",
-            }
-        )
+    e = LockReleasedEvent(timestamp=NOW, by="weekly-digest")
+    assert e.reason is None
+    assert e.type == "lock.released"
+
+    with_reason = LockReleasedEvent(timestamp=NOW, by="wiki-doctor", reason="stale lock reclaimed")
+    assert with_reason.reason == "stale lock reclaimed"
 
 
 # ---------------------------------------------------------------------------

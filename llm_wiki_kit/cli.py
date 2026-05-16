@@ -14,6 +14,8 @@ which is a different category from a real error.
 from __future__ import annotations
 
 import argparse
+import errno
+import fcntl
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -24,9 +26,17 @@ from llm_wiki_kit.doctor import format_issue, run_doctor
 from llm_wiki_kit.errors import WikiError
 from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
 from llm_wiki_kit.install import install_primitives, validate_contributions
-from llm_wiki_kit.journal import append_event, read_events, replay_state
+from llm_wiki_kit.journal import (
+    LockUnavailableError,
+    _release_persisted_fd,
+    append_event,
+    read_events,
+    replay_state,
+    transaction,
+)
 from llm_wiki_kit.models import (
     IngestRoutedEvent,
+    LockReleasedEvent,
     Primitive,
     PrimitiveKind,
     Recipe,
@@ -47,6 +57,21 @@ NOT_IMPLEMENTED_EXIT = 1
 WIKI_ERROR_EXIT = 2
 DOCTOR_ISSUES_EXIT = 1
 INGEST_ROUTE_FAILED_EXIT = 2
+
+# ``wiki lock acquire`` exits with this code when the lock is genuinely held
+# by another process (the holder file exists AND a non-blocking
+# ``fcntl.flock(LOCK_EX | LOCK_NB)`` returns ``EAGAIN``/``EWOULDBLOCK``).
+# Distinct from ``WIKI_ERROR_EXIT`` (2) so a wrapper script can tell
+# "lock contention, try again later" apart from "the CLI itself misfired".
+LOCK_HELD_EXIT = 3
+
+# Sentinel ``by`` recorded on the audit ``LockReleasedEvent`` that
+# precedes a stale-holder reclaim (spec §Edge cases "Lock held by a
+# dead PID"). Names ``wiki-doctor`` because the doctor surface is the
+# only other consumer of the "stale lock" concept and pinning a single
+# actor name keeps audit grep predictable.
+STALE_LOCK_RECLAIM_BY = "wiki-doctor"
+STALE_LOCK_RECLAIM_REASON = "stale lock reclaimed"
 
 # Where the kit's bundled assets (``recipes/``, ``core/``, ``templates/``)
 # live at runtime. We resolve them as siblings of the installed package via
@@ -541,6 +566,289 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _lock_journal_path() -> Path:
+    """Resolve the current vault's journal path or raise ``WikiError``.
+
+    Centralizes the "must be a vault" check ``_cmd_lock_acquire`` and
+    ``_cmd_lock_release`` share. Matches the pattern in ``_cmd_add``,
+    ``_cmd_doctor``, and ``_cmd_ingest``: ``wiki lock`` is a vault
+    operation, not a vault-bootstrap operation, so running it outside
+    a vault is a one-line user error rather than a silent no-op.
+    """
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
+    return journal_path
+
+
+def _read_holder_file(holder_path: Path) -> tuple[str, str, str | None] | None:
+    """Parse ``.wiki.journal/lock`` into ``(by, iso_timestamp, reason)`` or ``None``.
+
+    Format pinned by ``journal._write_holder_file``: two lines (``by``,
+    iso ts) without a reason, three with. A file present but shorter
+    than two lines is a corruption we treat as "no holder" — the spec's
+    contract is that a holder file in this state shouldn't exist, and
+    refusing to acquire because of it would block the vault on a
+    corruption nobody is around to fix. ``wiki doctor``'s stale-lock
+    check is the diagnostic surface for that case.
+    """
+
+    if not holder_path.is_file():
+        return None
+    lines = holder_path.read_text(encoding="utf-8").splitlines()
+    if len(lines) < 2:
+        return None
+    by = lines[0]
+    ts = lines[1]
+    reason = lines[2] if len(lines) >= 3 else None
+    return by, ts, reason
+
+
+def _probe_lock_contention(journal_path: Path) -> bool | None:
+    """Tri-state probe: ``True`` held, ``False`` free, ``None`` cannot tell.
+
+    Opens the journal in append mode and tries ``LOCK_EX | LOCK_NB``.
+    The close of the ``with`` block releases the lock implicitly (BSD
+    flock is fd-bound; no explicit ``LOCK_UN`` needed).
+
+    - ``True`` on ``EAGAIN``/``EWOULDBLOCK`` — another process holds it.
+    - ``False`` on a clean acquire — no live lock holder.
+    - ``None`` on ``EOPNOTSUPP``/``ENOTSUP``/``ENOLCK`` — the filesystem
+      doesn't support advisory locking, so the probe can't distinguish
+      "free" from "held". Callers must not infer "free" from this:
+      ``wiki lock acquire`` skips the stale-reclaim audit on ``None``
+      to avoid emitting a "wiki-doctor reclaimed a stale lock" event
+      on every invocation against a synced holder file (iCloud Drive,
+      NFS without lockd, etc.).
+
+    Any other ``OSError`` propagates: a real disk error should not be
+    silently re-interpreted as a free lock.
+    """
+
+    with journal_path.open("a", encoding="utf-8") as fh:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                return True
+            if exc.errno in (errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOLCK):
+                return None
+            raise
+        return False
+
+
+def _cmd_lock_acquire(args: argparse.Namespace) -> int:
+    """Take the journal lock on behalf of a Claude-session manual hold.
+
+    Non-blocking by design (spec §Behavior "Acquire-side contention
+    semantics"). The CLI takes three signals into account:
+
+    - **No holder file** — fresh acquire path. Enter
+      ``transaction(persist=True, nonblocking=True)``. If a competitor
+      grabs the lock first, ``LockUnavailableError`` propagates and we
+      exit ``LOCK_HELD_EXIT``.
+    - **Holder file + lock genuinely held** (LOCK_NB probe returns
+      ``True``) — print the holder + acquired-at, exit
+      ``LOCK_HELD_EXIT``. No journal write.
+    - **Holder file + lock free** (probe returns ``False``) — the
+      previous holder is dead. Append
+      ``LockReleasedEvent(by="wiki-doctor", reason="stale lock reclaimed")``
+      for clean audit (spec §Edge cases), then enter the same
+      non-blocking transaction. If a competitor wins between the
+      reclaim event and the transaction's own ``flock``, the
+      ``LockUnavailableError`` arm catches it: we re-read the holder
+      file to surface the *new* holder (whichever process won) and
+      exit ``LOCK_HELD_EXIT`` — no deadlock, no spurious holder file
+      overwrite.
+    - **Holder file + probe is ``None``** (unsupported filesystem —
+      iCloud Drive, NFS without lockd, etc.) — we cannot tell free
+      from held. Skip the reclaim audit (we have no evidence to
+      reclaim) and fall through to the non-blocking transaction.
+      ``flock`` itself logs the unsupported-FS warning once per
+      resolved path, so the operator still sees the degraded regime.
+
+    ``transaction(persist=True)`` writes the holder file and stashes
+    the fd in ``journal._PERSISTED_FDS`` so the OS lock survives the
+    CLI's process exit. If the reclaim event's own ``append_event``
+    raises (fsync EIO, disk full), the ``OSError`` propagates as
+    traceback — matching spec §Error cases for fsync failures across
+    every other CLI handler.
+    """
+
+    try:
+        # Reject newlines in --by/--reason: the holder file is a
+        # line-oriented format (``<by>\n<iso>\n[<reason>]``) and embedded
+        # newlines would corrupt subsequent reads — including
+        # ``wiki doctor``'s stale-lock check. Reject at the boundary
+        # rather than escape, so the audit values match what the user
+        # typed.
+        if "\n" in args.by or "\r" in args.by:
+            raise WikiError("--by must not contain newline characters")
+        if args.reason is not None and ("\n" in args.reason or "\r" in args.reason):
+            raise WikiError("--reason must not contain newline characters")
+
+        journal_path = _lock_journal_path()
+
+        holder_path = journal_path.parent / "lock"
+        existing = _read_holder_file(holder_path)
+        reclaimed_from: str | None = None
+        if existing is not None:
+            probe = _probe_lock_contention(journal_path)
+            if probe is True:
+                by_holder, ts_holder, _ = existing
+                print(
+                    f"lock held by {by_holder} since {ts_holder}",
+                    file=sys.stderr,
+                )
+                return LOCK_HELD_EXIT
+            if probe is False:
+                try:
+                    append_event(
+                        journal_path,
+                        LockReleasedEvent(
+                            timestamp=datetime.now(UTC),
+                            by=STALE_LOCK_RECLAIM_BY,
+                            reason=STALE_LOCK_RECLAIM_REASON,
+                        ),
+                        nonblocking=True,
+                    )
+                    reclaimed_from = existing[0]
+                except LockUnavailableError:
+                    # A competitor won between the probe and our reclaim
+                    # write. Don't hang on a blocking flock; surface the
+                    # new holder and exit.
+                    current = _read_holder_file(holder_path)
+                    if current is not None:
+                        by_h, ts_h, _ = current
+                        print(f"lock held by {by_h} since {ts_h}", file=sys.stderr)
+                    else:
+                        print(
+                            "lock held by another process (holder file missing)",
+                            file=sys.stderr,
+                        )
+                    return LOCK_HELD_EXIT
+            # probe is None: unsupported FS. Skip the reclaim audit
+            # (the spec's "stale" claim would be a lie) and fall
+            # through to the non-blocking transaction.
+
+        try:
+            with transaction(
+                journal_path,
+                by=args.by,
+                reason=args.reason,
+                persist=True,
+                nonblocking=True,
+            ):
+                # No body: ``persist=True`` stashes the fd on clean exit so
+                # the OS lock outlives this generator. The holder file and
+                # ``LockAcquiredEvent`` are written by ``transaction()``.
+                pass
+        except LockUnavailableError:
+            # Race: a competitor won between our probe (or initial check)
+            # and the transaction's LOCK_NB. Re-read the holder file to
+            # name whoever's holding it now, then exit with the contention
+            # code rather than blocking.
+            current = _read_holder_file(holder_path)
+            if current is not None:
+                by_h, ts_h, _ = current
+                print(f"lock held by {by_h} since {ts_h}", file=sys.stderr)
+            else:
+                print(
+                    "lock held by another process (holder file missing)",
+                    file=sys.stderr,
+                )
+            return LOCK_HELD_EXIT
+
+        # One-line confirmation on the happy path so an operator running
+        # ``wiki lock acquire`` interactively sees that the hold landed
+        # (the command otherwise exits 0 silently). The reclaim suffix
+        # surfaces what was journal-only: that we just deemed a prior
+        # holder stale.
+        suffix = (
+            f" (reclaimed stale lock previously held by {reclaimed_from})"
+            if reclaimed_from is not None
+            else ""
+        )
+        reason_part = f", reason: {args.reason}" if args.reason else ""
+        print(f"Acquired lock for {args.by}{reason_part}.{suffix}")
+    except WikiError as exc:
+        print(str(exc), file=sys.stderr)
+        return WIKI_ERROR_EXIT
+
+    return 0
+
+
+def _cmd_lock_release(args: argparse.Namespace) -> int:
+    """Drop the lock the matching ``wiki lock acquire`` took.
+
+    Reads the holder file to identify the prior actor, refuses on
+    ``--by`` mismatch unless ``--force`` is passed, then closes any
+    persisted fd this process is still holding (the common case: same
+    Claude session acquired and now releases), appends a
+    ``LockReleasedEvent``, and deletes the holder file. With no holder
+    file, exits 0 silently — spec §Outputs makes "release on an
+    unheld lock" a no-op and the vault-side ``wiki-lock`` SKILL.md
+    already documents this as harmless.
+
+    The release event's ``by`` is ``--by`` when provided, otherwise the
+    holder's recorded ``by`` — the audit names whoever ran the release.
+    A ``--force`` override therefore records the *forcing* actor, not
+    the prior holder, which is what an operator looking at
+    ``wiki journal tail`` wants to see.
+    """
+
+    try:
+        journal_path = _lock_journal_path()
+
+        holder_path = journal_path.parent / "lock"
+        existing = _read_holder_file(holder_path)
+        if existing is None:
+            # No holder file → silent zero. The spec accepts a
+            # release-against-nothing as harmless.
+            return 0
+
+        by_holder, ts_holder, _reason_holder = existing
+        if args.by is not None and args.by != by_holder and not args.force:
+            print(
+                f"lock held by {by_holder} since {ts_holder}; pass --force to override",
+                file=sys.stderr,
+            )
+            return WIKI_ERROR_EXIT
+
+        # Drop any persisted fd this process is still holding before the
+        # release-event append. Without this, ``append_event``'s
+        # ``LOCK_EX`` would (on BSD-flock semantics) block on the same
+        # process's own held fd. Cross-process release paths see an
+        # empty stash; ``_release_persisted_fd`` is a no-op there.
+        _release_persisted_fd(journal_path)
+
+        release_by = args.by if args.by is not None else by_holder
+        append_event(
+            journal_path,
+            LockReleasedEvent(
+                timestamp=datetime.now(UTC),
+                by=release_by,
+            ),
+        )
+
+        try:
+            holder_path.unlink()
+        except FileNotFoundError:
+            # Already gone — desired end-state, race with another
+            # release is fine.
+            pass
+    except WikiError as exc:
+        print(str(exc), file=sys.stderr)
+        return WIKI_ERROR_EXIT
+
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     return _stub("run")
 
@@ -638,6 +946,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="Discard user edits; write the .proposed sidecar's content verbatim.",
     )
     resolve.set_defaults(func=_cmd_resolve)
+
+    lock = subparsers.add_parser(
+        "lock", help="Acquire or release the journal lock for a multi-event session."
+    )
+    lock_sub = lock.add_subparsers(dest="lock_command", metavar="<subcommand>")
+    lock_sub.required = True
+
+    lock_acquire = lock_sub.add_parser(
+        "acquire",
+        help="Acquire the journal lock; exits 3 if another holder is in possession.",
+    )
+    lock_acquire.add_argument(
+        "--by",
+        required=True,
+        help="Caller identity (e.g. agent name, operation name) recorded in the journal.",
+    )
+    lock_acquire.add_argument(
+        "--reason",
+        default=None,
+        help="Optional one-line description shown in `wiki journal tail`.",
+    )
+    lock_acquire.set_defaults(func=_cmd_lock_acquire)
+
+    lock_release = lock_sub.add_parser(
+        "release",
+        help="Release the journal lock; silent no-op if no holder file is present.",
+    )
+    lock_release.add_argument(
+        "--by",
+        default=None,
+        help="Caller identity; must match the holder unless `--force` is passed.",
+    )
+    lock_release.add_argument(
+        "--force",
+        action="store_true",
+        help="Override a `--by` mismatch; intended for stale-lock recovery.",
+    )
+    lock_release.set_defaults(func=_cmd_lock_release)
 
     run = subparsers.add_parser("run", help="Run a named operation.")
     run.add_argument("operation", help="Operation name (e.g. weekly-digest).")
