@@ -18,9 +18,19 @@ Findings carry stable IDs:
 
 ## Counts after merge + re-triage
 
-- **Blockers:** 3 (F-B1, F-B2, F-B3). Fix PRs open or in-flight.
-- **Concerns:** 19 (B4, B5, B6, qB1, qB2, qB3, C1–C10, qC1–qC11). Filed as GitHub issues.
+- **Blockers:** 3 (F-B1, F-B2, F-B3a). Fix PRs opened. F-B3b deferred to a new spec.
+- **Concerns:** 24 (B4, B5, C1–C10, qB1, qB3, qC1–qC11; qB2 absorbed into F-B3b spec; B6 folded into F-B1's fix PR). Tracked in **issue #23** with one checkbox per finding, all labelled `retro-review-2026-05`.
 - **Nits:** 12 (N1–N7, qN1–qN5). Queued for a single cleanup PR; not actioned in this session.
+
+## Fix PRs and tracking
+
+| Finding   | Status   | Reference                                                                   |
+|-----------|----------|-----------------------------------------------------------------------------|
+| F-B1 + B6 | Fix PR   | PR #22 (`eugenelim/retro-fix-managed-region-resolve-baseline`)              |
+| F-B2      | Fix PR   | PR #21 (`eugenelim/retro-fix-wiki-resolve-cli`)                             |
+| F-B3a     | Fix PR   | PR #20 (`eugenelim/retro-fix-wiki-lock-skill-notice`)                       |
+| F-B3b     | New spec | Deferred — `new-spec` for journal-locking opens in next session (Phase F)   |
+| Concerns  | Tracker  | Issue #23 (label `retro-review-2026-05`)                                    |
 
 ## Task-17-cleared decision
 
