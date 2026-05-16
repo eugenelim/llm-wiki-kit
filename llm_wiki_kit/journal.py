@@ -29,6 +29,7 @@ from llm_wiki_kit.errors import JournalCorruptError
 from llm_wiki_kit.models import (
     ConfigSetEvent,
     Event,
+    IngestRoutedEvent,
     LintRunEvent,
     ManagedRegionWriteEvent,
     OperationRunEvent,
@@ -140,7 +141,12 @@ def replay_state(events: Iterable[Event]) -> VaultState:
             state.recent_operations[event.operation] = event
         elif isinstance(event, ResearchQueryEvent):
             state.recent_research.append(event)
-        elif isinstance(event, ManagedRegionWriteEvent | LintRunEvent | ConfigSetEvent):
+        elif isinstance(
+            event,
+            ManagedRegionWriteEvent | LintRunEvent | ConfigSetEvent | IngestRoutedEvent,
+        ):
             # Recorded for audit; no contribution to derived state today.
+            # ``IngestRoutedEvent`` is consumed directly by future
+            # ``journal explain`` rather than aggregated into ``VaultState``.
             continue
     return state

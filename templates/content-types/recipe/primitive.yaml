@@ -8,6 +8,20 @@ description: >-
   under `wiki/food/`; the `meal-planning` operation reads the library.
 requires:
   - food
+routing:
+  url_domains:
+    - allrecipes.com
+    - "*.bonappetit.com"
+    - "*.seriouseats.com"
+    - "*.smittenkitchen.com"
+    - "*.food52.com"
+    - "*.epicurious.com"
+    - "*.thekitchn.com"
+    - cooking.nytimes.com
+    - "*.bbcgoodfood.com"
+  url_path_patterns:
+    - /recipe/*
+    - /recipes/*
 contributes_to:
   - file: frontmatter.schema.yaml
     region: types

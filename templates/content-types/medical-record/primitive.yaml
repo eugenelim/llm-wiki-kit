@@ -11,6 +11,14 @@ description: >-
 requires:
   - medical
   - people
+routing:
+  filename_patterns:
+    - "EOB-*"
+    - "*-eob-*"
+    - "*visit-summary*"
+    - "*lab-result*"
+    - "*lab-results*"
+    - "*discharge-summary*"
 contributes_to:
   - file: frontmatter.schema.yaml
     region: types
