@@ -248,6 +248,63 @@ def test_doctor_does_not_double_report_pending_managed_region_proposal(
     assert not any(line.startswith("managed-region-drift: AGENTS.md") for line in out)
 
 
+def test_doctor_runs_against_corrupt_journal_and_reports_journal_corrupt(
+    tmp_path: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Plan step 6 §Recovery: a malformed journal line surfaces as
+    ``journal-corrupt`` and the remaining checks run against the
+    valid-events prefix instead of crashing the doctor pass.
+
+    Before this step, ``read_events`` raised on the first bad line and
+    blew up the whole ``wiki doctor`` invocation, hiding every other
+    issue. The lenient read path (added in this PR) preserves doctor's
+    "report everything, decide nothing" stance even when the journal
+    is partially corrupt.
+    """
+
+    vault = _init_vault(tmp_path)
+    journal = _journal_path(vault)
+
+    # Snapshot the valid-event count so the assertion can name the
+    # corrupted line precisely. The journal was just written by
+    # ``wiki init``; appending one bad line puts corruption at line
+    # ``valid_lines + 1`` (1-based, the convention ``JournalCorruptError``
+    # already uses).
+    valid_lines = len(journal.read_text(encoding="utf-8").splitlines())
+    with journal.open("a", encoding="utf-8") as fh:
+        fh.write("{not json\n")
+    corrupt_line = valid_lines + 1
+
+    # Plant a stray so ``check_orphans`` still has something to find;
+    # the partial-events checks must still produce its issue, proving
+    # doctor didn't abort after the corruption row.
+    stray = vault / "skills" / "rogue" / "SKILL.md"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("not from any primitive", encoding="utf-8")
+
+    monkeypatch.chdir(vault)
+    capsys.readouterr()
+
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert exit_code == cli.DOCTOR_ISSUES_EXIT
+    journal_corrupt = [line for line in out if line.startswith("journal-corrupt:")]
+    assert len(journal_corrupt) == 1, f"expected one journal-corrupt issue, got: {out}"
+    # ``format_issue`` renders ``<kind>: <path> (<detail>)``. The
+    # ``journal-corrupt`` issue intentionally overloads ``Issue.path``
+    # with the 1-based line number — there's no vault file that "owns"
+    # a torn JSONL line. The shim is documented on ``Issue``'s
+    # docstring; if a future refactor splits the field, this assertion
+    # changes in lockstep.
+    assert journal_corrupt[0].startswith(f"journal-corrupt: {corrupt_line} (invalid JSON:")
+    # Partial-events prefix still feeds the orphan check.
+    assert "orphan: skills/rogue/SKILL.md" in out
+
+
 def test_doctor_refuses_when_cwd_is_not_a_vault(
     tmp_path: Path,
     kit_root: Path,

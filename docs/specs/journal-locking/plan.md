@@ -16,7 +16,7 @@ not existing semantics), then the CLI subcommands (new surface,
 isolated module), then the doctor check (composes with the existing
 issue list), and finally the F-B3a notice removal + ADR-0002 amendment
 in the same PR that completes the chain. The qC5 recovery work
-(`stop_on_corruption` mode on `read_events`) lands with the doctor
+(`read_events_lenient` sibling of `read_events`) lands with the doctor
 step because the stale-lock recovery path is the most common consumer.
 
 Each step is a self-contained PR. The plan reads like five fix PRs not
@@ -118,24 +118,37 @@ Step 6 cleans up notices and the ADR.
        - `test_wiki_lock_release_on_unheld_is_silent_zero`
 
 1. **`wiki doctor` reports stale locks and survives a corrupt journal.**
-   - `read_events` gains `stop_on_corruption: bool = False`. When
-     `True`, returns `(events, corruption: tuple[int, str] | None)`
-     and stops at the first malformed line. Existing callers (the
-     `False` default) get the current "raise on first bad line"
-     behavior unchanged.
-   - `doctor.check_stale_lock(events, vault_root, threshold_hours)`
-     scans for `LockAcquiredEvent` without a following
-     `LockReleasedEvent` whose `acquired_at` is older than
-     `threshold_hours`. Threshold read from `WIKI_LOCK_STALE_HOURS`
-     env var (default 24).
-   - `run_doctor` calls `read_events(..., stop_on_corruption=True)`,
+   - A new sibling function `journal.read_events_lenient(path) ->
+     tuple[list[Event], Corruption | None]` returns the valid-events
+     prefix plus an optional `Corruption(line, reason)` row. Strict
+     `read_events` is unchanged — only `run_doctor` flips to lenient
+     so the existing seven callers still fail loudly on a torn
+     journal. (The original sketch added a `stop_on_corruption: bool`
+     flag to `read_events`; §Risks names `read_events_lenient` as the
+     cleaner resolution, and that's what shipped.)
+   - `doctor.check_stale_lock(state, threshold_hours)` reads
+     `state.held_lock` (populated by `replay_state` from the
+     acquire/release event pair) and emits a stale-lock issue when
+     `held_lock.acquired_at` is older than `threshold_hours`.
+     Threshold read from `WIKI_LOCK_STALE_HOURS` env var (default 24)
+     by an internal helper in `run_doctor`. Quality-engineer review
+     during step 6 collapsed the original `(events, vault_root,
+     threshold_hours)` sketch into the state-based signature so
+     `replay_state` stays the single source of truth for "is the lock
+     held."
+   - `run_doctor` calls `read_events_lenient(journal_path)`,
      surfaces `Issue("journal-corrupt", str(line_number), reason)` if
-     present, and runs the rest of the checks on the partial event
-     list.
+     `Corruption` is non-None, and runs the rest of the checks on
+     the partial event list.
    - **Verification:**
-     - `tests/unit/test_doctor.py::test_doctor_reports_stale_lock_after_threshold`
-     - `tests/unit/test_doctor.py::test_doctor_does_not_report_stale_lock_within_threshold`
-     - `tests/unit/test_doctor.py::test_doctor_does_not_report_when_release_event_follows_acquire`
+     - `tests/unit/test_journal.py::test_read_events_lenient_returns_none_corruption_on_clean_journal`
+     - `tests/unit/test_journal.py::test_read_events_lenient_returns_partial_events_and_corruption_at_bad_line`
+     - `tests/unit/test_doctor.py::test_check_stale_lock_returns_issue_when_acquired_at_older_than_threshold`
+     - `tests/unit/test_doctor.py::test_check_stale_lock_returns_empty_when_within_threshold`
+     - `tests/unit/test_doctor.py::test_check_stale_lock_returns_empty_when_held_lock_is_none`
+     - `tests/unit/test_doctor.py::test_check_stale_lock_coerces_naive_acquired_at_without_crashing`
+     - `tests/unit/test_doctor.py::test_doctor_reports_stale_lock_after_threshold_via_run_doctor`
+     - `tests/unit/test_doctor.py::test_doctor_warns_and_falls_back_when_env_var_unparseable`
      - `tests/integration/test_wiki_doctor.py::test_doctor_runs_against_corrupt_journal_and_reports_journal_corrupt`
 
 1. **F-B3a notices removed; ADR-0002 reflects the implemented contract.**
