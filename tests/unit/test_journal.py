@@ -12,7 +12,9 @@ replaying 1000 events in under 100ms.
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -99,6 +101,95 @@ def test_append_event_accumulates_multiple_lines_in_order(tmp_path: Path) -> Non
     assert json.loads(lines[0])["type"] == "vault.init"
     assert json.loads(lines[1])["primitive"] == "core"
     assert json.loads(lines[2])["primitive"] == "people"
+
+
+def test_append_event_fsyncs_before_returning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Spec invariant (docs/specs/journal-locking/spec.md §Durability, qB1):
+    # the line is durable on disk before ``append_event`` returns. The
+    # test intercepts ``os.fsync`` and, from inside the interceptor,
+    # confirms (a) the write+flush has already propagated — a separate
+    # reader can see the line — and (b) the counter ticks exactly once.
+    # The order assertion is what makes this a contract test rather than
+    # a "fsync was called" mock-shape check.
+    journal = tmp_path / "journal.jsonl"
+    line_type_at_fsync: list[str | None] = []
+    real_fsync = os.fsync
+
+    def counting_fsync(fd: int) -> None:
+        # ``fh.flush()`` already ran; a separate reader can see the
+        # line via the page cache without waiting for the kernel commit.
+        if journal.exists():
+            text = journal.read_text()
+            line_type_at_fsync.append(json.loads(text.splitlines()[0])["type"] if text else None)
+        else:
+            line_type_at_fsync.append(None)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", counting_fsync)
+    append_event(
+        journal,
+        VaultInitEvent(timestamp=NOW, by="core", vault_name="home", recipe="family"),
+    )
+    assert len(line_type_at_fsync) == 1, (
+        f"expected exactly one fsync, got {len(line_type_at_fsync)}"
+    )
+    assert line_type_at_fsync == ["vault.init"], "fsync ran before the line was on disk"
+
+
+def test_append_event_fsync_fileno_is_journal_fd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Plan acceptance criterion: the call passes the journal fd
+    # specifically, not an unrelated fd. ``fstat(fd).st_ino`` is a
+    # same-inode proof — sufficient today because ``append_event`` opens
+    # exactly one handle per call; revisit when step 4's ``transaction``
+    # introduces fd reuse via a ContextVar and a second handle on the
+    # same file becomes plausible.
+    journal = tmp_path / "journal.jsonl"
+    captured_inodes: list[int] = []
+    real_fsync = os.fsync
+
+    def capturing_fsync(fd: int) -> None:
+        captured_inodes.append(os.fstat(fd).st_ino)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", capturing_fsync)
+    append_event(
+        journal,
+        VaultInitEvent(timestamp=NOW, by="core", vault_name="home", recipe="family"),
+    )
+    assert captured_inodes == [os.stat(journal).st_ino]
+
+
+def test_append_event_propagates_oserror_on_fsync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Spec §Error cases (docs/specs/journal-locking/spec.md):
+    # "``fsync`` failure (EIO) propagates as ``OSError``. Caller's
+    # ``WikiError`` handler catches ``WikiError``, not ``OSError``; the
+    # traceback surfaces — disk errors are not user-fixable through the
+    # CLI." This test pins that contract: a future ``except OSError``
+    # silently swallowing the failure would otherwise pass green.
+    journal = tmp_path / "journal.jsonl"
+
+    def failing_fsync(fd: int) -> None:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+    with pytest.raises(OSError) as excinfo:
+        append_event(
+            journal,
+            VaultInitEvent(timestamp=NOW, by="core", vault_name="home", recipe="family"),
+        )
+    assert excinfo.value.errno == errno.EIO
+    # The write+flush ran before fsync; the bytes are kernel-side even
+    # though fsync failed. The spec's "last successful line is fully
+    # durable" claim is about *previous* events (each fsync'd before
+    # returning); this event's durability is what failed.
+    assert journal.exists()
+    assert "vault.init" in journal.read_text()
 
 
 def test_append_event_round_trips_through_read_events(tmp_path: Path) -> None:
