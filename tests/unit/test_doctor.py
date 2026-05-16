@@ -14,10 +14,14 @@ Each test pins one issue-kind contract from the Task-12 spec:
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from llm_wiki_kit import doctor
 from llm_wiki_kit.doctor import (
+    _DEFAULT_STALE_HOURS,
     Issue,
     check_managed_region_drift,
     check_missing,
@@ -25,11 +29,14 @@ from llm_wiki_kit.doctor import (
     check_page_drift,
     check_pending_proposals,
     check_primitive_missing,
+    check_stale_lock,
     format_issue,
     run_doctor,
 )
 from llm_wiki_kit.journal import append_event
 from llm_wiki_kit.models import (
+    HeldLock,
+    LockAcquiredEvent,
     ManagedRegionWriteEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -359,6 +366,166 @@ def test_primitive_missing_silent_when_catalog_carries_everything(tmp_path: Path
     state = VaultState(installed_primitives={"core": "0.1.0"})
 
     assert check_primitive_missing(state, kit) == []
+
+
+# ---------------------------------------------------------------------------
+# check_stale_lock (journal-locking spec, plan step 6)
+# ---------------------------------------------------------------------------
+#
+# The pure-function contract is tested directly against synthetic
+# ``VaultState`` values (no journal file, no env var). The end-to-end
+# wiring — env-var read, ``read_events_lenient``, ``replay_state``, sort —
+# is pinned by ``test_doctor_reports_stale_lock_after_threshold_via_run_doctor``
+# below and by the integration test in ``tests/integration/test_wiki_doctor.py``.
+
+
+def _state_with_held_lock(by: str, acquired_at: datetime, reason: str | None = None) -> VaultState:
+    return VaultState(held_lock=HeldLock(by=by, acquired_at=acquired_at, reason=reason))
+
+
+def test_check_stale_lock_returns_issue_when_acquired_at_older_than_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A held lock older than ``threshold_hours`` emits one stale-lock issue.
+
+    Detail carries the acquire-time ISO so the user can decide whether
+    to ``--force`` the release (spec §Doctor outputs).
+    """
+
+    fixed_now = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(doctor, "_now", lambda: fixed_now)
+
+    acquired_at = fixed_now - timedelta(hours=2)
+    state = _state_with_held_lock("weekly-digest", acquired_at, "2026-W20 digest")
+
+    issues = check_stale_lock(state, threshold_hours=1)
+    assert issues == [Issue("stale-lock", "weekly-digest", f"acquired {acquired_at.isoformat()}")]
+
+
+def test_check_stale_lock_returns_empty_when_within_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recent held lock is the in-progress case, not stale."""
+
+    fixed_now = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(doctor, "_now", lambda: fixed_now)
+
+    state = _state_with_held_lock("weekly-digest", fixed_now - timedelta(hours=23))
+    assert check_stale_lock(state, threshold_hours=24) == []
+
+
+def test_check_stale_lock_returns_empty_when_held_lock_is_none() -> None:
+    """A cleared ``state.held_lock`` produces no issue regardless of age.
+
+    ``replay_state`` clears ``held_lock`` on any ``LockReleasedEvent``
+    (``test_replay_state_release_clears_holder_even_when_by_differs``);
+    this test pins that the stale-lock check trusts that projection.
+    """
+
+    assert check_stale_lock(VaultState(), threshold_hours=1) == []
+
+
+def test_check_stale_lock_coerces_naive_acquired_at_without_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tz-naive ``HeldLock.acquired_at`` is coerced to UTC before the age subtraction.
+
+    The kit's own writers emit tz-aware timestamps, but a hand-edited
+    or externally produced journal line may carry a naive one. Without
+    coercion, ``_now() - acquired_at`` raises ``TypeError`` and crashes
+    the whole doctor pass — defeating the lenient-read path that was
+    added in this PR specifically to keep doctor running on damaged
+    journals.
+    """
+
+    fixed_now = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(doctor, "_now", lambda: fixed_now)
+
+    naive_acquire = datetime(2026, 5, 14, 12, 0, 0)  # 48h ago, no tzinfo
+    state = _state_with_held_lock("weekly-digest", naive_acquire)
+
+    issues = check_stale_lock(state, threshold_hours=1)
+    assert len(issues) == 1
+    assert issues[0].path == "weekly-digest"
+    # The ISO detail carries the coerced (now-aware) acquire timestamp.
+    assert "+00:00" in issues[0].detail
+
+
+def test_doctor_reports_stale_lock_after_threshold_via_run_doctor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end wiring check: env-var read + journal replay + check_stale_lock + sort.
+
+    The pure-function contract is tested above against synthetic
+    ``VaultState`` values. This test exists to catch a wiring
+    regression — e.g. a future refactor that stops piping
+    ``_stale_threshold_hours()`` through to ``check_stale_lock``, or
+    forgets to call the check at all.
+    """
+
+    monkeypatch.setenv("WIKI_LOCK_STALE_HOURS", "1")
+    fixed_now = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(doctor, "_now", lambda: fixed_now)
+
+    vault = _vault(tmp_path)
+    journal = vault / ".wiki.journal" / "journal.jsonl"
+    append_event(
+        journal, VaultInitEvent(timestamp=NOW, by="wiki-init", vault_name="v", recipe="family")
+    )
+    acquired_at = fixed_now - timedelta(hours=2)
+    append_event(
+        journal,
+        LockAcquiredEvent(timestamp=acquired_at, by="weekly-digest", reason="2026-W20 digest"),
+    )
+    kit = tmp_path / "kit"
+    kit.mkdir()
+
+    issues = run_doctor(vault, kit)
+    stale = [i for i in issues if i.kind == "stale-lock"]
+    assert len(stale) == 1
+    assert stale[0].path == "weekly-digest"
+    assert acquired_at.isoformat() in stale[0].detail
+
+
+def test_doctor_warns_and_falls_back_when_env_var_unparseable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``WIKI_LOCK_STALE_HOURS=abc`` emits a stderr warning and uses the default.
+
+    Silent fall-back was the original anti-pattern — a user who typoed
+    the value would get the 24-hour default with no signal that their
+    config was ignored. The warning surfaces once, then doctor proceeds
+    normally so a mistyped env var never blocks the diagnostic command.
+    """
+
+    monkeypatch.setenv("WIKI_LOCK_STALE_HOURS", "not-a-number")
+    fixed_now = datetime(2026, 5, 16, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(doctor, "_now", lambda: fixed_now)
+
+    # Acquire just over the default threshold so the "fell back" branch
+    # is observable in the issue list, not just in stderr.
+    vault = _vault(tmp_path)
+    journal = vault / ".wiki.journal" / "journal.jsonl"
+    append_event(
+        journal, VaultInitEvent(timestamp=NOW, by="wiki-init", vault_name="v", recipe="family")
+    )
+    acquired_at = fixed_now - timedelta(hours=_DEFAULT_STALE_HOURS + 1)
+    append_event(journal, LockAcquiredEvent(timestamp=acquired_at, by="weekly-digest"))
+    kit = tmp_path / "kit"
+    kit.mkdir()
+
+    capsys.readouterr()
+    issues = run_doctor(vault, kit)
+    err = capsys.readouterr().err
+
+    assert "WIKI_LOCK_STALE_HOURS" in err
+    # Import the constant rather than literal-matching so a future
+    # default change updates the test by one symbol, not by editing
+    # string assertions across the suite.
+    assert f"default {_DEFAULT_STALE_HOURS}" in err
+    assert any(i.kind == "stale-lock" for i in issues)
 
 
 # ---------------------------------------------------------------------------
