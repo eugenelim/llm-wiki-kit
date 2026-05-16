@@ -81,7 +81,13 @@ Mechanics:
 This same path applies to managed regions (ADR-0003): when a managed
 region's content has changed on disk vs. its previous journaled
 `managed_region.write` event, the whole shared file falls through the
-proposal path.
+proposal path. When the user resolves the proposal via
+`resolve_proposal`, the resolved file is parsed for every region the
+journal has ever recorded for that path, and one
+`ManagedRegionWriteEvent` is emitted per known region — re-baselining
+the region-scoped lookup that `safe_write_region` uses, so subsequent
+region writes of the same file see no drift (the same contract step 6
+states for plain `safe_write`).
 
 `safe_write` is the *only* sanctioned write path for kit code that
 touches a user's vault, with one documented exception:
@@ -173,6 +179,18 @@ losing their edits and losing the kit's update without a third path.
 
 ## Revisions
 
+- **2026-05-16** — Step 6 extended for managed-region resolves
+  (retro-review #F-B1). The 2026-05-15 wording only re-baselined the
+  page-level lookup (`PageWriteEvent`), which left
+  `safe_write_region`'s region-scoped lookup (`ManagedRegionWriteEvent`)
+  pointing at the pre-drift hash — so every follow-up region write
+  re-proposed in an infinite loop. `resolve_proposal` now also emits
+  one `ManagedRegionWriteEvent` per region ever recorded for the
+  resolved file, with the hash of that region's body in the merged
+  content. Paired fix in `doctor.check_managed_region_drift` skips
+  files with an outstanding `page.proposal` so a single drifted region
+  no longer surfaces as both `managed-region-drift` and
+  `pending-proposal` (retro-review #B6).
 - **2026-05-15** — Step 6 (conflict resolution) tightened during the
   Task 5 implementation. Original wording said the merged content was
   "written via `safe_write` again (which now matches because the user

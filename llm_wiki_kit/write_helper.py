@@ -148,6 +148,53 @@ def resolve_proposal(
         PageConflictResolvedEvent(timestamp=now, by=by, path=relative_path, hash=new_hash),
     )
 
+    # Retro-review #F-B1: if this file has managed-region history, the
+    # ``PageWriteEvent`` alone doesn't re-baseline ``safe_write_region``'s
+    # region-scoped lookup. Emit a fresh ``ManagedRegionWriteEvent`` per
+    # known region so the next ``safe_write_region`` writes in place
+    # instead of re-proposing forever (ADR-0004 §Mechanics step 6 for
+    # managed regions).
+    known_regions = _known_regions_for_file(journal_path, relative_path)
+    if known_regions:
+        try:
+            resolved_regions = managed_regions.parse(content)
+        except ManagedRegionError:
+            # The user's resolution destroyed markers. Region writes are
+            # now broken for this file; surfacing happens via
+            # ``safe_write_region`` raising on the next attempt. Don't
+            # silently invent ``ManagedRegionWriteEvent``s for missing
+            # regions.
+            return
+        for region in known_regions:
+            body = resolved_regions.get(region)
+            if body is None:
+                continue
+            append_event(
+                journal_path,
+                ManagedRegionWriteEvent(
+                    timestamp=now,
+                    by=by,
+                    file=relative_path,
+                    region=region,
+                    content_hash=_hash(body.encode("utf-8")),
+                ),
+            )
+
+
+def _known_regions_for_file(journal_path: Path, relative_file: str) -> list[str]:
+    """Return the set of region ids ever written for ``relative_file``.
+
+    Preserves first-seen order so the emitted ``ManagedRegionWriteEvent``
+    sequence is stable across runs.
+    """
+
+    seen: list[str] = []
+    for event in read_events(journal_path):
+        if isinstance(event, ManagedRegionWriteEvent) and event.file == relative_file:
+            if event.region not in seen:
+                seen.append(event.region)
+    return seen
+
 
 def safe_write_region(
     file_path: Path,
