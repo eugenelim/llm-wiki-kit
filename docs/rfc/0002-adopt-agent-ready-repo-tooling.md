@@ -1,6 +1,6 @@
 # RFC-0002: adopt agent-ready-repo tooling at full scope
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Author:** maintainer
 - **Created:** 2026-05-16
 - **Discussion:** PR opened against `main` from
