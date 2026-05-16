@@ -131,6 +131,327 @@ come from the migration RFC. For everything else, from the spec.
 The mechanical gates (`pytest`, `ruff`, `mypy`) catch the cheap problems
 before review. They're necessary, not sufficient.
 
+## How we do non-trivial work
+
+For anything beyond a one-line edit, follow the **plan → execute → verify
+→ review → iterate** loop. The mechanics live in the
+[`work-loop`](../.claude/skills/work-loop/SKILL.md) skill; this section is
+the why.
+
+**Why a loop, not a single pass.** LLM self-assessment is unreliable —
+agents declare victory when they *feel* done. Mechanical gates (`ruff`,
+`mypy`, `pytest`) plus an adversarial review pass replace "feel" with
+verifiable termination. The loop keeps going until both kinds of check
+are satisfied, or until it hits a hard cap and surfaces.
+
+**Why think before acting.** The cost of a wrong start is higher than the
+cost of thinking. For high-stakes work (load-bearing decisions, multi-file
+refactors, anything touching the journal, managed regions, drift
+detection, or `safe_write`), use your agent's extended-thinking facility
+— it catches the wrong assumption *before* it becomes 14 commits of wrong
+code. For routine work, skip the ceremony; the discipline is "match
+thinking depth to stakes," not "always think hardest."
+
+**Why iterate, not retry from scratch.** Most loops converge: gates fail,
+review surfaces a finding, the next pass fixes it. Restart-from-scratch
+loses the planning context. The other-shape (fresh-context every
+iteration) is the [Ralph harness](#when-to-reach-for-ralph), used only
+when fresh context is the *point*.
+
+**Three verification modes** — every plan task picks one *before* code is
+written:
+
+- **TDD** — pure functions, models, validators, parsers, journal events,
+  managed-region rendering. Default for the kit's testable logic.
+  Contract tests live in `spec.md`; construction tests live in
+  `plan.md` (per-task `Tests:` subsection precedes `Approach:`). Red →
+  green → refactor.
+- **Goal-based** — build config, scaffolding, CLI wiring,
+  generated-code consumption. The task's `Done when:` is the contract;
+  verify with a one-liner (`pytest -k`, `wiki --help`, `ruff check`,
+  `grep`) instead of writing a test that re-asserts what the typechecker
+  already proves.
+- **Visual / manual QA** — the kit ships an Obsidian-readable vault and
+  a CLI. For vault rendering, the verification artifact is "open the
+  vault in Obsidian (or run `wiki doctor`) and confirm what the *user*
+  sees." For CLI output, capture the actual stdout/stderr the user
+  reads. A test that passes when the on-screen result is wrong is
+  mode-mismatched, regardless of what framework wrote it.
+
+**Why capture learnings.** A loop that finishes without updating *some*
+doc, skill, or note has wasted what it learned. The next agent (Ralph or
+human) will pay for it again. The work-loop skill enumerates where each
+kind of learning belongs.
+
+**Kit anti-patterns the reviewers should flag** — first-class checks for
+the kit's reviewer subagents:
+
+- Bypassing `write_helper.safe_write()` for a write that lands in a
+  user's vault. Drift detection short-circuits and the user loses their
+  edits.
+- Hard-coding a vault path in kit code. The kit only knows what the CLI
+  passes in; tests use `tmp_path` fixtures or `tests/fixtures/*-vault/`.
+- Adding a runtime dependency without an ADR. Runtime deps are
+  `pyyaml`, `pydantic>=2`, and stdlib; everything else is a dep the end
+  user could fail to install.
+- Creating a new top-level directory. Structure is intentional; new
+  directories go through RFC.
+- Editing `docs/CHARTER.md` substantively without an RFC.
+- Conflating kit-side and vault-side skills (`.claude/skills/` vs.
+  `core/files/skills/`). They have different audiences and different
+  lifecycles.
+
+## Contract tests vs. construction tests
+
+Tests are designed *up front, before any implementation*. They live in
+two places, with different shapes and different lifecycles:
+
+- **Contract tests** live in `docs/specs/<thing>/spec.md`. Black-box,
+  behaviour-only — they define "done" for the spec. Any valid
+  implementation must pass them. They are stable against
+  *implementation* change (that's the whole point of a contract); they
+  still evolve with *spec* (behavioural) change during the spec's
+  living phase, and freeze when the spec freezes.
+- **Construction tests** live in `docs/specs/<thing>/plan.md`, attached
+  to each task. Units, edge cases, property tests, fixtures — they
+  guide the implementer through the build. For kit code, the
+  construction tests usually correspond to pytest test files under
+  `tests/unit/` or `tests/integration/`; the plan task names them
+  explicitly. Construction tests are *revisable* if one turns out to
+  over-specify an internal detail the plan changed.
+
+Within a plan task, the **Tests** subsection comes *before* Approach.
+Tests drive implementation, not the other way around. Red → green →
+refactor: write the failing test, make it pass, refactor — separate
+commits for each when the change is non-trivial.
+
+This is the forcing function that keeps specs honest (you can't write a
+contract test for a vague behavioural claim) and keeps implementations
+honest (you can't drift from the spec if the spec's tests are red).
+
+The two failure modes the reviewer subagents watch for here:
+
+- A behaviour in `spec.md` with no contract test pinned to it — a
+  promise without a check, drift waiting to happen.
+- A construction test asserting an internal shape (mock-call counts,
+  attribute presence on a private helper) when the observable contract
+  is a returned value or an on-disk file. Mock-shape tests change in
+  lockstep with production code; they are mirrors, not contracts.
+
+## Work-loop state
+
+A spec-driven loop carries a small amount of session-scoped state — how
+many iterations have run, what budget is left, what findings the last
+review surfaced. Putting that in prose leaves it un-enforceable; putting
+it on disk as data lets a tiny script gate each phase. That script is
+[`tools/check-done.py`](../tools/check-done.py); the data lives at
+`docs/specs/<feature>/state.json`, and the schema lives at
+[`docs/_templates/state.json`](_templates/state.json).
+
+**Fields:**
+
+| Field | Meaning |
+|---|---|
+| `feature` | spec slug (informational) |
+| `iteration_count` and the iteration cap field | how many in-session loops have run / the hard ceiling. The cap is data, not prose — tune it per spec rather than editing the SKILL. The literal JSON form lives in [`docs/_templates/state.json`](_templates/state.json); refer to it from prose by name. |
+| `token_budget_used_pct` / `token_budget_cap_pct` | session token budget — **advisory** until the orchestrator populates `_used_pct`. The threshold lives in data so a project can tune it. |
+| `consecutive_same_error_count` / `consecutive_same_error_threshold` | gate-error stuck-loop counter / cap. Advisory until the SKILL prescribes when to increment `_count`. |
+| `plan_review_status` | `pending` until the spec-mode adversarial review clears, then `approved`. Enforced as a gate on **all phases** (`plan`, `implement`, `review`) — not just `--phase plan`. |
+| `last_commit_sha` | latest commit produced by the loop (informational; advisory). |
+| `finding_fingerprints` / `previous_finding_fingerprints` | hashes of reviewer findings, rotated each REVIEW iteration; used to detect circling. Algorithm pinned in the work-loop SKILL §REVIEW. |
+| `worktrees` | one entry per `implementer` subagent dispatched in the current session's supervisor pass: `{task_id, branch, path, status, report_path}` where status is `in-progress` / `ready` / `blocked` / `failed` and `report_path` points at the implementer's markdown report under `docs/specs/<feature>/notes/`. Report files are gitignored — session-scratch, not history. Entries persist with their terminal status for the rest of the loop. Empty in single-agent loops. See [§ Supervisor mode](#supervisor-mode). |
+
+**Exit contract.** `check-done.py` exits 0 when the phase is satisfied
+and non-zero when it isn't, with a one-line reason on stderr. Treat
+non-zero as "stop and surface" — with one deliberate exception: the
+SKILL's PLAN-init step calls the script with `--phase plan` *expecting*
+exit 1 with `plan not approved`. That exit-1 is the cue to run the
+spec-mode reviewer, not a real stop. Any other non-zero exit terminates
+the loop.
+
+**Lifecycle.** `state.json` is **per-session scratch**, not history. The
+file is gitignored (`docs/specs/*/state.json` in
+[`.gitignore`](../.gitignore)); the SKILL initializes it from the
+template at PLAN start. Across sessions, a fresh run re-initializes —
+intentionally; a new session deserves a fresh budget.
+
+**Atomic writes.** The orchestrator updates `state.json` mid-iteration;
+`check-done.py` reads it between phases. Always write atomically
+(tmp-file + `os.replace`, or shell `mv`) so a partial-write doesn't
+present as malformed JSON and falsely stop the loop.
+
+**Changing the cap.** Editing
+[`docs/_templates/state.json`](_templates/state.json) changes the
+*starting point* for any **newly-initialized** spec. To change the cap
+for a spec that's already running, edit that spec's own (gitignored)
+`docs/specs/<feature>/state.json` — the template edit doesn't propagate
+backward. The numbers move with the data, not the SKILL prose.
+
+## Model selection
+
+Every subagent file declares `model:` in its frontmatter explicitly. The
+`lint-agent-artifacts.sh` linter (lands in PR-5 of RFC-0002) will
+enforce this. The current choices:
+
+| Subagent | Model | Why |
+|---|---|---|
+| `adversarial-reviewer` | `opus` | Adversarial judgment; stakes are correctness. Output drives a hard gate. |
+| `security-reviewer` | `opus` | Threat-model reasoning; stakes are security (`safe_write`, ingest input handling, recipe loading). |
+| `quality-engineer` | `opus` | Maintenance lens; spec-level coverage pass over an integrated journey. |
+| `implementer` | `sonnet` | One narrow plan task per dispatch; gates rerun in the primary; supervisor judges merge readiness. Cost beats capability here. |
+
+Changing a subagent's model is a behaviour change, not a configuration
+tweak — note the change in the PR that makes it, with a one-line
+justification. If the change reverses a previous choice in a way a
+future maintainer would ask "why", surface it in the PR description.
+
+## Supervisor mode
+
+When a plan has multiple tasks declaring `Depends on: none`, the
+work-loop enters **supervisor mode**: one primary orchestrator
+dispatches `implementer` subagents in parallel, each working in its own
+git worktree, then merges the results back and runs gates in the
+primary. The mechanics live in the
+[`work-loop` skill](../.claude/skills/work-loop/SKILL.md) §EXECUTE; this
+section is the why and the boundary.
+
+**Why a separate mode instead of a separate skill.** The trigger is
+structural (the plan's shape), not a choice the user makes. Branching
+inside `work-loop` means contributors never pick the wrong skill, and
+the overlap with single-agent flow stays single-sourced.
+
+**Why an implementer subagent, not a recursive work-loop.** The
+implementer's job is narrow — build one task, run gates, report.
+Reviewing, dispatch decisions, and merge belong to the supervisor. A
+recursive work-loop would let an implementer spawn its own
+implementers; that's nested coordination overhead with no clear win.
+Keep the tree two levels deep: supervisor → leaf implementers.
+
+**Worktrees as the coordination primitive.** Each independent task
+gets `.worktrees/<task-id>/` checked out on its own branch
+(`<base-branch>-<task-id>`). Worktrees are git-native, support parallel
+checkout of the same repo, and avoid lockfile contention. The directory
+is gitignored ([`.gitignore`](../.gitignore)); branches live in git
+history for traceability.
+
+**Merge discipline.** The supervisor merges with `git merge --no-ff
+<base>-<task-id>` into the primary branch, **sequentially in task-id
+order** (numeric where IDs look like `T1`, `T2`, …; lexicographic
+otherwise). If a sequential merge conflicts, the tasks weren't actually
+independent — the plan was wrong. Surface that as a PLAN-level
+escalation, not a `git mergetool` session.
+
+**Gates run in the primary, not the worktree.** Each implementer runs
+gates inside its worktree and reports the result, but those results are
+**advisory**. The supervisor reruns `ruff` / `mypy` / `pytest` against
+the merged state — that's the only signal that counts.
+
+**Escalating implementer failures.** If an implementer reports
+`blocked` or `failed`, the supervisor surfaces the failure list to a
+human and returns to PLAN. It does **not** redispatch the same
+implementer on the same task — the assumption that produced the
+failure is what needs revising, not the attempt.
+
+## Knowledge base
+
+The repo accumulates practitioner-level lessons in
+`docs/knowledge/patterns.jsonl`: patterns ("when you touch
+`write_helper`, also remember managed regions short-circuit drift
+detection"), gotchas ("the journal treats an empty file as zero events,
+not as a missing journal"), and antipatterns ("don't mock the journal
+in integration tests"). One JSON object per line, scoped to a file
+glob. The schema and curation conventions land alongside the file
+itself in PR-3 of RFC-0002.
+
+**Why a separate bucket.** ADRs answer *why we decided X*;
+[`docs/architecture/`](architecture/) describes *current structure*;
+[`docs/guides/`](guides/) is for *users*. Knowledge entries are
+practitioner residue — the things you learn by building, not by
+deciding or documenting. They earn a home because they're scoped to
+globs (an agent priming for `llm_wiki_kit/journal.py` should see the
+journal gotchas, not every lesson the repo ever learned) and
+append-only (a lesson that stops being true gets a *new* entry citing
+the old one, not an edit — which keeps history honest).
+
+**How agents see it.** `tools/hooks/session-start.sh` (lands in PR-5 of
+RFC-0002) reads the file at session open and prints the entries —
+optionally filtered by a path or narrower glob. Matching uses Python's
+`fnmatch` with the caller's `--scope` value as the *path* argument and
+the entry's stored glob as the *pattern*, so an agent working in
+`llm_wiki_kit/render.py` gets entries scoped to `llm_wiki_kit/**` plus
+any repo-wide `*` entries. The work-loop SKILL's *Capture what was
+learned* section points contributors at this file as the destination
+for pattern/gotcha/antipattern-shaped learnings; other shapes still go
+where they already belong (AGENTS.md, skill bodies,
+`docs/architecture/`, `docs/guides/explanation/`).
+
+## Enforcement (the triplet)
+
+Three layered mechanisms enforce the project's discipline. Together
+they are "the enforcement triplet":
+
+| Layer | Mechanism | What it gates |
+|---|---|---|
+| Caps | [`tools/check-done.py`](../tools/check-done.py) | Iteration cap, token budget, plan approval, fingerprint stasis (see [§ Work-loop state](#work-loop-state)). **Lands in PR-1 (this PR).** |
+| Artifacts | `tools/lint-agents-md.sh`, `tools/lint-agent-artifacts.sh`, `tools/lint-skill-deps.sh`, `tools/lint-knowledge.sh` | Shape, manifest, and content hygiene for every `.claude/`, `AGENTS.md`, and `docs/knowledge/` artifact. **Lands in PR-5 of RFC-0002** (forthcoming). |
+| Aggregation | `tools/hooks/pre-pr.sh` | Runs caps + artifact linters together before a PR opens. CI mirrors this. **Lands in PR-5 of RFC-0002** (forthcoming). |
+
+Until PR-5 lands, the artifact and aggregation layers are advisory —
+the caps script is the only mechanical gate of the triplet that is
+already wired up. The full triplet wires into CI as a single
+`pre-pr.sh` job on top of `ruff` / `mypy` / `pytest`.
+
+## Scaling profiles
+
+The vendored work-loop is designed to work across three repo sizes:
+
+- **Profile A** — microservice or single-component, 1–3 contributors.
+  Minimum viable set: work-loop SKILL, `check-done.py`, an `AGENTS.md`.
+  Supervisor mode and specialist reviewers are usually overkill.
+- **Profile B** — single library or app, 4–10 contributors. Supervisor
+  mode earns its keep when a plan has two or more `Depends on: none`
+  tasks. `adversarial-reviewer` is worth using on every PR;
+  `security-reviewer` and `quality-engineer` when the diff warrants.
+- **Profile C** — medium platform / engine, 10–50 contributors. All
+  tooling in active use; the knowledge base is actively populated and
+  the `session-start` hook is wired in the consumer's
+  `.claude/settings.json`.
+
+**The kit operates at Profile B.** It's a single Python package with a
+small contributor base. Profile C tooling (knowledge base, hooks)
+ships pre-installed via RFC-0002's later PRs, but is used actively
+only when the diff warrants it — a one-line bug fix doesn't need a
+quality-engineer pass, while a refactor across `journal`,
+`write_helper`, and `managed_regions` probably does.
+
+The reviewers themselves are stack-agnostic; they read AGENTS.md and
+this file at session start. Tuning to the kit happens through these
+files, not through edits to the agent bodies.
+
+## When to reach for Ralph
+
+The same work-loop can run unattended — a fresh Claude Code session
+per iteration, state in files only. That's a Ralph loop. The harness
+and operating instructions land at `tools/ralph.sh` and
+[`tools/RALPH.md`](../tools/RALPH.md) in PR-4 of RFC-0002 (forthcoming).
+
+Reach for Ralph only when *all* of these hold:
+
+- Completion is fully mechanical (tests pass, a spec checklist is
+  fully ticked, a benchmark hits a threshold).
+- The task slices into context-window-sized items.
+- Verification is reliable (flaky tests turn Ralph into a slot machine).
+- You have already validated the approach in-session with the regular
+  work-loop. Ralph amplifies whatever your conventions are; if those
+  aren't tight, Ralph just produces more bad code faster.
+
+Ralph is the wrong tool when "done" is fuzzy or aesthetic, when the
+task needs human judgment mid-flight (architectural choices,
+ambiguous spec language, security-sensitive decisions), or when
+verification is unreliable. Read [`tools/RALPH.md`](../tools/RALPH.md)
+before running. Ralph is a sharp tool — useful, narrow, and not the
+answer to most work.
+
 ## When this file is wrong
 
 Same rule as AGENTS.md: flag drift, don't work around it. The

@@ -32,7 +32,7 @@ For each kind of decision, there is exactly one place it lives:
 |How will we build it, step by step?                              |`docs/specs/<thing>/plan.md`                                                              |
 |How is the kit’s own code organized today?                       |`docs/architecture/`                                                                      |
 |Where is the kit going next?                                     |`docs/ROADMAP.md`                                                                         |
-|How do users use the kit?                                        |`docs/tutorials/`, `docs/how-to/`, `docs/reference/`, `docs/concepts/` (Diátaxis)         |
+|How do users use the kit?                                        |`docs/guides/{tutorials,how-to,reference,explanation}/` (Diátaxis; some existing user docs still live flat at `docs/guides/*.md` and migrate gradually)|
 |How does Claude do `<repeating task>` *inside a vault*?          |The `core/files/skills/<task>/SKILL.md` files we ship (these are vault-side, not kit-side)|
 |How does Claude do `<repeating task>` *while developing the kit*?|This file plus `docs/CONVENTIONS.md`                                                      |
 
@@ -61,9 +61,9 @@ For anything beyond a one-line edit, follow the **plan → execute → verify �
 review** loop. Summary:
 
 1. **Plan before acting.** For anything spec-shaped, read the spec first.
-   For architecturally significant work, use Plan Mode and “think hard” /
-   “ultrathink”. Phrase every plan task as a verifiable goal, not a list of
-   steps — the task name should be the success criterion.
+   For architecturally significant work, use Plan Mode and the agent’s
+   deepest-thinking setting. Phrase every plan task as a verifiable goal,
+   not a list of steps — the task name should be the success criterion.
 1. **Tasks come from the migration plan.** During v2 development, every
    piece of work corresponds to a numbered task in
    `docs/rfc/0001-v2-architecture.md`. Pick one, do it, ship it. Don’t
@@ -87,7 +87,7 @@ review** loop. Summary:
    outputs listed? No more, no less? Did all acceptance criteria pass?
 1. **One PR per task.** Commit message format: `v2: task <N> - <one-line summary>`.
 1. **Capture what you learned** before opening the PR — into the right
-   `AGENTS.md`, ADR, or `docs/concepts/` doc.
+   `AGENTS.md`, ADR, or `docs/guides/explanation/` doc.
 
 ## Commands you’ll need
 
@@ -118,13 +118,16 @@ the search primitive grows past ripgrep.
 
 ## Skills available to you (kit-side, not vault-side)
 
-The kit doesn’t ship its own `.claude/skills/` directory yet. Skill discipline
-during v2 development is enforced via this file and the migration plan in
-`docs/rfc/0001-v2-architecture.md`. If a workflow earns its keep across multiple
-tasks, we’ll promote it to a kit-side skill.
+Kit-side skills live at `.claude/skills/` (this is for agents working on
+the kit’s own code, NOT for end users): `work-loop` is the entry point for
+any non-trivial change. Workflow skills (`new-spec`, `new-adr`, `new-rfc`,
+`bug-fix`, `update-conventions`) land in PR-2 of RFC-0002. Specialist
+subagents at `.claude/agents/` — `adversarial-reviewer`, `quality-engineer`,
+`security-reviewer`, `implementer` — are invoked per the work-loop SKILL.
 
-The vault-side skills the kit ships to *users* live under `core/files/skills/`
-and `templates/*/files/skills/`. Don’t confuse the two.
+Vault-side skills, copied into a user’s vault by `wiki init`, live under
+`core/files/skills/` and `templates/*/files/skills/`. Different scope,
+different audience, never mix.
 
 ## Things you should not do without asking
 
@@ -142,6 +145,10 @@ and `templates/*/files/skills/`. Don’t confuse the two.
   never assume a vault path other than what’s explicitly passed in.
 - **Don’t bypass `write_helper.safe_write()`** for any file write that lands
   in a user’s vault. Drift detection is load-bearing.
+- **Don’t merge kit-side and vault-side skill scopes.** Repo-root `.claude/`
+  is for the kit’s own development; `core/files/skills/` and
+  `templates/*/files/skills/` are what `wiki init` copies into a user’s
+  vault.
 
 ## When this file is wrong
 
