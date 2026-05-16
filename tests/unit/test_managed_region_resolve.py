@@ -98,9 +98,7 @@ def test_resolve_proposal_with_managed_region_history_emits_region_write(
     assert region_writes[-1].by == "wiki-conflict"
 
 
-def test_safe_write_region_after_resolve_sees_no_drift(
-    vault: Path, journal: Path
-) -> None:
+def test_safe_write_region_after_resolve_sees_no_drift(vault: Path, journal: Path) -> None:
     """The core promise of ADR-0004 step 6 for managed regions: a follow-up
     kit write of the same region writes in place, not into a sidecar.
     """
@@ -139,9 +137,7 @@ def test_resolve_proposal_without_region_history_does_not_emit_region_write(
     region_writes = [e for e in events if isinstance(e, ManagedRegionWriteEvent)]
     assert region_writes == []
     # Page-level events still emitted as before.
-    assert any(
-        isinstance(e, PageWriteEvent) and e.by == "wiki-conflict" for e in events
-    )
+    assert any(isinstance(e, PageWriteEvent) and e.by == "wiki-conflict" for e in events)
     assert any(isinstance(e, PageConflictResolvedEvent) for e in events)
 
 
@@ -163,12 +159,8 @@ def test_resolve_proposal_with_multiple_regions_emits_one_event_per_region(
     )
     safe_write_region(target, "content-types", "v1", by="core", journal_path=journal)
     safe_write_region(target, "ontologies", "o1", by="core", journal_path=journal)
-    target.write_text(
-        target.read_text().replace("v1", "user-c").replace("o1", "user-o")
-    )
-    safe_write_region(
-        target, "content-types", "v2", by="core", journal_path=journal
-    )
+    target.write_text(target.read_text().replace("v1", "user-c").replace("o1", "user-o"))
+    safe_write_region(target, "content-types", "v2", by="core", journal_path=journal)
 
     merged = (
         "# AGENTS.md\n\n"
@@ -182,14 +174,10 @@ def test_resolve_proposal_with_multiple_regions_emits_one_event_per_region(
     )
     resolve_proposal(target, merged, by="wiki-conflict", journal_path=journal)
 
-    region_writes = [
-        e for e in read_events(journal) if isinstance(e, ManagedRegionWriteEvent)
-    ]
+    region_writes = [e for e in read_events(journal) if isinstance(e, ManagedRegionWriteEvent)]
     # 1 (content-types init) + 1 (ontologies init) + 1 (content-types pre-resolve)
     # + 2 fresh resolves
-    by_region = {
-        (e.region, e.content_hash) for e in region_writes if e.by == "wiki-conflict"
-    }
+    by_region = {(e.region, e.content_hash) for e in region_writes if e.by == "wiki-conflict"}
     assert by_region == {
         ("content-types", _sha256("merged-c")),
         ("ontologies", _sha256("merged-o")),

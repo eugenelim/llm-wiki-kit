@@ -225,9 +225,7 @@ def test_doctor_does_not_double_report_pending_managed_region_proposal(
 
     # User edits inside the kit-owned region, then a follow-up region
     # write produces a sidecar + a PageProposalEvent for AGENTS.md.
-    edited = agents.read_text(encoding="utf-8").replace(
-        "kit-baseline", "user override"
-    )
+    edited = agents.read_text(encoding="utf-8").replace("kit-baseline", "user override")
     agents.write_text(edited, encoding="utf-8")
 
     safe_write_region(
@@ -247,9 +245,7 @@ def test_doctor_does_not_double_report_pending_managed_region_proposal(
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
     assert "pending-proposal: AGENTS.md.proposed" in out
-    assert not any(
-        line.startswith("managed-region-drift: AGENTS.md") for line in out
-    )
+    assert not any(line.startswith("managed-region-drift: AGENTS.md") for line in out)
 
 
 def test_doctor_refuses_when_cwd_is_not_a_vault(
