@@ -1,0 +1,22 @@
+# Personal recipe — vault shape for an individual's knowledge base.
+#
+# Minimal for Task 9 (RFC-0001): only ``core`` is referenced. The
+# personal recipe is mostly composition — it reuses primitives from
+# family and work-os plus a lightweight identity stub — and that
+# composition is wired up in Task 15. Until those primitives land, this
+# recipe stays minimal so Task 10's ``wiki init`` end-to-end test
+# resolves cleanly against the live catalog.
+#
+# Reading this in the future: the rule is "every primitive named here
+# must already exist in the catalog when this recipe lands on main."
+# Reach for ``wiki add`` for opt-in extensions on top of the baseline.
+name: personal
+version: 0.1.0
+description: >-
+  Personal knowledge base for one individual: identity, light project
+  tracking, and selective reuse of family / work-os primitives.
+  Expands in Task 15.
+primitives:
+  - core
+variables:
+  recipe_name: personal

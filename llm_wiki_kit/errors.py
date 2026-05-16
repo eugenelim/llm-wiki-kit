@@ -75,3 +75,19 @@ class PrimitiveError(WikiError):
     a primitive it doesn't contain, a duplicate primitive name in the
     same set, and ``requires:`` cycles.
     """
+
+
+class RecipeError(WikiError):
+    """Raised by ``recipes`` for non-schema failures.
+
+    Schema failures (a malformed ``recipes/<name>.yaml`` field) flow through
+    :class:`ValidationError`. ``RecipeError`` covers everything else the
+    recipe layer is responsible for: a missing recipe file, malformed
+    YAML, and the closure step in
+    :func:`recipes.resolve_recipe_primitives` discovering that a recipe
+    names a primitive the catalog does not contain. The closure step is
+    a recipe-authoring concern rather than a primitive-loading one — a
+    missing primitive there means the recipe and catalog disagree — so
+    it raises ``RecipeError`` instead of leaking ``PrimitiveError``
+    through.
+    """
