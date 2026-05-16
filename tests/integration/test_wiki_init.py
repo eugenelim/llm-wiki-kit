@@ -5,6 +5,14 @@ surface as test assertions rather than subprocess exit codes. The kit's
 bundled ``recipes/`` and ``core/`` directories are picked up from the
 editable-install layout via ``cli._kit_paths()`` — the test suite runs
 against the same on-disk assets a user would render at install time.
+
+After Tasks 13/14/15, every shipped recipe (``family``, ``work-os``,
+``personal``) installs more than just ``core``. Each recipe has its
+own integration suite — see ``test_family_recipe.py``,
+``test_work_os_recipe.py``, and ``test_personal_recipe.py`` — and the
+generic init-shape assertions here run against an in-test minimal
+recipe so they keep covering the core-only code path without being
+coupled to whatever the shipped recipes' closures look like today.
 """
 
 from __future__ import annotations
@@ -21,22 +29,47 @@ from llm_wiki_kit.models import (
     VaultInitEvent,
 )
 
-# ``family`` (Task 13) and ``work-os`` (Task 14) both grew past the
-# core-only shape. Each has its own integration suite — see
-# ``test_family_recipe.py`` and ``test_work_os_recipe.py`` — and only
-# ``personal`` still installs core-only (until Task 15 expands it).
-CORE_ONLY_RECIPES = ["personal"]
-
 
 def _journal_path(vault: Path) -> Path:
     return vault / ".wiki.journal" / "journal.jsonl"
 
 
-@pytest.mark.parametrize("recipe_name", CORE_ONLY_RECIPES)
-def test_init_renders_core_only_vault(tmp_path: Path, recipe_name: str) -> None:
+@pytest.fixture
+def core_only_recipe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Install a minimal core-only recipe alongside the bundled ones.
+
+    The shipped recipes have all grown past the core-only shape, so we
+    drop a temporary ``recipes/core-only.yaml`` into the kit-paths root
+    by redirecting ``_KIT_ROOT`` at a tmp tree that symlinks back to the
+    real ``core/`` and ``templates/`` directories. The temporary recipe
+    lists no primitives; the loader auto-prepends ``core``.
+    """
+
+    from llm_wiki_kit import cli
+
+    kit_root = tmp_path / "kit-root"
+    (kit_root / "recipes").mkdir(parents=True)
+    (kit_root / "recipes" / "core-only.yaml").write_text(
+        "name: core-only\n"
+        "version: 0.1.0\n"
+        "description: >-\n"
+        "  Test-only recipe that installs nothing past core.\n"
+        "primitives: []\n"
+        "variables:\n"
+        "  recipe_name: core-only\n",
+        encoding="utf-8",
+    )
+    (kit_root / "core").symlink_to(cli._KIT_ROOT / "core")
+    (kit_root / "templates").symlink_to(cli._KIT_ROOT / "templates")
+
+    monkeypatch.setattr(cli, "_KIT_ROOT", kit_root)
+    return "core-only"
+
+
+def test_init_renders_core_only_vault(tmp_path: Path, core_only_recipe: str) -> None:
     vault = tmp_path / "my-vault"
 
-    exit_code = main(["init", str(vault), "--recipe", recipe_name])
+    exit_code = main(["init", str(vault), "--recipe", core_only_recipe])
 
     assert exit_code == 0
 
@@ -70,18 +103,17 @@ def test_init_renders_core_only_vault(tmp_path: Path, recipe_name: str) -> None:
     assert journal.is_file()
 
 
-@pytest.mark.parametrize("recipe_name", CORE_ONLY_RECIPES)
-def test_init_journal_state_replays_cleanly(tmp_path: Path, recipe_name: str) -> None:
+def test_init_journal_state_replays_cleanly(tmp_path: Path, core_only_recipe: str) -> None:
     vault = tmp_path / "another-vault"
 
-    assert main(["init", str(vault), "--recipe", recipe_name]) == 0
+    assert main(["init", str(vault), "--recipe", core_only_recipe]) == 0
 
     events = read_events(_journal_path(vault))
 
     # (b) The first event is VaultInit; the second is PrimitiveInstall(core).
     assert isinstance(events[0], VaultInitEvent)
     assert events[0].vault_name == "another-vault"
-    assert events[0].recipe == recipe_name
+    assert events[0].recipe == core_only_recipe
     assert events[0].by == "wiki-init"
 
     assert isinstance(events[1], PrimitiveInstallEvent)
@@ -94,7 +126,7 @@ def test_init_journal_state_replays_cleanly(tmp_path: Path, recipe_name: str) ->
 
     state = replay_state(events)
     assert state.vault_name == "another-vault"
-    assert state.recipe == recipe_name
+    assert state.recipe == core_only_recipe
     assert state.installed_primitives == {"core": "0.1.0"}
 
     # Each top-level file we rendered shows up in the state's page_writes.
