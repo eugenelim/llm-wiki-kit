@@ -24,7 +24,10 @@ from llm_wiki_kit.journal import append_event, read_events, replay_state
 from llm_wiki_kit.models import (
     ConfigSetEvent,
     Event,
+    HeldLock,
     LintRunEvent,
+    LockAcquiredEvent,
+    LockReleasedEvent,
     ManagedRegionWriteEvent,
     OperationRunEvent,
     PageConflictResolvedEvent,
@@ -339,6 +342,111 @@ def test_replay_ignores_events_that_dont_affect_state() -> None:
     # No crash, no state contribution.
     assert state.installed_primitives == {}
     assert state.page_writes == {}
+
+
+# ---------------------------------------------------------------------------
+# Lock event replay (journal-locking spec, plan step 1)
+# ---------------------------------------------------------------------------
+
+
+def test_replay_state_tracks_held_lock() -> None:
+    """``LockAcquiredEvent`` snapshots the holder; ``LockReleasedEvent`` clears it."""
+
+    acquired = LockAcquiredEvent(
+        timestamp=_at(0),
+        by="weekly-digest",
+        reason="2026-W20 digest",
+    )
+    state = replay_state([acquired])
+    assert state.held_lock == HeldLock(
+        by="weekly-digest",
+        acquired_at=_at(0),
+        reason="2026-W20 digest",
+    )
+
+    released = LockReleasedEvent(timestamp=_at(1), by="weekly-digest")
+    state = replay_state([acquired, released])
+    assert state.held_lock is None
+
+
+def test_replay_state_last_acquire_wins_when_release_is_missing() -> None:
+    """Two ``LockAcquiredEvent``s without a release: replay records the latest holder.
+
+    The stale-lock detection (spec step 6) catches the missing release;
+    replay itself is permissive so a hand-edited journal doesn't make the
+    kit unrunnable.
+    """
+
+    first = LockAcquiredEvent(timestamp=_at(0), by="weekly-digest")
+    second = LockAcquiredEvent(timestamp=_at(1), by="bulk-ingest", reason="inbox")
+    state = replay_state([first, second])
+    assert state.held_lock is not None
+    assert state.held_lock.by == "bulk-ingest"
+    assert state.held_lock.reason == "inbox"
+
+
+def test_replay_state_release_without_prior_acquire_keeps_lock_none() -> None:
+    """A ``LockReleasedEvent`` against an unheld lock is harmless (matches SKILL.md)."""
+
+    state = replay_state([LockReleasedEvent(timestamp=_at(0), by="weekly-digest")])
+    assert state.held_lock is None
+
+
+def test_replay_state_release_clears_holder_even_when_by_differs() -> None:
+    """Mismatched-``by`` release clears the holder unconditionally.
+
+    Pins the contract the spec's stale-lock-reclaim path (Edge cases)
+    and the CLI's ``release --force`` flag (step 5) both depend on:
+    replay treats every ``LockReleasedEvent`` as a clear, regardless of
+    who held the lock. Step 4's ``transaction()`` and step 6's doctor
+    will lean on this rule; pinning it now means rediscovery doesn't
+    surface as a regression later.
+    """
+
+    acquired = LockAcquiredEvent(timestamp=_at(0), by="weekly-digest")
+    released_by_other = LockReleasedEvent(timestamp=_at(1), by="wiki-doctor")
+    state = replay_state([acquired, released_by_other])
+    assert state.held_lock is None
+
+
+def test_held_lock_acquired_at_is_the_acquire_events_timestamp() -> None:
+    """``HeldLock.acquired_at`` carries the acquire event's wall-clock timestamp.
+
+    Step 6's stale-lock check compares ``acquired_at`` against
+    ``datetime.now() - WIKI_LOCK_STALE_HOURS``; pin the source-of-truth
+    here so a refactor that re-derives ``acquired_at`` from "time replay
+    ran" silently breaks the stale-lock semantics.
+    """
+
+    acquire_at = datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
+    state = replay_state([LockAcquiredEvent(timestamp=acquire_at, by="weekly-digest")])
+    assert state.held_lock is not None
+    assert state.held_lock.acquired_at == acquire_at
+
+
+def test_old_journal_without_lock_events_replays_cleanly(tmp_path: Path) -> None:
+    """A journal written before this spec lands replays without raising.
+
+    Acceptance criterion from journal-locking spec §"Schema evolution":
+    additive schema changes must leave old journals readable.
+    """
+
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        '{"type":"vault.init","timestamp":"2026-05-01T00:00:00Z","by":"wiki-init",'
+        '"vault_name":"home","recipe":"family","schema_version":1}\n'
+        '{"type":"primitive.install","timestamp":"2026-05-01T00:00:00Z","by":"wiki-init",'
+        '"primitive":"core","version":"0.1.0"}\n'
+        '{"type":"page.write","timestamp":"2026-05-01T00:00:01Z","by":"core",'
+        '"path":"AGENTS.md","hash":"' + "a" * 64 + '"}\n',
+        encoding="utf-8",
+    )
+    events = read_events(journal)
+    state = replay_state(events)
+    assert state.held_lock is None
+    assert state.vault_name == "home"
+    assert state.installed_primitives == {"core": "0.1.0"}
+    assert "AGENTS.md" in state.page_writes
 
 
 # ---------------------------------------------------------------------------

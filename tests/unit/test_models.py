@@ -20,8 +20,11 @@ from llm_wiki_kit.models import (
     ConfigSetEvent,
     Contribution,
     Event,
+    HeldLock,
     IngestRoutedEvent,
     LintRunEvent,
+    LockAcquiredEvent,
+    LockReleasedEvent,
     ManagedRegionWriteEvent,
     OperationContract,
     OperationRunEvent,
@@ -260,6 +263,8 @@ EVENT_CLASSES_BY_TYPE: dict[str, type] = {
     "research.query": ResearchQueryEvent,
     "lint.run": LintRunEvent,
     "config.set": ConfigSetEvent,
+    "lock.acquired": LockAcquiredEvent,
+    "lock.released": LockReleasedEvent,
 }
 
 
@@ -315,6 +320,8 @@ EVENT_FIXTURES: dict[str, dict[str, object]] = {
     },
     "lint.run": {"status": "ok", "issues": 0},
     "config.set": {"key": "search_backend", "value": "ripgrep"},
+    "lock.acquired": {"reason": "2026-W20 digest"},
+    "lock.released": {},
 }
 
 
@@ -432,6 +439,54 @@ def test_ingest_routed_event_rejects_unknown_via_value() -> None:
         )
 
 
+def test_lock_event_round_trips_through_pydantic_union() -> None:
+    """Both lock events serialize through ``Event`` and survive a round trip.
+
+    Acceptance criterion from journal-locking spec §"Schema evolution".
+    """
+
+    acquired = LockAcquiredEvent(
+        timestamp=NOW,
+        by="weekly-digest",
+        reason="Build 2026-W20 digest",
+    )
+    released = LockReleasedEvent(timestamp=NOW, by="weekly-digest")
+
+    for original in (acquired, released):
+        text = EVENT_ADAPTER.dump_json(original).decode()
+        parsed = EVENT_ADAPTER.validate_json(text)
+        assert parsed == original
+        assert type(parsed) is type(original)
+
+
+def test_lock_acquired_event_reason_defaults_to_none() -> None:
+    e = LockAcquiredEvent(timestamp=NOW, by="weekly-digest")
+    assert e.reason is None
+    assert e.type == "lock.acquired"
+
+
+def test_lock_released_event_omits_reason_field_by_design() -> None:
+    """``LockReleasedEvent`` is deliberately asymmetric with ``LockAcquiredEvent``.
+
+    Release events carry no human-readable label because the acquire-side
+    ``reason`` is enough to identify the operation in the audit trail.
+    Pin both the schema-level rejection (caught by ``_StrictModel``'s
+    ``extra="forbid"``) and the field-list intent so a future symmetric
+    refactor fails this test before the schema changes silently.
+    """
+
+    assert "reason" not in LockReleasedEvent.model_fields
+    with pytest.raises(PydanticValidationError):
+        LockReleasedEvent.model_validate(
+            {
+                "type": "lock.released",
+                "timestamp": NOW.isoformat(),
+                "by": "weekly-digest",
+                "reason": "extra",
+            }
+        )
+
+
 # ---------------------------------------------------------------------------
 # VaultState
 # ---------------------------------------------------------------------------
@@ -447,6 +502,42 @@ def test_vault_state_defaults_are_empty() -> None:
     assert state.recent_operations == {}
     assert state.recent_research == []
     assert state.pending_proposals == {}
+    assert state.held_lock is None
+
+
+def test_held_lock_is_frozen() -> None:
+    """``HeldLock`` is a snapshot — replay never mutates it in place.
+
+    Asserts the project decision (`dataclass(frozen=True)`) as well as
+    the runtime enforcement, so a refactor to a mutable shape fails here
+    rather than letting silently-mutating consumer code through.
+    """
+
+    import dataclasses
+
+    assert dataclasses.is_dataclass(HeldLock)
+    assert HeldLock.__dataclass_params__.frozen is True  # type: ignore[attr-defined]
+
+    held = HeldLock(by="weekly-digest", acquired_at=NOW, reason="W20")
+    with pytest.raises(AttributeError):
+        held.by = "other"  # type: ignore[misc]
+
+
+def test_vault_state_round_trips_with_held_lock() -> None:
+    """``VaultState`` with a non-None ``held_lock`` survives JSON round-trip.
+
+    Guards the stdlib-dataclass-inside-Pydantic-model serialization shape
+    before step 6 (doctor) or a future ``wiki doctor --json`` flag depends
+    on it.
+    """
+
+    state = VaultState(held_lock=HeldLock(by="weekly-digest", acquired_at=NOW, reason="W20"))
+    restored = VaultState.model_validate_json(state.model_dump_json())
+    assert restored == state
+    assert restored.held_lock is not None
+    assert restored.held_lock.by == "weekly-digest"
+    assert restored.held_lock.acquired_at == NOW
+    assert restored.held_lock.reason == "W20"
 
 
 def test_vault_state_rejects_extra_fields() -> None:
