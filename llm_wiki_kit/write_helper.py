@@ -11,6 +11,13 @@ sidecar instead, appends a ``PageProposal`` event, and adds a
 does not index conflict files. The user's vault-side ``wiki-conflict``
 skill then helps them merge.
 
+``resolve_proposal`` is the documented bypass added by the ADR-0004
+2026-05-15 revision: after the user has reviewed both versions via the
+``wiki-conflict`` skill, it writes the confirmed merge directly,
+deletes the sidecar, and emits a ``PageWrite`` (new baseline) plus a
+``PageConflictResolved`` (audit). Nothing else in the kit bypasses the
+drift check.
+
 ``WriteResult`` is a plain ``enum.Enum`` per ADR-0005: it doesn't cross
 disk, so Pydantic would buy nothing here.
 """
@@ -23,7 +30,11 @@ from enum import Enum
 from pathlib import Path
 
 from llm_wiki_kit.journal import append_event, read_events
-from llm_wiki_kit.models import PageProposalEvent, PageWriteEvent
+from llm_wiki_kit.models import (
+    PageConflictResolvedEvent,
+    PageProposalEvent,
+    PageWriteEvent,
+)
 
 OBSIDIAN_IGNORE_PROPOSED_PATTERN = r"\.proposed$"
 
@@ -88,6 +99,53 @@ def safe_write(
     return WriteResult.PROPOSAL
 
 
+def resolve_proposal(
+    path: Path,
+    content: str,
+    by: str,
+    journal_path: Path,
+) -> None:
+    """Commit a user-mediated merge — the documented ``safe_write`` bypass.
+
+    The vault-side ``wiki-conflict`` skill calls this after helping the
+    user reconcile a ``.proposed`` sidecar with their on-disk edits.
+    ``content`` is the user's confirmed final version, which may be the
+    sidecar's content, the user's edits, or a third merged version —
+    ``resolve_proposal`` doesn't care which.
+
+    Writes ``content`` directly to ``path`` (bypassing the drift check
+    that ``safe_write`` enforces, per ADR-0004 §Mechanics step 6),
+    deletes ``<path>.proposed`` if present, and appends two journal
+    events: a ``PageWrite`` with the merged hash (the new baseline,
+    so subsequent ``safe_write`` calls see no drift) and a
+    ``PageConflictResolved`` for audit.
+    """
+
+    vault_root = _vault_root(journal_path)
+    abs_path = path if path.is_absolute() else (vault_root / path)
+    relative_path = _relative_to_vault(abs_path, vault_root)
+
+    new_bytes = content.encode("utf-8")
+    new_hash = _hash(new_bytes)
+    now = datetime.now(UTC)
+
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_bytes(new_bytes)
+
+    sidecar = abs_path.with_name(abs_path.name + ".proposed")
+    if sidecar.exists():
+        sidecar.unlink()
+
+    append_event(
+        journal_path,
+        PageWriteEvent(timestamp=now, by=by, path=relative_path, hash=new_hash),
+    )
+    append_event(
+        journal_path,
+        PageConflictResolvedEvent(timestamp=now, by=by, path=relative_path, hash=new_hash),
+    )
+
+
 def _vault_root(journal_path: Path) -> Path:
     # Canonical layout is `<vault_root>/.wiki.journal/journal.jsonl`.
     return journal_path.parent.parent
@@ -104,9 +162,9 @@ def _hash(data: bytes) -> str:
 def _baseline_hash(journal_path: Path, relative_path: str) -> str | None:
     """Return the hash of the most recent ``PageWrite`` event for the path.
 
-    Per ADR-0004 §Mechanics step 2, ``PageConflictResolved`` is treated as
-    audit-only at this layer; the conflict skill (Task 11+) is responsible
-    for re-establishing the baseline after a user-mediated merge.
+    ``PageConflictResolved`` is audit-only here; ``resolve_proposal``
+    re-establishes the baseline by emitting its own ``PageWrite``
+    alongside the audit event (ADR-0004 §Mechanics step 6).
     """
 
     for event in reversed(read_events(journal_path)):
