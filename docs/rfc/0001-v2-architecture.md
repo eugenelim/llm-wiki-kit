@@ -80,9 +80,11 @@ Three layers:
    into a coherent vault for one audience. Initial recipes: `family`,
    `work-os`, `personal`.
 
-### Foundational decisions (the five ADRs)
+### Foundational decisions (the seven ADRs)
 
-The shape rests on five load-bearing decisions, captured as ADRs:
+The shape rests on five load-bearing decisions captured up front, plus
+two follow-on ADRs that surfaced during implementation. All seven are
+Accepted.
 
 - **[ADR-0001](../adr/0001-stdlib-rendering-not-jinja.md)** — stdlib
   `str.format_map` for the handful of files that need interpolation,
@@ -93,7 +95,7 @@ The shape rests on five load-bearing decisions, captured as ADRs:
   truth for vault state. No separate manifest or lockfile.
 - **[ADR-0003](../adr/0003-managed-regions-for-shared-files.md)** —
   shared infrastructure files (`AGENTS.md`,
-  `frontmatter.schema.yaml`, `.claude/research-providers.yaml`) use
+  `frontmatter.schema.yaml`, `research-providers.yaml`) use
   `<!-- BEGIN MANAGED: id --> ... <!-- END MANAGED: id -->` markers so
   multiple primitives can contribute without clobbering user edits.
 - **[ADR-0004](../adr/0004-drift-detection-and-proposal-flow.md)** —
@@ -103,6 +105,17 @@ The shape rests on five load-bearing decisions, captured as ADRs:
 - **[ADR-0005](../adr/0005-pydantic-for-disk-bound-schemas.md)** —
   every type that crosses disk is a Pydantic v2 model; the journal
   uses Pydantic's native discriminated-union support.
+- **[ADR-0006](../adr/0006-additive-managed-region-contributions.md)**
+  (added Task 11) — when N primitives contribute to the same managed
+  region, the installer concatenates snippet files in topological
+  install order and writes the region once via `safe_write_region`.
+  Snippet filename is `<file>.<region>` (flat, no `/`).
+- **[ADR-0007](../adr/0007-shared-infra-config-files-at-vault-root.md)**
+  (added Task 18) — shared infrastructure config files contributed
+  to by managed-region snippets land at the vault root rather than
+  under `.claude/` or any subdirectory, codifying the aggregator's
+  no-`/` filename rule. Revisit when the aggregator gains sub-path
+  support.
 
 ### Runtime constraints
 
@@ -146,65 +159,88 @@ acceptance are in the migration plan artifact retained at
 `.context/attachments/pasted_text_2026-05-15_22-00-26.txt` for the full
 detail.
 
-#### Phase A — Foundation (sequential)
+**Progress to date (2026-05-17):** Phases A, B, C, and Phase D
+Tasks 16–18 have shipped (18 of 22 tasks complete). Phase D Task 19
+(Gemini + Semantic Scholar) and all of Phase E (Tasks 20–22) remain.
+Side artifacts that landed alongside: ADR-0006 (additive managed-
+region contributions, Task 11), ADR-0007 (shared infra config files
+at vault root, Task 18), and several living specs under
+`docs/specs/` for cross-cutting concerns surfaced mid-flight
+(`journal-locking/`, `journal-reader-cache/`, `safe-write-ordering/`,
+`wheel-bundled-assets/`).
 
-1. **Task 1 — Charter, RFC, ADRs.** AGENTS.md, CHARTER, this RFC, ADRs
-   0001–0005, doc templates. *(This task.)*
-1. **Task 2 — Python package skeleton.** `pyproject.toml`, `wiki` CLI
-   entry point with stubbed subcommands, CI workflow.
-1. **Task 3 — Pydantic models.** `models.py` with `Primitive`, `Recipe`,
-   the discriminated `Event` union (one class per event type),
-   `OperationContract`, plus `errors.py`.
-1. **Task 4 — Journal module.** `journal.py` with append / read /
-   replay over the validated event union.
-1. **Task 5 — Write helper.** `write_helper.py` with `safe_write` and
-   the proposal sidecar flow.
+#### Phase A — Foundation (sequential) — ✅ shipped
 
-#### Phase B — Render and load (sequential)
+1. **Task 1 — Charter, RFC, ADRs.** ✅ AGENTS.md, CHARTER, this RFC,
+   ADRs 0001–0005, doc templates.
+1. **Task 2 — Python package skeleton.** ✅ `pyproject.toml`, `wiki`
+   CLI entry point with stubbed subcommands, CI workflow.
+1. **Task 3 — Pydantic models.** ✅ `models.py` with `Primitive`,
+   `Recipe`, the discriminated `Event` union (one class per event
+   type), `OperationContract`, plus `errors.py`.
+1. **Task 4 — Journal module.** ✅ `journal.py` with append / read /
+   replay over the validated event union; gained `fcntl.flock`
+   serialization + `journal.transaction()` brackets per the
+   `journal-locking` spec.
+1. **Task 5 — Write helper.** ✅ `write_helper.py` with `safe_write`
+   and the proposal sidecar flow; later refined by the
+   `safe-write-ordering` spec (event-before-disk; adopt fast-path;
+   ADR-0004 §Revisions).
 
-6. **Task 6 — Managed-region parser.** `managed_regions.py` and
-   integration with `safe_write`.
-1. **Task 7 — Render module.** `render.py` with `SafeDict` and the
+#### Phase B — Render and load (sequential) — ✅ shipped
+
+6. **Task 6 — Managed-region parser.** ✅ `managed_regions.py` and
+   integration with `safe_write_region`.
+1. **Task 7 — Render module.** ✅ `render.py` with `SafeDict` and the
    `INTERPOLATED_FILES` allowlist.
-1. **Task 8 — Primitive loader + the `core` primitive.** First real
-   primitive, with all baseline skills.
-1. **Task 9 — Recipe loader.** `recipes.py` and the three initial
+1. **Task 8 — Primitive loader + the `core` primitive.** ✅ First
+   real primitive, with all baseline skills.
+1. **Task 9 — Recipe loader.** ✅ `recipes.py` and the three initial
    recipe files.
-1. **Task 10 — `wiki init` end-to-end.** First working command — a
-   vault with only the core primitive renders correctly.
+1. **Task 10 — `wiki init` end-to-end.** ✅ First working command —
+   a vault with only the core primitive renders correctly. (`--adopt`
+   deferred; see §"Unresolved questions".)
 
-#### Phase C — Primitives (parallelizable after Task 11)
+#### Phase C — Primitives (parallelizable after Task 11) — ✅ shipped
 
-11. **Task 11 — Three primitives end-to-end.** `people` (ontology),
-    `meeting` (content-type), `weekly-digest` (operation). Proves the
-    primitive model.
-1. **Task 12 — `wiki add` and `wiki doctor`.** Lifecycle commands.
-1. **Task 13 — Family-recipe primitives.** `food`, `medical`, `trips`,
-    `vendors` ontologies; `recipe`, `medical-record`, `trip-doc`,
-    `receipt`, `tax-document`, `action-item` content-types;
-    `meal-planning`, `trip-prep`, `follow-up-tracker`,
-    `medical-summary` operations. Biggest task — split across two
-    sessions if needed.
-1. **Task 14 — Work-os-recipe primitives.** `projects`, `domains`,
+11. **Task 11 — Three primitives end-to-end.** ✅ `people`
+    (ontology), `meeting` (content-type), `weekly-digest`
+    (operation). Surfaced ADR-0006 (additive managed-region
+    contributions). Proved the primitive model.
+1. **Task 12 — `wiki add` and `wiki doctor`.** ✅ Lifecycle commands.
+1. **Task 13 — Family-recipe primitives.** ✅ `food`, `medical`,
+    `trips`, `vendors` ontologies; `recipe`, `medical-record`,
+    `trip-doc`, `receipt`, `tax-document`, `action-item`
+    content-types; `meal-planning`, `trip-prep`, `follow-up-tracker`,
+    `medical-summary` operations.
+1. **Task 14 — Work-os-recipe primitives.** ✅ `projects`, `domains`,
     `customers` ontologies; `stakeholder-update`, `vendor-contract`,
     `customer-feedback`, `interview`, `decision` content-types;
     `stakeholder-map-refresh`, `action-item-rollup`,
     `renewal-reminders`, `onboarding-pack`, `status-synthesis`
     operations.
-1. **Task 15 — Personal recipe.** Mostly the recipe file plus identity
-    stubs; reuses primitives from the other two.
+1. **Task 15 — Personal recipe.** ✅ Recipe file plus identity stubs;
+    reuses primitives from the other two.
 
 #### Phase D — Runtime (sequential)
 
-16. **Task 16 — `wiki ingest` + orchestrator.** Content-type routing,
-    detection signals.
-1. **Task 17 — `wiki run` + operation execution.** Contract-driven.
-1. **Task 18 — Research dispatch + Perplexity.** Port v1 research code
-    from the v1 tree (now reachable via `git log main -- shared/skills/`
-    and `git log main -- scripts/`; see §"Pre-flight"). Becomes
-    `infrastructure:research` + `infrastructure:research-perplexity`.
+16. **Task 16 — `wiki ingest` + orchestrator.** ✅ Content-type
+    routing, detection signals (filename glob, file extension, URL
+    host, URL path). `--as <name>` override.
+1. **Task 17 — `wiki run` + operation execution.** ✅ Contract-driven
+    dispatch via `llm_wiki_kit.run`; `OperationRunEvent` records
+    every attempt (status `dispatched` / `invalid_args`).
+1. **Task 18 — Research dispatch + Perplexity.** ✅ In-process
+    dispatcher in `llm_wiki_kit/research/`; stdlib `urllib.request`
+    only (no new runtime deps); two opt-in infrastructure primitives
+    (`research` + `research-perplexity`); `journal.transaction`
+    wrap on `--out`; ADR-0007 codifies vault-root placement for the
+    shared config file.
 1. **Task 19 — Gemini Deep Research + Semantic Scholar providers.**
-    Complete the research-provider trio. All three are opt-in.
+    Complete the research-provider trio. All three are opt-in. The
+    `_PROVIDER_REGISTRY` extension point + the
+    "ResearchHTTPError vs WikiError" provider-author rule from
+    Task 18's spec are the contract Task 19 plugs into.
 
 #### Phase E — Quality and ship (sequential)
 
