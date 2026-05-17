@@ -29,10 +29,11 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
-from llm_wiki_kit import managed_regions
+from llm_wiki_kit import journal, managed_regions
 from llm_wiki_kit.errors import ManagedRegionError, WikiError
-from llm_wiki_kit.journal import append_event, read_events
+from llm_wiki_kit.journal import append_event
 from llm_wiki_kit.models import (
+    Event,
     ManagedRegionWriteEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
@@ -282,6 +283,26 @@ def resolve_proposal(
         sidecar.unlink()
 
 
+def _read_events_cached(journal_path: Path) -> list[Event]:
+    """Read events, consulting the active ``JournalReader`` if one is installed.
+
+    Falls through to ``read_events(journal_path)`` when no cache scope
+    is active (per `journal.use_journal_cache`) or when the active
+    reader tracks a different journal. The fall-through path keeps
+    today's "always fresh read" semantics for callers outside the
+    scope — tests calling ``safe_write`` directly retain identical
+    behavior. See ``docs/specs/journal-reader-cache/spec.md``.
+    """
+
+    reader = journal._CURRENT_READER.get()
+    if reader is not None and reader.journal_path.resolve() == journal_path.resolve():
+        return reader.events()
+    # Route through ``journal.read_events`` (not the import-time binding)
+    # so a test that monkeypatches ``journal.read_events`` still sees
+    # the call here. The two paths must agree on observability.
+    return journal.read_events(journal_path)
+
+
 def _known_regions_for_file(journal_path: Path, relative_file: str) -> list[str]:
     """Return the set of region ids ever written for ``relative_file``.
 
@@ -290,7 +311,7 @@ def _known_regions_for_file(journal_path: Path, relative_file: str) -> list[str]
     """
 
     seen: list[str] = []
-    for event in read_events(journal_path):
+    for event in _read_events_cached(journal_path):
         if isinstance(event, ManagedRegionWriteEvent) and event.file == relative_file:
             if event.region not in seen:
                 seen.append(event.region)
@@ -397,7 +418,7 @@ def safe_write_region(
 def _managed_region_baseline_hash(
     journal_path: Path, relative_file: str, region_id: str
 ) -> str | None:
-    for event in reversed(read_events(journal_path)):
+    for event in reversed(_read_events_cached(journal_path)):
         if (
             isinstance(event, ManagedRegionWriteEvent)
             and event.file == relative_file
@@ -463,7 +484,7 @@ def _baseline_hash(journal_path: Path, relative_path: str) -> str | None:
     alongside the audit event (ADR-0004 §Mechanics step 6).
     """
 
-    for event in reversed(read_events(journal_path)):
+    for event in reversed(_read_events_cached(journal_path)):
         if isinstance(event, PageWriteEvent) and event.path == relative_path:
             return event.hash
     return None

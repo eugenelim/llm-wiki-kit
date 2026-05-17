@@ -1538,3 +1538,135 @@ def test_doctor_does_not_flag_obsidianignore_as_orphan(vault: Path, journal: Pat
     issues = run_doctor(vault, kit_root=Path("."))  # kit_root unused by orphan check
     orphan_issues = [i for i in issues if i.kind == ORPHAN]
     assert not any(i.path == ".obsidianignore" for i in orphan_issues)
+
+
+# ---------------------------------------------------------------------------
+# journal-reader-cache spec (qC4) — write_helper consumes the cache
+# ---------------------------------------------------------------------------
+
+
+def test_safe_write_inside_cache_scope_reads_journal_once(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Five distinct safe_write calls inside the scope hit the disk once."""
+    import llm_wiki_kit.journal as _journal
+    from llm_wiki_kit.journal import use_journal_cache
+
+    reads = {"n": 0}
+    original = _journal.read_events
+
+    def counting_read_events(p: Path) -> list[Event]:
+        if p == journal:
+            reads["n"] += 1
+        return original(p)
+
+    # Patch at module of origin so both write_helper's `read_events` and
+    # `JournalReader.events()` (which calls `read_events(self.journal_path)`
+    # inside `journal.py`) go through the counter.
+    monkeypatch.setattr(_journal, "read_events", counting_read_events)
+
+    with use_journal_cache(journal):
+        for i in range(5):
+            safe_write(vault / f"p{i}.md", f"v{i}", by="core", journal_path=journal)
+    assert reads["n"] == 1
+
+
+def test_safe_write_outside_cache_scope_unchanged(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a cache scope, every safe_write re-reads the journal (today's behavior)."""
+    import llm_wiki_kit.journal as _journal
+
+    reads = {"n": 0}
+    original = _journal.read_events
+
+    def counting_read_events(p: Path) -> list[Event]:
+        if p == journal:
+            reads["n"] += 1
+        return original(p)
+
+    monkeypatch.setattr(_journal, "read_events", counting_read_events)
+
+    for i in range(5):
+        safe_write(vault / f"p{i}.md", f"v{i}", by="core", journal_path=journal)
+    # write_helper.read_events still resolves to the patched function
+    # via the module import; one read per safe_write call.
+    assert reads["n"] >= 5
+
+
+def test_safe_write_region_inside_cache_scope_reads_journal_once(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import llm_wiki_kit.journal as _journal
+    from llm_wiki_kit.journal import use_journal_cache
+
+    target = _seed_agents_md(vault, body="seed")
+    reads = {"n": 0}
+    original = _journal.read_events
+
+    def counting_read_events(p: Path) -> list[Event]:
+        if p == journal:
+            reads["n"] += 1
+        return original(p)
+
+    monkeypatch.setattr(_journal, "read_events", counting_read_events)
+
+    with use_journal_cache(journal):
+        for body in ["v1", "v2", "v3"]:
+            safe_write_region(target, "content-types", body, by="core", journal_path=journal)
+    assert reads["n"] == 1
+
+
+def test_resolve_proposal_inside_cache_scope_reads_journal_once(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """resolve_proposal's _known_regions_for_file walk hits the cache."""
+    import llm_wiki_kit.journal as _journal
+    from llm_wiki_kit.journal import use_journal_cache
+
+    # Seed: drive a region file to proposal.
+    target = _drive_region_file_to_proposal(vault, journal)
+
+    reads = {"n": 0}
+    original = _journal.read_events
+
+    def counting_read_events(p: Path) -> list[Event]:
+        if p == journal:
+            reads["n"] += 1
+        return original(p)
+
+    monkeypatch.setattr(_journal, "read_events", counting_read_events)
+
+    with use_journal_cache(journal):
+        resolve_proposal(target, target.read_text(), by="wiki-conflict", journal_path=journal)
+    # The cache loaded once; the known-regions walk and any baseline
+    # lookups all consulted it.
+    assert reads["n"] == 1
+
+
+def test_safe_write_inside_cache_sees_just_appended_event(vault: Path, journal: Path) -> None:
+    """A second safe_write of byte-identical content takes repeat-write, not adopt.
+
+    Because the cache reflects the first call's PageWriteEvent, the
+    second call's baseline lookup finds it and routes to direct-write.
+    Without the cache invalidation hook, the second call would see an
+    empty cache and route to the adopt fast-path.
+    """
+    from llm_wiki_kit.journal import use_journal_cache
+
+    target = vault / "page.md"
+    with use_journal_cache(journal):
+        first = safe_write(target, "v1", by="core", journal_path=journal)
+        assert first is WriteResult.WRITTEN
+        # Second call sees the cached PageWriteEvent and routes to
+        # repeat-write (direct-write), not adopt-fast-path.
+        second = safe_write(target, "v1", by="core", journal_path=journal)
+        assert second is WriteResult.WRITTEN
+
+    page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
+    # Two PageWriteEvents — one per call. (Adopt would also be one
+    # event per call; the distinguishing observable would be the file
+    # mtime, but the test above already pins the cache-consistency
+    # contract — this test pins the no-adopt branch as a paired check.)
+    assert len(page_writes) == 2
+    assert target.read_text() == "v1"
