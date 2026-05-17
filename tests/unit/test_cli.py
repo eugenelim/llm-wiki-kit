@@ -99,3 +99,81 @@ def test_init_requires_recipe() -> None:
 def test_journal_requires_subcommand() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["journal"])
+
+
+# ---------------------------------------------------------------------------
+# ``--verbose`` flag (qC1). The behavior the flag *enables* — a Python
+# traceback appended after the WikiError message line — lives in
+# ``tests/integration/test_verbose_flag.py``; these unit tests cover only
+# the parser shape so a future contributor doesn't drop the flag without
+# noticing.
+# ---------------------------------------------------------------------------
+
+
+def test_verbose_flag_default_is_off() -> None:
+    """No --verbose anywhere → ``getattr(args, "verbose", False)`` is False.
+
+    The parser uses ``default=argparse.SUPPRESS`` so the attribute is
+    absent unless the flag is passed; ``_is_verbose`` reads via getattr
+    with a False fallback.
+    """
+
+    args = build_parser().parse_args(["doctor"])
+    assert getattr(args, "verbose", False) is False
+
+
+def test_verbose_flag_is_parseable_before_subcommand() -> None:
+    args = build_parser().parse_args(["--verbose", "doctor"])
+    assert args.verbose is True
+
+
+def test_verbose_flag_is_parseable_after_subcommand() -> None:
+    """Both positions work because the flag lives on a shared parent parser.
+
+    Without the SUPPRESS default, the subparser would unconditionally set
+    ``args.verbose = False`` and erase a True value the top-level parser
+    had already written — this test pins the cross-parser handoff.
+    """
+
+    args = build_parser().parse_args(["doctor", "--verbose"])
+    assert args.verbose is True
+
+
+def test_top_level_help_lists_verbose(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--help"])
+    assert "--verbose" in capsys.readouterr().out
+
+
+_LEAF_SUBCOMMANDS: list[list[str]] = [
+    ["init"],
+    ["add"],
+    ["upgrade"],
+    ["doctor"],
+    ["ingest"],
+    ["resolve"],
+    ["lock", "acquire"],
+    ["lock", "release"],
+    ["run"],
+    ["research"],
+    ["search"],
+    ["journal", "tail"],
+    ["journal", "grep"],
+    ["journal", "explain"],
+]
+
+
+@pytest.mark.parametrize("argv", _LEAF_SUBCOMMANDS, ids=lambda a: " ".join(a))
+def test_every_leaf_subcommand_help_lists_verbose(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``wiki <leaf> --help`` surfaces ``--verbose`` for every leaf.
+
+    Guards the discoverability contract: a future contributor adding a
+    new leaf subcommand has to remember ``parents=[verbose_parent]``,
+    and this parametrised assertion fails loudly if they don't.
+    """
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([*argv, "--help"])
+    assert "--verbose" in capsys.readouterr().out

@@ -5,10 +5,21 @@ This module wires up the top-level ``wiki`` command and its subcommands.
 subcommand is still a stub that exits with status 1 and a "not yet
 implemented" notice. Real handlers land in later tasks per RFC-0001.
 
-The CLI boundary catches :class:`WikiError` and prints ``e.args[0]`` to
-``stderr`` with exit code 2 so users see a one-line message instead of a
-Python traceback. Stubs use exit 1 (sentinel for "not yet implemented"),
-which is a different category from a real error.
+The CLI boundary lives in :func:`main`: it catches :class:`WikiError` and
+prints ``str(exc)`` to ``stderr`` with exit code 2 so users see a one-line
+message instead of a Python traceback. ``--verbose`` (or ``WIKI_DEBUG``)
+appends the traceback after the message line for debugging. Stubs use
+exit 1 (sentinel for "not yet implemented"), which is a different category
+from a real error. Individual handlers let ``WikiError`` propagate; they
+should not re-catch and re-print it themselves — the boundary is in one
+place so a future handler can't forget the contract.
+
+``--verbose`` only adds a traceback when an exception actually propagates.
+A handful of error-shaped paths (``wiki lock acquire`` contention, ``wiki
+lock release`` ``--by`` mismatch, ``wiki ingest`` ambiguous / no-match)
+``print(..., file=sys.stderr)`` and ``return`` a non-zero exit code
+without raising — there is no live ``sys.exc_info()`` for those paths and
+``--verbose`` is by design a no-op on them.
 """
 
 from __future__ import annotations
@@ -16,7 +27,9 @@ from __future__ import annotations
 import argparse
 import errno
 import fcntl
+import os
 import sys
+import traceback
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -154,67 +167,62 @@ def _cmd_init(args: argparse.Namespace) -> int:
     doctor`` (Task 12) can reconcile.
     """
 
-    try:
-        target = Path(args.path).resolve()
+    target = Path(args.path).resolve()
 
-        if target.exists() and target.is_file():
-            raise WikiError(f"target path is a file, not a directory: {target}")
-        if target.exists() and any(target.iterdir()):
-            raise WikiError(
-                f"target directory is not empty: {target}\n"
-                "wiki init refuses to render over existing files. "
-                "Choose an empty directory or remove its contents first."
-            )
-
-        recipes_dir, core_dir, templates_dir = _kit_paths()
-        recipe = load_recipe(recipes_dir / f"{args.recipe}.yaml")
-        catalog: list[Primitive] = [load_primitive(core_dir)]
-        catalog.extend(discover_primitives(templates_dir))
-        ordered = resolve_recipe_primitives(recipe, catalog)
-
-        # Pre-flight: every primitive's contribution shape must match its
-        # on-disk ``regions/`` directory before any state-changing write.
-        # ADR-0006 §Mechanics step 6 — fail loudly, not half-installed.
-        sources: dict[str, Path] = {
-            primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
-            for primitive in ordered
-        }
-        for primitive in ordered:
-            validate_contributions(primitive, sources[primitive.name])
-
-        target.mkdir(parents=True, exist_ok=True)
-        journal_path = target / ".wiki.journal" / "journal.jsonl"
-        vault_name = target.name
-        context = _build_context(recipe, vault_name)
-        now = datetime.now(UTC)
-
-        append_event(
-            journal_path,
-            VaultInitEvent(
-                timestamp=now,
-                by=INSTALL_VEHICLE_INIT,
-                vault_name=vault_name,
-                recipe=recipe.name,
-            ),
+    if target.exists() and target.is_file():
+        raise WikiError(f"target path is a file, not a directory: {target}")
+    if target.exists() and any(target.iterdir()):
+        raise WikiError(
+            f"target directory is not empty: {target}\n"
+            "wiki init refuses to render over existing files. "
+            "Choose an empty directory or remove its contents first."
         )
 
-        # Per-primitive render + the second-pass region aggregator
-        # (ADR-0006). ``install_primitives`` runs ``to_install`` ==
-        # ``all_installed`` for ``wiki init`` because every primitive in
-        # the closure is new to this vault.
-        install_primitives(
-            to_install=ordered,
-            all_installed=ordered,
-            sources=sources,
-            journal_path=journal_path,
-            context=context,
-            install_vehicle=INSTALL_VEHICLE_INIT,
-            now=now,
-        )
-    except WikiError as exc:
-        print(str(exc), file=sys.stderr)
-        return WIKI_ERROR_EXIT
+    recipes_dir, core_dir, templates_dir = _kit_paths()
+    recipe = load_recipe(recipes_dir / f"{args.recipe}.yaml")
+    catalog: list[Primitive] = [load_primitive(core_dir)]
+    catalog.extend(discover_primitives(templates_dir))
+    ordered = resolve_recipe_primitives(recipe, catalog)
 
+    # Pre-flight: every primitive's contribution shape must match its
+    # on-disk ``regions/`` directory before any state-changing write.
+    # ADR-0006 §Mechanics step 6 — fail loudly, not half-installed.
+    sources: dict[str, Path] = {
+        primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
+        for primitive in ordered
+    }
+    for primitive in ordered:
+        validate_contributions(primitive, sources[primitive.name])
+
+    target.mkdir(parents=True, exist_ok=True)
+    journal_path = target / ".wiki.journal" / "journal.jsonl"
+    vault_name = target.name
+    context = _build_context(recipe, vault_name)
+    now = datetime.now(UTC)
+
+    append_event(
+        journal_path,
+        VaultInitEvent(
+            timestamp=now,
+            by=INSTALL_VEHICLE_INIT,
+            vault_name=vault_name,
+            recipe=recipe.name,
+        ),
+    )
+
+    # Per-primitive render + the second-pass region aggregator
+    # (ADR-0006). ``install_primitives`` runs ``to_install`` ==
+    # ``all_installed`` for ``wiki init`` because every primitive in
+    # the closure is new to this vault.
+    install_primitives(
+        to_install=ordered,
+        all_installed=ordered,
+        sources=sources,
+        journal_path=journal_path,
+        context=context,
+        install_vehicle=INSTALL_VEHICLE_INIT,
+        now=now,
+    )
     return 0
 
 
@@ -284,90 +292,84 @@ def _cmd_add(args: argparse.Namespace) -> int:
     callout).
     """
 
-    try:
-        kind, name = _parse_primitive_spec(args.primitive)
+    kind, name = _parse_primitive_spec(args.primitive)
 
-        vault_root = Path.cwd().resolve()
-        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
-        if not journal_path.is_file():
-            raise WikiError(
-                f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
-                "Run `wiki init <path> --recipe <name>` first."
-            )
-
-        state = replay_state(read_events(journal_path))
-        if state.recipe is None or state.vault_name is None:
-            raise WikiError(
-                f"vault at {vault_root} has no vault.init event; "
-                "the journal is incomplete and cannot be extended"
-            )
-
-        recipes_dir, core_dir, templates_dir = _kit_paths()
-        catalog: list[Primitive] = [load_primitive(core_dir)]
-        catalog.extend(discover_primitives(templates_dir))
-        by_name: dict[str, Primitive] = {p.name: p for p in catalog}
-
-        target_dir = templates_dir / _KIND_DIRS[kind] / name
-        target = load_primitive(target_dir)
-        if target.kind != kind:
-            raise WikiError(
-                f"primitive '{name}' has kind '{target.kind.value}', "
-                f"not '{kind.value}' as specified"
-            )
-
-        closure_ordered = resolve_dependencies(_expand_closure(target, by_name))
-        to_install = [
-            primitive
-            for primitive in closure_ordered
-            if primitive.name not in state.installed_primitives
-        ]
-
-        if not to_install:
-            # Idempotent re-add: the journal already records every
-            # primitive in the closure as installed. No new events, no
-            # disk writes — the aggregator pass would emit redundant
-            # ``managed_region.write`` events for unchanged bodies.
-            return 0
-
-        # The aggregator needs every currently-installed primitive plus
-        # the new ones, in topological order, with a source dir for each.
-        all_installed_names = set(state.installed_primitives) | {p.name for p in to_install}
-        try:
-            all_installed_primitives = [by_name[n] for n in all_installed_names]
-        except KeyError as exc:
-            raise WikiError(
-                f"installed primitive '{exc.args[0]}' is not in the kit's "
-                "catalog; run `wiki doctor` to inspect"
-            ) from exc
-        all_installed_ordered = resolve_dependencies(all_installed_primitives)
-
-        sources: dict[str, Path] = {
-            primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
-            for primitive in all_installed_ordered
-        }
-
-        # Pre-flight: validate before any state-changing write
-        # (ADR-0006 §Mechanics step 6).
-        for primitive in to_install:
-            validate_contributions(primitive, sources[primitive.name])
-
-        recipe = load_recipe(recipes_dir / f"{state.recipe}.yaml")
-        context = _build_context(recipe, state.vault_name)
-        now = datetime.now(UTC)
-
-        install_primitives(
-            to_install=to_install,
-            all_installed=all_installed_ordered,
-            sources=sources,
-            journal_path=journal_path,
-            context=context,
-            install_vehicle=INSTALL_VEHICLE_ADD,
-            now=now,
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
         )
-    except WikiError as exc:
-        print(str(exc), file=sys.stderr)
-        return WIKI_ERROR_EXIT
 
+    state = replay_state(read_events(journal_path))
+    if state.recipe is None or state.vault_name is None:
+        raise WikiError(
+            f"vault at {vault_root} has no vault.init event; "
+            "the journal is incomplete and cannot be extended"
+        )
+
+    recipes_dir, core_dir, templates_dir = _kit_paths()
+    catalog: list[Primitive] = [load_primitive(core_dir)]
+    catalog.extend(discover_primitives(templates_dir))
+    by_name: dict[str, Primitive] = {p.name: p for p in catalog}
+
+    target_dir = templates_dir / _KIND_DIRS[kind] / name
+    target = load_primitive(target_dir)
+    if target.kind != kind:
+        raise WikiError(
+            f"primitive '{name}' has kind '{target.kind.value}', not '{kind.value}' as specified"
+        )
+
+    closure_ordered = resolve_dependencies(_expand_closure(target, by_name))
+    to_install = [
+        primitive
+        for primitive in closure_ordered
+        if primitive.name not in state.installed_primitives
+    ]
+
+    if not to_install:
+        # Idempotent re-add: the journal already records every
+        # primitive in the closure as installed. No new events, no
+        # disk writes — the aggregator pass would emit redundant
+        # ``managed_region.write`` events for unchanged bodies.
+        return 0
+
+    # The aggregator needs every currently-installed primitive plus
+    # the new ones, in topological order, with a source dir for each.
+    all_installed_names = set(state.installed_primitives) | {p.name for p in to_install}
+    try:
+        all_installed_primitives = [by_name[n] for n in all_installed_names]
+    except KeyError as exc:
+        raise WikiError(
+            f"installed primitive '{exc.args[0]}' is not in the kit's "
+            "catalog; run `wiki doctor` to inspect"
+        ) from exc
+    all_installed_ordered = resolve_dependencies(all_installed_primitives)
+
+    sources: dict[str, Path] = {
+        primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
+        for primitive in all_installed_ordered
+    }
+
+    # Pre-flight: validate before any state-changing write
+    # (ADR-0006 §Mechanics step 6).
+    for primitive in to_install:
+        validate_contributions(primitive, sources[primitive.name])
+
+    recipe = load_recipe(recipes_dir / f"{state.recipe}.yaml")
+    context = _build_context(recipe, state.vault_name)
+    now = datetime.now(UTC)
+
+    install_primitives(
+        to_install=to_install,
+        all_installed=all_installed_ordered,
+        sources=sources,
+        journal_path=journal_path,
+        context=context,
+        install_vehicle=INSTALL_VEHICLE_ADD,
+        now=now,
+    )
     return 0
 
 
@@ -385,16 +387,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     output is deferred to a later task.
     """
 
-    try:
-        vault_root = Path.cwd().resolve()
-        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
-        if not journal_path.is_file():
-            raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
 
-        issues = run_doctor(vault_root, _KIT_ROOT)
-    except WikiError as exc:
-        print(str(exc), file=sys.stderr)
-        return WIKI_ERROR_EXIT
+    issues = run_doctor(vault_root, _KIT_ROOT)
 
     for issue in issues:
         print(format_issue(issue))
@@ -414,30 +412,26 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     that when the user's session picks up the journaled route.
     """
 
-    try:
-        vault_root = Path.cwd().resolve()
-        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
-        if not journal_path.is_file():
-            raise WikiError(
-                f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
-                "Run `wiki init <path> --recipe <name>` first."
-            )
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
 
-        state = replay_state(read_events(journal_path))
+    state = replay_state(read_events(journal_path))
 
-        _, core_dir, templates_dir = _kit_paths()
-        catalog: list[Primitive] = [load_primitive(core_dir)]
-        catalog.extend(discover_primitives(templates_dir))
-        installed = [p for p in catalog if p.name in state.installed_primitives]
+    _, core_dir, templates_dir = _kit_paths()
+    catalog: list[Primitive] = [load_primitive(core_dir)]
+    catalog.extend(discover_primitives(templates_dir))
+    installed = [p for p in catalog if p.name in state.installed_primitives]
 
-        result = route(args.source, installed, as_override=args.as_content_type)
+    result = route(args.source, installed, as_override=args.as_content_type)
 
-        now = datetime.now(UTC)
-        event = _ingest_event_from_result(args.source, result, now)
-        append_event(journal_path, event)
-    except WikiError as exc:
-        print(str(exc), file=sys.stderr)
-        return WIKI_ERROR_EXIT
+    now = datetime.now(UTC)
+    event = _ingest_event_from_result(args.source, result, now)
+    append_event(journal_path, event)
 
     if isinstance(result, Routed):
         print(
@@ -522,45 +516,41 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
 
     from llm_wiki_kit.write_helper import resolve_proposal
 
-    try:
-        vault_root = Path.cwd().resolve()
-        journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
-        if not journal_path.is_file():
-            raise WikiError(
-                f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
-                "Run `wiki init <path> --recipe <name>` first."
-            )
-
-        path = Path(args.path)
-        abs_path = path if path.is_absolute() else (vault_root / path)
-
-        if args.keep:
-            if not abs_path.is_file():
-                raise WikiError(
-                    f"--keep needs '{path}' to exist on disk (the user's version "
-                    "to re-baseline to); the file is missing"
-                )
-            content = abs_path.read_text(encoding="utf-8")
-        elif args.accept:
-            sidecar = abs_path.with_name(abs_path.name + ".proposed")
-            if not sidecar.is_file():
-                raise WikiError(
-                    f"--accept needs '{sidecar.relative_to(vault_root)}' on disk "
-                    "but no .proposed sidecar is present for this path"
-                )
-            content = sidecar.read_text(encoding="utf-8")
-        else:
-            content = sys.stdin.read()
-
-        resolve_proposal(
-            path=abs_path,
-            content=content,
-            by=RESOLVE_VEHICLE,
-            journal_path=journal_path,
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
         )
-    except WikiError as exc:
-        print(str(exc), file=sys.stderr)
-        return WIKI_ERROR_EXIT
+
+    path = Path(args.path)
+    abs_path = path if path.is_absolute() else (vault_root / path)
+
+    if args.keep:
+        if not abs_path.is_file():
+            raise WikiError(
+                f"--keep needs '{path}' to exist on disk (the user's version "
+                "to re-baseline to); the file is missing"
+            )
+        content = abs_path.read_text(encoding="utf-8")
+    elif args.accept:
+        sidecar = abs_path.with_name(abs_path.name + ".proposed")
+        if not sidecar.is_file():
+            raise WikiError(
+                f"--accept needs '{sidecar.relative_to(vault_root)}' on disk "
+                "but no .proposed sidecar is present for this path"
+            )
+        content = sidecar.read_text(encoding="utf-8")
+    else:
+        content = sys.stdin.read()
+
+    resolve_proposal(
+        path=abs_path,
+        content=content,
+        by=RESOLVE_VEHICLE,
+        journal_path=journal_path,
+    )
 
     print(f"Resolved {args.path}.")
     return 0
@@ -680,106 +670,101 @@ def _cmd_lock_acquire(args: argparse.Namespace) -> int:
     every other CLI handler.
     """
 
-    try:
-        # Reject newlines in --by/--reason: the holder file is a
-        # line-oriented format (``<by>\n<iso>\n[<reason>]``) and embedded
-        # newlines would corrupt subsequent reads — including
-        # ``wiki doctor``'s stale-lock check. Reject at the boundary
-        # rather than escape, so the audit values match what the user
-        # typed.
-        if "\n" in args.by or "\r" in args.by:
-            raise WikiError("--by must not contain newline characters")
-        if args.reason is not None and ("\n" in args.reason or "\r" in args.reason):
-            raise WikiError("--reason must not contain newline characters")
+    # Reject newlines in --by/--reason: the holder file is a
+    # line-oriented format (``<by>\n<iso>\n[<reason>]``) and embedded
+    # newlines would corrupt subsequent reads — including
+    # ``wiki doctor``'s stale-lock check. Reject at the boundary
+    # rather than escape, so the audit values match what the user
+    # typed.
+    if "\n" in args.by or "\r" in args.by:
+        raise WikiError("--by must not contain newline characters")
+    if args.reason is not None and ("\n" in args.reason or "\r" in args.reason):
+        raise WikiError("--reason must not contain newline characters")
 
-        journal_path = _lock_journal_path()
+    journal_path = _lock_journal_path()
 
-        holder_path = journal_path.parent / "lock"
-        existing = _read_holder_file(holder_path)
-        reclaimed_from: str | None = None
-        if existing is not None:
-            probe = _probe_lock_contention(journal_path)
-            if probe is True:
-                by_holder, ts_holder, _ = existing
-                print(
-                    f"lock held by {by_holder} since {ts_holder}",
-                    file=sys.stderr,
-                )
-                return LOCK_HELD_EXIT
-            if probe is False:
-                try:
-                    append_event(
-                        journal_path,
-                        LockReleasedEvent(
-                            timestamp=datetime.now(UTC),
-                            by=STALE_LOCK_RECLAIM_BY,
-                            reason=STALE_LOCK_RECLAIM_REASON,
-                        ),
-                        nonblocking=True,
-                    )
-                    reclaimed_from = existing[0]
-                except LockUnavailableError:
-                    # A competitor won between the probe and our reclaim
-                    # write. Don't hang on a blocking flock; surface the
-                    # new holder and exit.
-                    current = _read_holder_file(holder_path)
-                    if current is not None:
-                        by_h, ts_h, _ = current
-                        print(f"lock held by {by_h} since {ts_h}", file=sys.stderr)
-                    else:
-                        print(
-                            "lock held by another process (holder file missing)",
-                            file=sys.stderr,
-                        )
-                    return LOCK_HELD_EXIT
-            # probe is None: unsupported FS. Skip the reclaim audit
-            # (the spec's "stale" claim would be a lie) and fall
-            # through to the non-blocking transaction.
-
-        try:
-            with transaction(
-                journal_path,
-                by=args.by,
-                reason=args.reason,
-                persist=True,
-                nonblocking=True,
-            ):
-                # No body: ``persist=True`` stashes the fd on clean exit so
-                # the OS lock outlives this generator. The holder file and
-                # ``LockAcquiredEvent`` are written by ``transaction()``.
-                pass
-        except LockUnavailableError:
-            # Race: a competitor won between our probe (or initial check)
-            # and the transaction's LOCK_NB. Re-read the holder file to
-            # name whoever's holding it now, then exit with the contention
-            # code rather than blocking.
-            current = _read_holder_file(holder_path)
-            if current is not None:
-                by_h, ts_h, _ = current
-                print(f"lock held by {by_h} since {ts_h}", file=sys.stderr)
-            else:
-                print(
-                    "lock held by another process (holder file missing)",
-                    file=sys.stderr,
-                )
+    holder_path = journal_path.parent / "lock"
+    existing = _read_holder_file(holder_path)
+    reclaimed_from: str | None = None
+    if existing is not None:
+        probe = _probe_lock_contention(journal_path)
+        if probe is True:
+            by_holder, ts_holder, _ = existing
+            print(
+                f"lock held by {by_holder} since {ts_holder}",
+                file=sys.stderr,
+            )
             return LOCK_HELD_EXIT
+        if probe is False:
+            try:
+                append_event(
+                    journal_path,
+                    LockReleasedEvent(
+                        timestamp=datetime.now(UTC),
+                        by=STALE_LOCK_RECLAIM_BY,
+                        reason=STALE_LOCK_RECLAIM_REASON,
+                    ),
+                    nonblocking=True,
+                )
+                reclaimed_from = existing[0]
+            except LockUnavailableError:
+                # A competitor won between the probe and our reclaim
+                # write. Don't hang on a blocking flock; surface the
+                # new holder and exit.
+                current = _read_holder_file(holder_path)
+                if current is not None:
+                    by_h, ts_h, _ = current
+                    print(f"lock held by {by_h} since {ts_h}", file=sys.stderr)
+                else:
+                    print(
+                        "lock held by another process (holder file missing)",
+                        file=sys.stderr,
+                    )
+                return LOCK_HELD_EXIT
+        # probe is None: unsupported FS. Skip the reclaim audit
+        # (the spec's "stale" claim would be a lie) and fall
+        # through to the non-blocking transaction.
 
-        # One-line confirmation on the happy path so an operator running
-        # ``wiki lock acquire`` interactively sees that the hold landed
-        # (the command otherwise exits 0 silently). The reclaim suffix
-        # surfaces what was journal-only: that we just deemed a prior
-        # holder stale.
-        suffix = (
-            f" (reclaimed stale lock previously held by {reclaimed_from})"
-            if reclaimed_from is not None
-            else ""
-        )
-        reason_part = f", reason: {args.reason}" if args.reason else ""
-        print(f"Acquired lock for {args.by}{reason_part}.{suffix}")
-    except WikiError as exc:
-        print(str(exc), file=sys.stderr)
-        return WIKI_ERROR_EXIT
+    try:
+        with transaction(
+            journal_path,
+            by=args.by,
+            reason=args.reason,
+            persist=True,
+            nonblocking=True,
+        ):
+            # No body: ``persist=True`` stashes the fd on clean exit so
+            # the OS lock outlives this generator. The holder file and
+            # ``LockAcquiredEvent`` are written by ``transaction()``.
+            pass
+    except LockUnavailableError:
+        # Race: a competitor won between our probe (or initial check)
+        # and the transaction's LOCK_NB. Re-read the holder file to
+        # name whoever's holding it now, then exit with the contention
+        # code rather than blocking.
+        current = _read_holder_file(holder_path)
+        if current is not None:
+            by_h, ts_h, _ = current
+            print(f"lock held by {by_h} since {ts_h}", file=sys.stderr)
+        else:
+            print(
+                "lock held by another process (holder file missing)",
+                file=sys.stderr,
+            )
+        return LOCK_HELD_EXIT
 
+    # One-line confirmation on the happy path so an operator running
+    # ``wiki lock acquire`` interactively sees that the hold landed
+    # (the command otherwise exits 0 silently). The reclaim suffix
+    # surfaces what was journal-only: that we just deemed a prior
+    # holder stale.
+    suffix = (
+        f" (reclaimed stale lock previously held by {reclaimed_from})"
+        if reclaimed_from is not None
+        else ""
+    )
+    reason_part = f", reason: {args.reason}" if args.reason else ""
+    print(f"Acquired lock for {args.by}{reason_part}.{suffix}")
     return 0
 
 
@@ -802,49 +787,45 @@ def _cmd_lock_release(args: argparse.Namespace) -> int:
     ``wiki journal tail`` wants to see.
     """
 
-    try:
-        journal_path = _lock_journal_path()
+    journal_path = _lock_journal_path()
 
-        holder_path = journal_path.parent / "lock"
-        existing = _read_holder_file(holder_path)
-        if existing is None:
-            # No holder file → silent zero. The spec accepts a
-            # release-against-nothing as harmless.
-            return 0
+    holder_path = journal_path.parent / "lock"
+    existing = _read_holder_file(holder_path)
+    if existing is None:
+        # No holder file → silent zero. The spec accepts a
+        # release-against-nothing as harmless.
+        return 0
 
-        by_holder, ts_holder, _reason_holder = existing
-        if args.by is not None and args.by != by_holder and not args.force:
-            print(
-                f"lock held by {by_holder} since {ts_holder}; pass --force to override",
-                file=sys.stderr,
-            )
-            return WIKI_ERROR_EXIT
-
-        # Drop any persisted fd this process is still holding before the
-        # release-event append. Without this, ``append_event``'s
-        # ``LOCK_EX`` would (on BSD-flock semantics) block on the same
-        # process's own held fd. Cross-process release paths see an
-        # empty stash; ``_release_persisted_fd`` is a no-op there.
-        _release_persisted_fd(journal_path)
-
-        release_by = args.by if args.by is not None else by_holder
-        append_event(
-            journal_path,
-            LockReleasedEvent(
-                timestamp=datetime.now(UTC),
-                by=release_by,
-            ),
+    by_holder, ts_holder, _reason_holder = existing
+    if args.by is not None and args.by != by_holder and not args.force:
+        print(
+            f"lock held by {by_holder} since {ts_holder}; pass --force to override",
+            file=sys.stderr,
         )
-
-        try:
-            holder_path.unlink()
-        except FileNotFoundError:
-            # Already gone — desired end-state, race with another
-            # release is fine.
-            pass
-    except WikiError as exc:
-        print(str(exc), file=sys.stderr)
         return WIKI_ERROR_EXIT
+
+    # Drop any persisted fd this process is still holding before the
+    # release-event append. Without this, ``append_event``'s
+    # ``LOCK_EX`` would (on BSD-flock semantics) block on the same
+    # process's own held fd. Cross-process release paths see an
+    # empty stash; ``_release_persisted_fd`` is a no-op there.
+    _release_persisted_fd(journal_path)
+
+    release_by = args.by if args.by is not None else by_holder
+    append_event(
+        journal_path,
+        LockReleasedEvent(
+            timestamp=datetime.now(UTC),
+            by=release_by,
+        ),
+    )
+
+    try:
+        holder_path.unlink()
+    except FileNotFoundError:
+        # Already gone — desired end-state, race with another
+        # release is fine.
+        pass
 
     return 0
 
@@ -874,9 +855,31 @@ def _cmd_journal_explain(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # ``--verbose`` lives on a parent parser so it appears in both
+    # ``wiki --help`` and every ``wiki <cmd> --help``, and so it works
+    # either side of the subcommand (``wiki --verbose init …`` or
+    # ``wiki init --verbose …``). ``default=argparse.SUPPRESS`` is the
+    # critical bit: without it, the subparser's argparse-default would
+    # overwrite a True value the top-level parser had already set on the
+    # namespace — the classic "shared flag erased by subparser default"
+    # argparse footgun. ``_is_verbose`` reads with ``getattr(..., False)``
+    # so the unset case stays clean.
+    verbose_parent = argparse.ArgumentParser(add_help=False)
+    verbose_parent.add_argument(
+        "--verbose",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "Print a Python traceback after the error message when a command "
+            "fails. Equivalent to setting WIKI_DEBUG to one of 1, true, yes, "
+            "or on (case-insensitive) in the environment."
+        ),
+    )
+
     parser = argparse.ArgumentParser(
         prog="wiki",
         description="Build and maintain an LLM-readable markdown wiki.",
+        parents=[verbose_parent],
     )
     parser.add_argument(
         "--version",
@@ -887,14 +890,22 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
     subparsers.required = True
 
-    init = subparsers.add_parser("init", help="Create a new vault from a recipe.")
+    init = subparsers.add_parser(
+        "init",
+        parents=[verbose_parent],
+        help="Create a new vault from a recipe.",
+    )
     init.add_argument("path", help="Directory to create the vault in.")
     init.add_argument(
         "--recipe", required=True, help="Recipe name (e.g. family, work-os, personal)."
     )
     init.set_defaults(func=_cmd_init)
 
-    add = subparsers.add_parser("add", help="Install a primitive into the current vault.")
+    add = subparsers.add_parser(
+        "add",
+        parents=[verbose_parent],
+        help="Install a primitive into the current vault.",
+    )
     add.add_argument(
         "primitive",
         help="Primitive in the form <kind>:<name> (e.g. content-type:interview).",
@@ -902,7 +913,9 @@ def build_parser() -> argparse.ArgumentParser:
     add.set_defaults(func=_cmd_add)
 
     upgrade = subparsers.add_parser(
-        "upgrade", help="Upgrade installed primitives to their latest versions."
+        "upgrade",
+        parents=[verbose_parent],
+        help="Upgrade installed primitives to their latest versions.",
     )
     upgrade.add_argument(
         "--primitive",
@@ -910,11 +923,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade.set_defaults(func=_cmd_upgrade)
 
-    doctor = subparsers.add_parser("doctor", help="Validate vault state against the journal.")
+    doctor = subparsers.add_parser(
+        "doctor",
+        parents=[verbose_parent],
+        help="Validate vault state against the journal.",
+    )
     doctor.set_defaults(func=_cmd_doctor)
 
     ingest = subparsers.add_parser(
-        "ingest", help="Route source material to the right content-type ingester."
+        "ingest",
+        parents=[verbose_parent],
+        help="Route source material to the right content-type ingester.",
     )
     ingest.add_argument("source", help="Path or URL to ingest, or '-' for stdin.")
     ingest.add_argument(
@@ -928,6 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     resolve = subparsers.add_parser(
         "resolve",
+        parents=[verbose_parent],
         help="Commit a user-mediated merge of a <path>.proposed sidecar.",
     )
     resolve.add_argument(
@@ -955,6 +975,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     lock_acquire = lock_sub.add_parser(
         "acquire",
+        parents=[verbose_parent],
         help="Acquire the journal lock; exits 3 if another holder is in possession.",
     )
     lock_acquire.add_argument(
@@ -971,6 +992,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     lock_release = lock_sub.add_parser(
         "release",
+        parents=[verbose_parent],
         help="Release the journal lock; silent no-op if no holder file is present.",
     )
     lock_release.add_argument(
@@ -985,17 +1007,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lock_release.set_defaults(func=_cmd_lock_release)
 
-    run = subparsers.add_parser("run", help="Run a named operation.")
+    run = subparsers.add_parser(
+        "run",
+        parents=[verbose_parent],
+        help="Run a named operation.",
+    )
     run.add_argument("operation", help="Operation name (e.g. weekly-digest).")
     run.set_defaults(func=_cmd_run)
 
     research = subparsers.add_parser(
-        "research", help="Dispatch a query to a configured research provider."
+        "research",
+        parents=[verbose_parent],
+        help="Dispatch a query to a configured research provider.",
     )
     research.add_argument("query", help="The research query.")
     research.set_defaults(func=_cmd_research)
 
-    search = subparsers.add_parser("search", help="Search the vault (ripgrep / FTS5 backend).")
+    search = subparsers.add_parser(
+        "search",
+        parents=[verbose_parent],
+        help="Search the vault (ripgrep / FTS5 backend).",
+    )
     search.add_argument("query", help="The search query.")
     search.set_defaults(func=_cmd_search)
 
@@ -1003,18 +1035,28 @@ def build_parser() -> argparse.ArgumentParser:
     journal_sub = journal.add_subparsers(dest="journal_command", metavar="<subcommand>")
     journal_sub.required = True
 
-    journal_tail = journal_sub.add_parser("tail", help="Show the most recent events.")
+    journal_tail = journal_sub.add_parser(
+        "tail",
+        parents=[verbose_parent],
+        help="Show the most recent events.",
+    )
     journal_tail.add_argument(
         "-n", "--lines", type=int, default=10, help="Number of events to show."
     )
     journal_tail.set_defaults(func=_cmd_journal_tail)
 
-    journal_grep = journal_sub.add_parser("grep", help="Filter journal events by pattern.")
+    journal_grep = journal_sub.add_parser(
+        "grep",
+        parents=[verbose_parent],
+        help="Filter journal events by pattern.",
+    )
     journal_grep.add_argument("pattern", help="Pattern to match against event payloads.")
     journal_grep.set_defaults(func=_cmd_journal_grep)
 
     journal_explain = journal_sub.add_parser(
-        "explain", help="Explain a specific journal event in plain language."
+        "explain",
+        parents=[verbose_parent],
+        help="Explain a specific journal event in plain language.",
     )
     journal_explain.add_argument("event_id", help="Event ID to explain.")
     journal_explain.set_defaults(func=_cmd_journal_explain)
@@ -1022,11 +1064,42 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_WIKI_DEBUG_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+
+
+def _is_verbose(args: argparse.Namespace) -> bool:
+    """Return True if the user asked for tracebacks on error.
+
+    Either ``--verbose`` on the command line OR ``WIKI_DEBUG`` set to one
+    of the documented truthy spellings — ``1``, ``true``, ``yes``, ``on``
+    (case-insensitive, whitespace-trimmed). Anything else — ``0``, the
+    empty string, ``false``, ``no``, ``off``, an unrecognised word — reads
+    as off. We allow-list rather than deny-list so a wrapper script that
+    spells "disabled" as ``WIKI_DEBUG=false`` gets the obvious meaning
+    instead of the opposite.
+    """
+
+    if getattr(args, "verbose", False):
+        return True
+    return os.environ.get("WIKI_DEBUG", "").strip().lower() in _WIKI_DEBUG_TRUTHY
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     func = args.func
-    return int(func(args))
+    try:
+        return int(func(args))
+    except WikiError as exc:
+        # The CLI boundary: one human-readable line on stderr by default,
+        # the full traceback appended after it when the user asked for
+        # debugging detail. Stays as a single boundary so a future
+        # subcommand can't forget the contract — every handler is free
+        # to ``raise WikiError(...)`` and the message lands here.
+        print(str(exc), file=sys.stderr)
+        if _is_verbose(args):
+            traceback.print_exc(file=sys.stderr)
+        return WIKI_ERROR_EXIT
 
 
 if __name__ == "__main__":
