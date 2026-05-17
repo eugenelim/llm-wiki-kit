@@ -9,6 +9,10 @@ description: >-
 requires:
   - people
   - projects
+# No routing: block — manual-only. Stakeholder updates arrive as pasted
+# status notes, email drafts, or slide bullets with no reliable filename
+# or extension signal; reach this primitive via
+# `wiki ingest --as stakeholder-update`.
 contributes_to:
   - file: frontmatter.schema.yaml
     region: types
