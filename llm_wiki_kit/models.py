@@ -219,6 +219,10 @@ class PageConflictResolvedEvent(_EventBase):
     path: str
     hash: str
     hash_algo: str = "sha256"
+    # Optional managed-region label for per-region audit (retro-review C1).
+    # ``None`` for whole-file resolves; older journal lines replay unchanged
+    # under ADR-0002 §Negative's additive-schema rule.
+    region: str | None = None
 
 
 class OperationRunEvent(_EventBase):

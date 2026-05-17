@@ -406,10 +406,10 @@ checkboxes below; the plan adds no tests that aren't listed here.
   blocker, and gets its own spec/PR. This spec preserves the
   module-level seam *to leave qC8's door open*, not to keep
   module-level state forever.
-- **Not deriving `doctor.KIT_OWNED_DIRS` / `KIT_OWNED_FILES`
-  from journaled writes.** That's `qC10` + `C6` from the same
-  retro tracker; this spec doesn't touch `doctor.py`'s static
-  tuples.
+- **Not touching `doctor.py`'s orphan-territory derivation.**
+  `qC10` + `C6` (deriving the kit-owned set from `state.page_writes`)
+  ships in its own retro-cleanup PR; this spec leaves `doctor.py`
+  alone.
 - **Not supporting zipapp / zipped-wheel installs.**
   `importlib.resources` can read them, but the kit's downstream
   callers expect filesystem `Path`s and many `is_dir()` /

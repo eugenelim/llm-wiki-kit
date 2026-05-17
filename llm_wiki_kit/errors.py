@@ -23,6 +23,8 @@ class ValidationError(WikiError):
     ``Invalid <thing> at <dotted.path>: <message>``.
     """
 
+    _INPUT_MAX_REPR_LEN = 120
+
     def __init__(self, thing: str, pydantic_error: PydanticValidationError) -> None:
         self.thing = thing
         self.pydantic_error = pydantic_error
@@ -34,10 +36,26 @@ class ValidationError(WikiError):
         for err in pydantic_error.errors():
             loc = ".".join(str(part) for part in err.get("loc", ()))
             msg = err.get("msg", "invalid value")
-            if loc:
-                lines.append(f"Invalid {thing} at {loc}: {msg}")
+            # Append the offending value when Pydantic surfaces one
+            # (retro-review qC2). Pydantic v2 surfaces ``input`` on most
+            # rows; the guard handles the absent case. ``!r`` keeps
+            # quoting unambiguous for empty strings, whitespace, and
+            # embedded quotes. Cap the rendering so a whole-object
+            # failure (Pydantic puts the full dict in ``input``) doesn't
+            # produce a wall of text on a single stderr line. The
+            # truncation is human-readable, not eval-able — a mid-string
+            # cut may leave an unclosed quote in the rendered tail.
+            if "input" in err:
+                rendered = repr(err["input"])
+                if len(rendered) > ValidationError._INPUT_MAX_REPR_LEN:
+                    rendered = rendered[: ValidationError._INPUT_MAX_REPR_LEN] + "..."
+                tail = f": {msg} (got: {rendered})"
             else:
-                lines.append(f"Invalid {thing}: {msg}")
+                tail = f": {msg}"
+            if loc:
+                lines.append(f"Invalid {thing} at {loc}{tail}")
+            else:
+                lines.append(f"Invalid {thing}{tail}")
         return "\n".join(lines) if lines else f"Invalid {thing}"
 
 

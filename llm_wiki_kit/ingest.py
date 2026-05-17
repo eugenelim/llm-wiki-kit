@@ -35,6 +35,7 @@ import fnmatch
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import PurePosixPath
+from typing import Literal
 from urllib.parse import urlparse
 
 from llm_wiki_kit.errors import WikiError
@@ -70,7 +71,7 @@ class Routed:
 
     content_type: str
     signals: list[str]
-    via: str  # "auto" | "as_flag"
+    via: Literal["auto", "as_flag"]
 
 
 @dataclass(frozen=True)
