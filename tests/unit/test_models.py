@@ -373,6 +373,59 @@ def test_event_union_round_trips_through_json() -> None:
     assert isinstance(parsed, PageWriteEvent)
 
 
+def test_page_conflict_resolved_event_region_defaults_to_none() -> None:
+    """Retro-review C1: ``region`` is optional and additive (ADR-0002 §Negative).
+
+    Constructing without ``region=`` defaults to ``None`` for the
+    whole-file conflict-resolve case.
+    """
+
+    e = PageConflictResolvedEvent(
+        timestamp=NOW,
+        by="wiki-conflict",
+        path="meetings/2026-05-15.md",
+        hash="a" * 64,
+    )
+    assert e.region is None
+
+
+def test_page_conflict_resolved_event_legacy_json_without_region_still_replays() -> None:
+    """ADR-0002 §Negative additive-schema rule: legacy lines stay valid.
+
+    A pre-C1 journal line (no ``region`` key in the JSON) must parse
+    through the event-union adapter and yield ``region=None``. This
+    pins the on-disk replay contract — not just the Python default.
+    """
+
+    legacy_payload = {
+        "type": "page.conflict_resolved",
+        "timestamp": NOW.isoformat(),
+        "by": "wiki-conflict",
+        "path": "meetings/2026-05-15.md",
+        "hash": "a" * 64,
+    }
+    parsed = EVENT_ADAPTER.validate_python(legacy_payload)
+    assert isinstance(parsed, PageConflictResolvedEvent)
+    assert parsed.region is None
+
+
+def test_page_conflict_resolved_event_round_trips_with_region() -> None:
+    """A managed-region resolve records the region label and round-trips."""
+
+    original = PageConflictResolvedEvent(
+        timestamp=NOW,
+        by="wiki-conflict",
+        path="AGENTS.md",
+        hash="b" * 64,
+        region="content-types",
+    )
+    text = EVENT_ADAPTER.dump_json(original).decode()
+    parsed = EVENT_ADAPTER.validate_json(text)
+    assert parsed == original
+    assert isinstance(parsed, PageConflictResolvedEvent)
+    assert parsed.region == "content-types"
+
+
 def test_page_write_event_default_hash_algo_is_sha256() -> None:
     e = PageWriteEvent(
         timestamp=NOW,

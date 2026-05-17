@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_wiki_kit.errors import ManagedRegionError
+from llm_wiki_kit.errors import ManagedRegionError, WikiError
 from llm_wiki_kit.journal import read_events
 from llm_wiki_kit.models import (
     ManagedRegionWriteEvent,
@@ -318,6 +318,149 @@ def test_resolve_proposal_creates_baseline_when_no_prior_writes(vault: Path, jou
     assert len(events) == 2
     assert isinstance(events[0], PageWriteEvent)
     assert isinstance(events[1], PageConflictResolvedEvent)
+
+
+# ---------------------------------------------------------------------------
+# Path-resolution contract for _relative_to_vault (retro-review qB3 + qC9).
+# ---------------------------------------------------------------------------
+
+
+def test_safe_write_outside_vault_raises_wikierror(
+    vault: Path, journal: Path, tmp_path: Path
+) -> None:
+    """A path outside the vault root surfaces as ``WikiError``, not bare ``ValueError``.
+
+    Retro-review qB3: the CLI boundary catches ``WikiError`` and renders
+    one line; a bare ``ValueError`` from ``Path.relative_to`` leaks a
+    Python traceback to the user.
+    """
+
+    outside = tmp_path.parent / "outside-the-vault.md"
+    with pytest.raises(WikiError) as excinfo:
+        safe_write(outside, "stray", by="core", journal_path=journal)
+    # Lexically-outside path: short message form, no resolved-detail
+    # branch (lexical equals resolved when the target's parents
+    # already match their resolved form).
+    assert "not inside the vault" in str(excinfo.value)
+    assert "resolves to" not in str(excinfo.value)
+
+
+def test_safe_write_region_outside_vault_raises_wikierror(
+    vault: Path, journal: Path, tmp_path: Path
+) -> None:
+    """The qB3 wrapping holds for ``safe_write_region`` too.
+
+    ``_relative_to_vault`` is the shared helper; all three callers
+    must surface ``WikiError`` rather than a bare ``ValueError``.
+    """
+
+    outside = tmp_path.parent / "outside-the-vault.md"
+    with pytest.raises(WikiError, match="not inside the vault"):
+        safe_write_region(outside, "fields", "body", by="core", journal_path=journal)
+
+
+def test_resolve_proposal_outside_vault_raises_wikierror(
+    vault: Path, journal: Path, tmp_path: Path
+) -> None:
+    """The qB3 wrapping holds for ``resolve_proposal`` too.
+
+    Same shared-helper contract as the two siblings above; a future
+    refactor that bypasses ``_relative_to_vault`` for this call site
+    must not leak a bare ``ValueError``.
+    """
+
+    outside = tmp_path.parent / "outside-the-vault.md"
+    with pytest.raises(WikiError, match="not inside the vault"):
+        resolve_proposal(outside, "merged", by="core", journal_path=journal)
+
+
+def test_safe_write_normalizes_parent_dir_segments(vault: Path, journal: Path) -> None:
+    """``..`` segments resolve to the same canonical key as a direct path.
+
+    Retro-review qC9: drift detection keys off the journaled relative
+    path. Writing ``meetings/2026-05-15.md`` and ``meetings/sub/../2026-05-15.md``
+    must journal the same key, otherwise the second write looks like a
+    first-write and silently overwrites.
+    """
+
+    target_direct = vault / "meetings" / "2026-05-15.md"
+    safe_write(target_direct, "first", by="meeting", journal_path=journal)
+
+    target_via_parent = vault / "meetings" / "sub" / ".." / "2026-05-15.md"
+    safe_write(target_via_parent, "first", by="meeting", journal_path=journal)
+
+    events = read_events(journal)
+    page_writes = [e for e in events if isinstance(e, PageWriteEvent)]
+    # Both writes should journal under the same canonical relative path.
+    assert {e.path for e in page_writes} == {"meetings/2026-05-15.md"}
+
+
+def test_safe_write_journals_same_key_when_symlink_and_real_paths_mix(
+    tmp_path: Path,
+) -> None:
+    """Symlinked and real paths to the same file resolve to one journaled key.
+
+    Retro-review qC9: a write whose ``journal_path`` traverses the real
+    filesystem path and whose target traverses a symlink (or vice
+    versa) must journal under the same canonical relative path —
+    otherwise the second write looks like a first-write and silently
+    overwrites. The previous lexical comparison would diverge here;
+    only ``resolve()`` on both sides reconciles.
+    """
+
+    real_vault = tmp_path / "real-vault"
+    real_vault.mkdir()
+    (real_vault / ".wiki.journal").mkdir()
+    symlink_vault = tmp_path / "symlinked-vault"
+    symlink_vault.symlink_to(real_vault)
+
+    journal_real = real_vault / ".wiki.journal" / "journal.jsonl"
+    target_via_symlink = symlink_vault / "notes" / "x.md"
+    safe_write(target_via_symlink, "v1", by="core", journal_path=journal_real)
+
+    # Second write: journal via symlink, target via real path. The
+    # canonical relative path is the same, so the second write must
+    # see a matching baseline and write directly (not a proposal).
+    journal_via_symlink = symlink_vault / ".wiki.journal" / "journal.jsonl"
+    target_real = real_vault / "notes" / "x.md"
+    result = safe_write(target_real, "v2", by="core", journal_path=journal_via_symlink)
+    assert result is WriteResult.WRITTEN
+
+    events = read_events(journal_real)
+    page_writes = [e for e in events if isinstance(e, PageWriteEvent)]
+    assert [e.path for e in page_writes] == ["notes/x.md", "notes/x.md"]
+
+
+def test_safe_write_rejects_symlink_that_escapes_vault(tmp_path: Path) -> None:
+    """A vault-internal symlink pointing outside the vault raises ``WikiError``.
+
+    Retro-review qC9 §rejects-symlink-escape: the journal must not
+    record a path that resolves outside the vault. A subsequent
+    ``safe_write`` against the same lexical path would diverge from the
+    resolved target, splitting the baseline silently. Surfacing as
+    ``WikiError`` keeps the rejection visible.
+    """
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / ".wiki.journal").mkdir()
+    journal = vault / ".wiki.journal" / "journal.jsonl"
+
+    # An external directory the user has symlinked into the vault.
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "leaked.md").write_text("leaked", encoding="utf-8")
+    (vault / "linked").symlink_to(external)
+
+    target_through_symlink = vault / "linked" / "leaked.md"
+    with pytest.raises(WikiError) as excinfo:
+        safe_write(target_through_symlink, "kit content", by="core", journal_path=journal)
+    # Divergent-resolved branch must surface both forms so the user
+    # sees the escape path, not just a confusing "X is not inside Y"
+    # when X lexically does live under Y.
+    message = str(excinfo.value)
+    assert "resolves to" in message
+    assert "(resolved:" in message
 
 
 # ---------------------------------------------------------------------------
