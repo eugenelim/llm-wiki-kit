@@ -77,6 +77,57 @@ def test_validation_error_renders_nested_loc_with_dotted_path() -> None:
     assert "inner.count" in text
 
 
+def test_validation_error_includes_the_offending_input_value() -> None:
+    """Retro-review qC2: ``ValidationError`` surfaces Pydantic's ``input`` field.
+
+    The previous formatter dropped it, leaving messages like "Invalid
+    recipe at name: Input should be a valid string" — actionable only
+    after opening the source file. Including the value as ``(got: ...)``
+    makes the error self-contained.
+    """
+
+    pyd = _pydantic_error({"name": 5, "count": "two"})
+    err = ValidationError("recipe", pyd)
+    text = str(err)
+    # ``!r`` quoting keeps strings and integers visually distinct.
+    assert "got: 5" in text
+    assert "got: 'two'" in text
+
+
+def test_validation_error_caps_long_input_values() -> None:
+    """A whole-object validation failure does not produce a wall of text.
+
+    Pydantic surfaces the full input in ``input`` when validation fails
+    at the top level. Without a cap, the rendered ``(got: ...)`` line
+    on stderr is hundreds of characters wide. The cap truncates with
+    an ellipsis so the format stays one-line-per-error.
+    """
+
+    class Outer(BaseModel):
+        name: str
+
+    # A non-dict input causes Pydantic to surface the entire value as
+    # ``input`` on the top-level error row — the worst case for
+    # rendering length.
+    big_input = "x" * 500
+    try:
+        Outer.model_validate(big_input)
+    except PydanticValidationError as exc:
+        pyd = exc
+    else:
+        raise AssertionError("expected a ValidationError")
+
+    err = ValidationError("primitive", pyd)
+    text = str(err)
+    # Loose upper bound captures intent — "doesn't blow up stderr" —
+    # without coupling the test to the exact format string.
+    for line in text.splitlines():
+        assert len(line) < 250
+    # Truncation marker appears only when the input was actually
+    # truncated, which it must be for a 500-char input.
+    assert "..." in text
+
+
 def test_validation_error_preserves_original_pydantic_error() -> None:
     pyd = _pydantic_error({"name": "ok"})
     err = ValidationError("primitive", pyd)

@@ -102,10 +102,13 @@ is self-contained.
   `PageProposalEvent`, `PageConflictResolvedEvent`, and
   `ManagedRegionWriteEvent` cover every state change this spec
   introduces.
-- **Doctor surface unchanged.** `.obsidianignore` does **not** join
-  `KIT_OWNED_FILES`. `wiki doctor` continues to treat it as
-  user-territory; the file is silently produced by the proposal path
-  and the kit makes no drift-detection claim on it. See §Non-goals
+- **Doctor surface unchanged.** `.obsidianignore` is not journaled,
+  so it never enters the kit-owned territory derived by
+  `check_orphans` (qC10 + C6 replaced the previous static
+  `KIT_OWNED_FILES` tuple with a derivation from journaled writes).
+  `wiki doctor` continues to treat it as user-territory; the file is
+  silently produced by the proposal path and the kit makes no
+  drift-detection claim on it. See §Non-goals
   "Why `.obsidianignore` is not journaled".
 
 ## Behavior
@@ -306,6 +309,16 @@ spec lands.
   untouched.
 - **`safe_write` to a path that is currently a `.proposed` sidecar of
   another file.** — Out of contract; caller bug. No new defense.
+- **Any of `safe_write` / `safe_write_region` / `resolve_proposal`
+  against a path that resolves outside the vault root (e.g. via a
+  vault-internal symlink pointing at an external directory).** —
+  Deliberate refusal: the shared `_relative_to_vault` helper raises
+  `WikiError` rather than journaling a path whose resolved target
+  diverges from its lexical position. The journal must not record
+  a path that escapes the vault — a subsequent write against the
+  same lexical path would diverge from the resolved target and
+  silently split the baseline. Retro-review qC9; pinned by
+  `test_safe_write_rejects_symlink_that_escapes_vault`.
 - **`safe_write_region` to a file that exists but has no prior
   `ManagedRegionWriteEvent` for `(file, region)`** — Direct-write
   path (unchanged). The region's on-disk body is whichever
@@ -369,9 +382,10 @@ spec lands.
 ### Error cases
 
 - **Vault root resolution failure** — `_relative_to_vault` raises
-  today (qB3 in issue #23 tracks the unrelated `WikiError` wrapping
-  fix). Out of scope here; this spec preserves whatever exception
-  shape `_relative_to_vault` produces.
+  `WikiError` (retro-review qB3 + qC9 landed in the same drain-plan
+  PR 2 that derived the orphan-territory set; see §Edge cases
+  "symlink that escapes the vault"). The wrapping replaces the
+  bare `ValueError` that older versions of this helper raised.
 - **Journal `append_event` raises (full disk, locked FS, etc.)** —
   Propagates. No disk write happens. The journal is the source of
   truth; if it refuses, the kit refuses.
@@ -429,9 +443,13 @@ spec lands.
   is a consumer, not a contributor.
 - **`doctor.py`** is unchanged. The orphan check, page-drift check,
   managed-region-drift check, and missing check all keep their
-  current shape and `KIT_OWNED_FILES` does not grow. The new crash
-  windows (§Edge cases "Crash between event append and disk write")
-  are recoverable through existing checks; no new `Issue` kind.
+  current shape and the derived kit-owned set (qC10 + C6 replaced
+  the previous static `KIT_OWNED_FILES` / `KIT_OWNED_DIRS` tuples
+  with a derivation from `state.page_writes` and managed-region
+  writes) does not grow to include `.obsidianignore`. The new
+  crash windows (§Edge cases "Crash between event append and disk
+  write") are recoverable through existing checks; no new `Issue`
+  kind.
 - **`cli.py`** is unchanged. The CLI handlers (`_cmd_init`,
   `_cmd_add`, `_cmd_ingest`, `_cmd_resolve`, the future `_cmd_run`)
   continue to call `safe_write` / `safe_write_region` /
@@ -676,9 +694,11 @@ predicate, so a regression in one sub-case cannot be masked by a
 - [ ] `test_doctor_does_not_flag_obsidianignore_as_orphan` —
       `.obsidianignore` exists in a vault with no journal entry for
       it; `run_doctor` does not produce `Issue(ORPHAN,
-      ".obsidianignore")`. The current `KIT_OWNED_FILES` tuple
-      already omits it; this test pins that absence so a future
-      maintainer doesn't add it inadvertently.
+      ".obsidianignore")`. Post qC10 + C6, the orphan check derives
+      its kit-owned set from journaled writes, so an unjournaled
+      `.obsidianignore` is never a candidate; this test pins that
+      absence so a future maintainer doesn't add a special-case
+      claim back in.
 
 ### Pin removal and ADR amendment
 
@@ -768,8 +788,12 @@ predicate, so a regression in one sub-case cannot be masked by a
   this spec rejects journaling, so the discriminator question is
   moot. If `.obsidianignore`-like infra files proliferate and start
   needing audit, revisit with a new spec.
-- **Not a rewrite of `_relative_to_vault`'s error surface.** That's
-  qB3 in the retro-review tracker; orthogonal.
+- **Not a rewrite of `_relative_to_vault`'s error surface.** qB3
+  (wrap `ValueError` as `WikiError`) and qC9 (`.resolve()` both
+  sides) shipped in their own retro-cleanup PR; this spec is a
+  consumer of the updated helper, not a contributor. The §Edge
+  cases "symlink that escapes the vault" bullet documents how the
+  refusal surfaces through this spec's write paths.
 - **Not `safe_write` for arbitrary file types.** Binary, large
   files, and non-utf-8 content are out of contract today and remain
   so. `content: str` is the type and `.encode("utf-8")` is the

@@ -517,8 +517,9 @@ And the spec's acceptance-criteria checkboxes are all ticked.
   same PR.
 - **Bundling `examples/`, `docs/`, `tests/`, or `tools/`.** Not
   runtime assets.
-- **Deriving `doctor.KIT_OWNED_DIRS` / `KIT_OWNED_FILES` from
-  journaled writes.** That's `qC10 + C6`. Tracked on issue #23.
+- **Deriving the orphan-territory set from journaled writes.**
+  That's `qC10 + C6`. Shipped in its own retro-cleanup PR on
+  issue #23.
 - **Migrating the integration tests' monkeypatch pattern.** The
   symbol is preserved precisely to avoid touching ~6 test files in
   this spec; qC8 owns that migration.

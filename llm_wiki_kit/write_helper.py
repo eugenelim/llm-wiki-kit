@@ -30,7 +30,7 @@ from enum import Enum
 from pathlib import Path
 
 from llm_wiki_kit import managed_regions
-from llm_wiki_kit.errors import ManagedRegionError
+from llm_wiki_kit.errors import ManagedRegionError, WikiError
 from llm_wiki_kit.journal import append_event, read_events
 from llm_wiki_kit.models import (
     ManagedRegionWriteEvent,
@@ -301,7 +301,42 @@ def _vault_root(journal_path: Path) -> Path:
 
 
 def _relative_to_vault(abs_path: Path, vault_root: Path) -> str:
-    return abs_path.relative_to(vault_root).as_posix()
+    """Return ``abs_path`` as a POSIX path relative to ``vault_root``.
+
+    Resolves both sides so ``..`` segments and symlinks point at the
+    same canonical file (retro-review qC9). Drift detection keys off
+    the journaled vault-relative path; a symlinked-in route would
+    otherwise journal under one key and check under another, silently
+    splitting baselines.
+
+    Rejects symlink escape: a path that lives inside ``vault_root``
+    lexically but resolves to a target outside it raises
+    :class:`WikiError`. The journal must not record a path that
+    escapes the vault — the next ``safe_write`` against the same
+    lexical path would diverge from the resolved target.
+
+    Bare ``ValueError`` from :meth:`Path.relative_to` is wrapped as
+    :class:`WikiError` (retro-review qB3) so the CLI boundary renders
+    one line instead of a Python traceback, per ADR-0005.
+    """
+
+    resolved_path = abs_path.resolve()
+    resolved_root = vault_root.resolve()
+    try:
+        return resolved_path.relative_to(resolved_root).as_posix()
+    except ValueError as exc:
+        # Include both lexical and resolved forms when they differ —
+        # the resolved path is the actionable detail in the symlink-
+        # escape case ("but `linked/leaked.md` is under `vault/`!").
+        if resolved_path != abs_path or resolved_root != vault_root:
+            detail = (
+                f"path '{abs_path}' resolves to '{resolved_path}', "
+                f"which is not inside the vault rooted at '{vault_root}' "
+                f"(resolved: '{resolved_root}')"
+            )
+        else:
+            detail = f"path '{abs_path}' is not inside the vault rooted at '{vault_root}'"
+        raise WikiError(detail) from exc
 
 
 def _hash(data: bytes) -> str:

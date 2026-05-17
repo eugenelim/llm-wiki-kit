@@ -41,6 +41,7 @@ from llm_wiki_kit.models import (
     PageProposalEvent,
     PageWriteEvent,
     PrimitiveInstallEvent,
+    SourceIngestEvent,
     VaultInitEvent,
     VaultState,
 )
@@ -274,19 +275,102 @@ def test_pending_proposals_empty_state() -> None:
 
 
 def test_orphan_reports_file_under_kit_path_with_no_event(tmp_path: Path) -> None:
+    """Retro-review qC10+C6: a top-level dir is kit territory once any
+    journaled write lives under it; strays inside that dir surface as
+    orphans.
+    """
+
     vault = _vault(tmp_path)
     skills = vault / "skills" / "ingest"
     skills.mkdir(parents=True)
     (skills / "SKILL.md").write_text("stray", encoding="utf-8")
 
-    issues = check_orphans(VaultState(), vault)
-    assert issues == [Issue("orphan", "skills/ingest/SKILL.md")]
+    # One journaled path under ``skills/`` makes ``skills`` kit-owned.
+    state = VaultState(page_writes=_state_with_page("skills/known.md", "k").page_writes)
+    assert check_orphans(state, vault) == [Issue("orphan", "skills/ingest/SKILL.md")]
 
 
 def test_orphan_ignores_user_owned_paths(tmp_path: Path) -> None:
+    """A directory the kit has never written to is user territory."""
+
     vault = _vault(tmp_path)
     (vault / "personal").mkdir()
     (vault / "personal" / "notes.md").write_text("my notes", encoding="utf-8")
+
+    # Seed an unrelated kit-owned dir so the state isn't degenerate.
+    state = VaultState(page_writes=_state_with_page("skills/known.md", "k").page_writes)
+    assert check_orphans(state, vault) == []
+
+
+def test_orphan_does_not_derive_territory_from_non_page_write_events(tmp_path: Path) -> None:
+    """Pin the doctrine: only ``page.write`` extends orphan territory.
+
+    ``check_orphans`` documents that managed-region writes and
+    ingest's produced pages are *not* folded in — those events
+    reference paths that flow through ``safe_write``, which already
+    emits a paired ``PageWriteEvent``. A future contributor who
+    silently folds in another event type would silently expand
+    territory; this test fails if that happens.
+
+    Both event types named in the docstring are exercised — the
+    ``ManagedRegionWriteEvent`` half is the more plausible misstep
+    because managed-region writes look like "kit writes" to a casual
+    reader.
+    """
+
+    vault = _vault(tmp_path)
+    (vault / "_templates").mkdir()
+    (vault / "_templates" / "rogue.yaml").write_text("user file", encoding="utf-8")
+
+    # 1) SourceIngestEvent.produced_pages alone does not extend territory.
+    state_with_ingest = VaultState(
+        ingested_sources={
+            "/some/source.txt": SourceIngestEvent(
+                timestamp=NOW,
+                by="wiki-ingest",
+                source="/some/source.txt",
+                source_hash="a" * 64,
+                content_type="meeting",
+                produced_pages=["_templates/synthesized.md"],
+            )
+        }
+    )
+    assert check_orphans(state_with_ingest, vault) == []
+
+    # 2) ``pending_proposals`` is consulted only to skip ``.proposed``
+    #    sidecars; it must never *extend* territory. A state with a
+    #    proposal under ``_templates/`` but no ``page.write`` under it
+    #    leaves the rogue invisible — pinning that the candidate-list
+    #    derivation reads only ``state.page_writes``. This catches a
+    #    regression where a future contributor adds a different state
+    #    field (e.g. a ``managed_region_writes`` projection) and folds
+    #    it into territory: the new field would land alongside
+    #    ``pending_proposals``, and this assertion would force the
+    #    contributor to update the test in the same PR.
+    proposal = PageProposalEvent(
+        timestamp=NOW,
+        by="core",
+        path="_templates/synthesized.md",
+        proposed_path="_templates/synthesized.md.proposed",
+        hash=_hash("kit version"),
+    )
+    state_with_proposal_only = VaultState(pending_proposals={"_templates/synthesized.md": proposal})
+    assert check_orphans(state_with_proposal_only, vault) == []
+
+
+def test_orphan_silent_when_no_paths_journaled(tmp_path: Path) -> None:
+    """Retro-review qC10+C6: an empty journal claims no territory.
+
+    A vault with no page-writes has no derived kit-owned dirs or files,
+    so even files that used to be in the static ``KIT_OWNED_DIRS``
+    (``skills/``, ``_templates/``, ``wiki/``) are invisible to the
+    orphan check. The check fires only after the kit has written
+    something — which is the install pipeline's job.
+    """
+
+    vault = _vault(tmp_path)
+    (vault / "skills" / "rogue").mkdir(parents=True)
+    (vault / "skills" / "rogue" / "SKILL.md").write_text("stray", encoding="utf-8")
 
     assert check_orphans(VaultState(), vault) == []
 
@@ -536,7 +620,10 @@ def test_doctor_warns_and_falls_back_when_env_var_unparseable(
 def test_run_doctor_returns_sorted_issues(tmp_path: Path) -> None:
     vault = _vault(tmp_path)
     journal = vault / ".wiki.journal" / "journal.jsonl"
-    # A barely-valid vault: init + core install, but no page writes.
+    # A barely-valid vault: init + core install, plus one journaled
+    # write under ``skills/`` so that directory becomes kit-owned
+    # territory (retro-review qC10 + C6 derive ownership from
+    # ``state.page_writes``).
     append_event(
         journal,
         VaultInitEvent(timestamp=NOW, by="wiki-init", vault_name="v", recipe="family"),
@@ -545,9 +632,14 @@ def test_run_doctor_returns_sorted_issues(tmp_path: Path) -> None:
         journal,
         PrimitiveInstallEvent(timestamp=NOW, by="wiki-init", primitive="core", version="0.1.0"),
     )
+    (vault / "skills").mkdir()
+    (vault / "skills" / "known.md").write_text("k", encoding="utf-8")
+    append_event(
+        journal,
+        PageWriteEvent(timestamp=NOW, by="core", path="skills/known.md", hash=_hash("k")),
+    )
 
     # Add a stray under skills/ so the orphan check fires.
-    (vault / "skills").mkdir()
     (vault / "skills" / "stray.md").write_text("stray", encoding="utf-8")
 
     # And an empty kit so the primitive-missing check fires for ``core``.
