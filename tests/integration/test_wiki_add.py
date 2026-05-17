@@ -277,7 +277,7 @@ def test_wiki_add_install_pipeline_reads_journal_once_via_cache(
     """
     import llm_wiki_kit.journal as _journal
 
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     journal_target = _journal_path(vault)
 
@@ -291,7 +291,7 @@ def test_wiki_add_install_pipeline_reads_journal_once_via_cache(
 
     monkeypatch.setattr(_journal, "read_events", counting_read_events)
 
-    assert cli.main(["add", "content-type:meeting"]) == 0
+    assert cli.main(["add", "content-type:meeting"], kit_root=kit_root) == 0
     # Cache absorbs every baseline lookup after the first load.
     #
     # NOTE: ``_cmd_add`` calls ``replay_state(read_events(...))`` once
