@@ -189,10 +189,14 @@ invalidation. Neither is in this spec.
 - **`cli.py`** wraps the install-pipeline handlers (`_cmd_init`,
   `_cmd_add`) with `use_journal_cache(journal_path)`. Handlers that
   do not loop many writes (`_cmd_doctor`, `_cmd_journal_*`,
-  `_cmd_resolve`) skip the cache — the overhead of one read is
-  amortised over zero subsequent reads, so the optimisation isn't
-  needed. `_cmd_ingest` enters the cache because each ingested
-  source may produce many writes.
+  `_cmd_resolve`, `_cmd_ingest`) skip the cache — the overhead of
+  one read is amortised over zero subsequent reads, so the
+  optimisation isn't needed. (`_cmd_ingest` today appends exactly
+  one `IngestRoutedEvent` per invocation and does not call
+  `safe_write`; the vault-side `ingest-<name>/SKILL.md` is what
+  produces the page writes, in a separate Claude session. If a
+  future change moves source-document rendering into the kit, this
+  carve-out gets revisited.)
 - **`install.py`** is unchanged. The aggregator's `safe_write_region`
   loop benefits transparently — every `safe_write_region` call
   inside the cache scope hits the cache.
@@ -212,12 +216,13 @@ invalidation. Neither is in this spec.
 ### Cache hit reduces journal reads
 
 - [x] `test_journal_reader_caches_events_within_scope` — inside
-      `use_journal_cache`, two successive `read_events_cached`-style
-      calls return the same list object identity. (Brittle? Yes —
-      that's the point. The cache is the load-bearing optimisation
-      and the identity check is the cheapest pin for "did not re-read
-      from disk".)
-- [x] `test_journal_reader_reads_disk_on_first_events_call_only` —
+      `use_journal_cache`, two successive `events()` calls return
+      the same list object identity. (Brittle? Yes — that's the
+      point. The cache is the load-bearing optimisation and the
+      identity check is the cheapest pin for "did not re-read from
+      disk".)
+- [x] `test_journal_reader_lazy_loads_only_when_events_called` /
+      `test_safe_write_inside_cache_scope_reads_journal_once` —
       monkeypatch `journal.read_events` with a counter; install a
       cache; call `safe_write` N times for distinct paths; assert
       `read_events` was invoked exactly once.
@@ -227,13 +232,13 @@ invalidation. Neither is in this spec.
 
 ### Cache stays consistent with disk on append
 
-- [x] `test_append_event_extends_cached_events_in_scope` — install a
-      cache, call `events()` (forces load), call `append_event`
-      directly, call `events()` again; the new event appears at the
-      tail of the returned list.
-- [x] `test_baseline_hash_sees_just-appended_event_via_cache` — install
-      a cache; call `safe_write` for `path.md` once (appends a
-      `PageWriteEvent`); call `safe_write` for the same path again
+- [x] `test_append_event_notifies_active_reader_on_matching_journal` —
+      install a cache, call `events()` (forces load), call
+      `append_event` directly, call `events()` again; the new event
+      appears at the tail of the returned list.
+- [x] `test_safe_write_inside_cache_sees_just_appended_event` —
+      install a cache; call `safe_write` for `path.md` once (appends
+      a `PageWriteEvent`); call `safe_write` for the same path again
       with matching content; the second call's `_baseline_hash`
       consults the cache and routes to direct-write (not adopt, not
       proposal). Tests the qC6 cross-cutting concern with the cache
@@ -241,29 +246,29 @@ invalidation. Neither is in this spec.
 
 ### Scope discipline
 
-- [x] `test_use_journal_cache_resets_contextvar_on_exit` — after the
-      `with` block, the `ContextVar` is reset; a subsequent
-      `read_events_cached` call falls through to disk.
-- [x] `test_use_journal_cache_resets_contextvar_on_exception` — same,
-      but the body raises; the `finally` arm still resets.
-- [x] `test_use_journal_cache_is_non_recursive` — entering
+- [x] `test_use_journal_cache_installs_and_resets_contextvar` —
+      after the `with` block, the `ContextVar` is reset; a
+      subsequent `_read_events_cached` call falls through to disk.
+- [x] `test_use_journal_cache_resets_on_exception` — same, but the
+      body raises; the `finally` arm still resets.
+- [x] `test_use_journal_cache_non_recursive_raises` — entering
       `use_journal_cache` while another is active in the same
       context raises `RuntimeError` (analogue of
       `transaction()`'s re-entry guard).
-- [x] `test_append_event_to_different_journal_does_not_touch_cache` —
+- [x] `test_append_event_does_not_notify_reader_for_different_journal` —
       install a cache for journal `A`; call `append_event(journal_B,
       event)`; the cache for `A` is unchanged.
 
 ### CLI wiring
 
-- [x] `test_wiki_init_install_pipeline_reads_journal_once` —
+- [x] `test_wiki_init_install_pipeline_reads_journal_once_via_cache` —
       monkeypatch `journal.read_events` with a counter (path-scoped
       to the vault's journal); run `wiki init --recipe family`;
       assert the install pipeline read the journal at most once
       (the cache absorbs the rest). Integration-level pin against a
       future refactor that bypassed the cache.
-- [x] `test_wiki_add_install_pipeline_reads_journal_once` — same
-      shape against `wiki add`.
+- [x] `test_wiki_add_install_pipeline_reads_journal_once_via_cache` —
+      same shape against `wiki add`.
 
 ## Non-goals
 

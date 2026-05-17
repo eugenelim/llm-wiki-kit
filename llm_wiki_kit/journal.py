@@ -137,7 +137,12 @@ class JournalReader:
     """
 
     def __init__(self, journal_path: Path) -> None:
-        self.journal_path = journal_path
+        # Resolve on construction so the reader's identity is frozen
+        # for the scope's lifetime — matches the spec's promise and
+        # avoids re-resolving the same path on every ``notify_appended``
+        # check, which would also create a tiny window where the
+        # identity could shift if CWD changed mid-scope.
+        self.journal_path = journal_path.resolve()
         self._events: list[Event] | None = None
 
     def events(self) -> list[Event]:
@@ -150,6 +155,11 @@ class JournalReader:
 
         if self._events is None:
             self._events = read_events(self.journal_path)
+            _logger.debug(
+                "journal cache loaded %d events from %s",
+                len(self._events),
+                self.journal_path,
+            )
         return self._events
 
     def notify_appended(self, event: Event) -> None:
@@ -164,6 +174,11 @@ class JournalReader:
 
         if self._events is not None:
             self._events.append(event)
+            _logger.debug(
+                "journal cache extended (%d events) for %s",
+                len(self._events),
+                self.journal_path,
+            )
 
 
 # Per-context active reader, analogous to ``_HELD_FD``. ``write_helper``
@@ -429,7 +444,12 @@ def append_event(journal_path: Path, event: Event, *, nonblocking: bool = False)
         fh.write(line)
         fh.flush()
         os.fsync(fh.fileno())
-    _notify_reader(resolved_journal, event)
+        # Cache update *inside* the with block so a ``close()`` failure
+        # (rare; possible on network mounts) cannot leave the cache
+        # short of one event that's already durable on disk.
+        # ``notify_appended`` is a list append — fast enough that
+        # extending the LOCK_EX hold window is negligible.
+        _notify_reader(resolved_journal, event)
 
 
 def _notify_reader(resolved_journal: Path, event: Event) -> None:
@@ -438,12 +458,32 @@ def _notify_reader(resolved_journal: Path, event: Event) -> None:
     Called by ``append_event`` after ``fsync`` returns (both the
     per-event-lock branch and the held-fd branch). The path-equality
     test ensures a cache for journal `A` is never extended by an
-    append to journal `B`.
+    append to journal `B`. The reader's ``journal_path`` is already
+    resolved (constructor-time) so the comparison here is between two
+    resolved paths — symbolic and case-equivalent forms collapse to
+    one identity.
+
+    Exceptions from ``notify_appended`` (in practice only
+    ``MemoryError`` from ``list.append``) are caught and logged,
+    NOT propagated. The semantic contract is: an ``append_event``
+    that returns successfully has ``fsync``'d the line to disk —
+    a cache-side failure after that point must not surface as
+    "your write failed." The cache is now stale; the next
+    ``events()`` call (or the next handler) reads from disk and
+    reconciles.
     """
 
     reader = _CURRENT_READER.get()
-    if reader is not None and reader.journal_path.resolve() == resolved_journal:
-        reader.notify_appended(event)
+    if reader is not None and reader.journal_path == resolved_journal:
+        try:
+            reader.notify_appended(event)
+        except Exception:
+            _logger.exception(
+                "journal cache notify_appended failed for %s — "
+                "the disk write is durable; the cache is now stale "
+                "and will reconcile on next events() read",
+                resolved_journal,
+            )
 
 
 @contextmanager

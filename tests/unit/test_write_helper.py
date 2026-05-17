@@ -1589,9 +1589,13 @@ def test_safe_write_outside_cache_scope_unchanged(
 
     for i in range(5):
         safe_write(vault / f"p{i}.md", f"v{i}", by="core", journal_path=journal)
-    # write_helper.read_events still resolves to the patched function
-    # via the module import; one read per safe_write call.
-    assert reads["n"] >= 5
+    # write_helper._read_events_cached routes the no-cache fall-through
+    # through journal.read_events (the patched function). Today's
+    # safe_write makes exactly one _baseline_hash call per write, so
+    # the count is exactly 5. Tighten to `==` so a future refactor
+    # that doubles read count per call (e.g. a second journal walk)
+    # is caught here.
+    assert reads["n"] == 5
 
 
 def test_safe_write_region_inside_cache_scope_reads_journal_once(
@@ -1644,29 +1648,60 @@ def test_resolve_proposal_inside_cache_scope_reads_journal_once(
     assert reads["n"] == 1
 
 
-def test_safe_write_inside_cache_sees_just_appended_event(vault: Path, journal: Path) -> None:
+def test_safe_write_inside_cache_sees_just_appended_event(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A second safe_write of byte-identical content takes repeat-write, not adopt.
 
     Because the cache reflects the first call's PageWriteEvent, the
     second call's baseline lookup finds it and routes to direct-write.
     Without the cache invalidation hook, the second call would see an
     empty cache and route to the adopt fast-path.
+
+    Direct-write reuses the call-entry ``_now()`` for its event;
+    adopt recomputes ``_now()`` post-re-read (spec §Behavior step 3).
+    Injecting a deterministic ``_now`` and asserting the total call
+    count is exactly 2 (one per safe_write, NOT three from an
+    adopt-recompute) pins the branch discrimination — without this, an
+    "event count == 2" assertion alone would pass under either branch.
     """
+    from datetime import UTC, datetime
+
     from llm_wiki_kit.journal import use_journal_cache
 
     target = vault / "page.md"
+
+    timestamps = [
+        datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        datetime(2026, 2, 2, 0, 0, tzinfo=UTC),
+        datetime(2026, 3, 3, 0, 0, tzinfo=UTC),
+    ]
+    now_calls: list[datetime] = []
+
+    def fake_now() -> datetime:
+        result = timestamps[len(now_calls)]
+        now_calls.append(result)
+        return result
+
+    monkeypatch.setattr("llm_wiki_kit.write_helper._now", fake_now)
+
     with use_journal_cache(journal):
         first = safe_write(target, "v1", by="core", journal_path=journal)
         assert first is WriteResult.WRITTEN
-        # Second call sees the cached PageWriteEvent and routes to
-        # repeat-write (direct-write), not adopt-fast-path.
         second = safe_write(target, "v1", by="core", journal_path=journal)
         assert second is WriteResult.WRITTEN
 
+    # Direct-write uses one _now() per call; adopt uses two. Total
+    # across two direct-write calls is 2. If the second call entered
+    # adopt (cache hook broken → empty cache → no_history=True →
+    # bytes_match=True → adopt), len(now_calls) would be 3.
+    assert len(now_calls) == 2, (
+        f"second call must take direct-write (1 _now), not adopt (2 _now); "
+        f"got {len(now_calls)} total _now() calls across both writes"
+    )
+
     page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
-    # Two PageWriteEvents — one per call. (Adopt would also be one
-    # event per call; the distinguishing observable would be the file
-    # mtime, but the test above already pins the cache-consistency
-    # contract — this test pins the no-adopt branch as a paired check.)
     assert len(page_writes) == 2
+    assert page_writes[0].timestamp == timestamps[0]
+    assert page_writes[1].timestamp == timestamps[1]
     assert target.read_text() == "v1"

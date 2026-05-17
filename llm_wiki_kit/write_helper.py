@@ -295,7 +295,7 @@ def _read_events_cached(journal_path: Path) -> list[Event]:
     """
 
     reader = journal._CURRENT_READER.get()
-    if reader is not None and reader.journal_path.resolve() == journal_path.resolve():
+    if reader is not None and reader.journal_path == journal_path.resolve():
         return reader.events()
     # Route through ``journal.read_events`` (not the import-time binding)
     # so a test that monkeypatches ``journal.read_events`` still sees

@@ -293,12 +293,20 @@ def test_wiki_add_install_pipeline_reads_journal_once_via_cache(
 
     assert cli.main(["add", "content-type:meeting"]) == 0
     # Cache absorbs every baseline lookup after the first load.
+    #
     # NOTE: ``_cmd_add`` calls ``replay_state(read_events(...))`` once
     # BEFORE entering the cache scope (for the recipe / installed-set
-    # lookup), so the floor here is 1; the cache scope itself adds
-    # zero further reads.
+    # lookup). That pre-scope call goes through ``cli.read_events``
+    # — the import-time binding made via ``from llm_wiki_kit.journal
+    # import read_events`` — which the monkeypatch above does NOT
+    # intercept (we patch ``_journal.read_events``, the module
+    # attribute; ``cli.read_events`` still points at the original).
+    # So this assertion pins only the cache-load-once contract; the
+    # pre-scope read is invisible to the counter by design. If a
+    # future refactor changes the import to ``journal.read_events``
+    # (via the module), this comment needs revisiting.
     assert reads["n"] == 1, (
-        f"expected one read of the vault journal across wiki add, got {reads['n']}"
+        f"expected one cache-load read of the vault journal across wiki add, got {reads['n']}"
     )
 
 

@@ -1997,12 +1997,44 @@ def test_append_event_does_not_notify_reader_for_different_journal(tmp_path: Pat
 
 
 def test_append_event_does_nothing_to_cache_without_scope(tmp_path: Path) -> None:
-    """Outside use_journal_cache, append_event behaves identically to today."""
+    """A reader for journal A is untouched when a scope-less append fires.
+
+    Pins the cross-path-without-scope contract: outside a
+    ``use_journal_cache`` block, ``_notify_reader`` looks up
+    ``_CURRENT_READER.get()``, sees ``None``, and does nothing.
+    A regression that crashed inside ``_notify_reader`` on
+    ``None.notify_appended`` (the AttributeError shape) would surface
+    here as an exception, not as a silent journal append.
+    """
+    import llm_wiki_kit.journal as _journal
+
     journal = tmp_path / "journal.jsonl"
+    assert _journal._CURRENT_READER.get() is None
     append_event(journal, _seed_event(by="alice"))
     append_event(journal, _seed_event(by="bob"))
+    assert _journal._CURRENT_READER.get() is None
     events = read_events(journal)
     assert [e.by for e in events if isinstance(e, VaultInitEvent)] == ["alice", "bob"]
+
+
+def test_journal_reader_returns_empty_list_for_missing_journal(tmp_path: Path) -> None:
+    """Spec §Edge cases "Journal does not yet exist."
+
+    The cache scope opens *before* ``VaultInitEvent`` lands in
+    ``_cmd_init`` — on entry the journal file does not exist yet, so
+    ``events()`` must return ``[]`` cleanly. A future refactor that
+    pre-checked existence in ``__init__`` and raised would break the
+    fresh-vault flow.
+    """
+    journal = tmp_path / "absent.jsonl"
+    assert not journal.exists()
+    reader = JournalReader(journal)
+    assert reader.events() == []
+
+    # notify_appended after the empty load extends the cache normally.
+    event = _seed_event(by="post-empty")
+    reader.notify_appended(event)
+    assert reader.events() == [event]
 
 
 def test_append_event_inside_transaction_still_notifies_reader(tmp_path: Path) -> None:

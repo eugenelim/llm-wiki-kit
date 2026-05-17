@@ -24,7 +24,7 @@ Two-module change:
   shared `_read_events_cached(journal_path)` helper that consults
   `journal._CURRENT_READER`.
 - `cli.py` wraps each install-pipeline handler body
-  (`_cmd_init`, `_cmd_add`, `_cmd_ingest`) with
+  (`_cmd_init`, `_cmd_add`) with
   `with journal.use_journal_cache(journal_path):`.
 
 **Ordering inside the PR.** Spec-first construction tests for the
@@ -103,7 +103,7 @@ pins the read-once contract end-to-end via the install pipelines.
      inside `use_journal_cache(journal_a)`, call
      `append_event(journal_b, e)`; the reader for `journal_a` is
      unchanged.
-   - `test_append_event_does_nothing_without_reader_scope` — outside
+   - `test_append_event_does_nothing_to_cache_without_scope` — outside
      `use_journal_cache`, `append_event` behaves identically to
      today (cache hook is a no-op).
 
@@ -178,23 +178,35 @@ pins the read-once contract end-to-end via the install pipelines.
      subsequent write).
    - `test_wiki_add_install_pipeline_reads_journal_once_via_cache` —
      same shape against `wiki add ontology:people` on a fresh vault.
-   - `test_wiki_init_without_cache_wrapper_reads_journal_many_times`
-     (negative pin) — instrumented `_cmd_init` body bypassing the
-     `use_journal_cache` wrapper; assert the counter is `>= 2`.
-     Lives as a temporary regression-pin: remove if the test starts
-     coupling too tightly to the install pipeline's internal write
-     count. Documents the optimization's value at the integration
-     level.
+   - **Negative-pin status: dropped.** Earlier drafts named
+     `test_wiki_init_without_cache_wrapper_reads_journal_many_times`
+     as an integration-level regression-pin that would patch
+     `_cmd_init`'s body to bypass the wrapper and assert
+     `counter >= 2`. The unit-level
+     `test_safe_write_outside_cache_scope_unchanged` (in
+     `tests/unit/test_write_helper.py`) does the equivalent job at
+     a less brittle boundary (no `_cmd_init` body patching, no
+     coupling to the install pipeline's internal write count), so
+     the integration-level negative pin was dropped as redundant.
+     The two positive pins
+     (`test_wiki_init_install_pipeline_reads_journal_once_via_cache`
+     and its `wiki add` sibling) carry the integration-level
+     contract.
 
    *Approach:* wrap each install-pipeline handler body with
-   `with journal.use_journal_cache(journal_path):`. Three handlers
-   to update — `_cmd_init`, `_cmd_add`, `_cmd_ingest`. The doctor /
-   journal / resolve handlers don't loop writes; no wrapping
-   needed.
+   `with journal.use_journal_cache(journal_path):`. Two handlers
+   to update — `_cmd_init` and `_cmd_add`. The doctor / journal /
+   resolve / ingest handlers don't loop writes; no wrapping needed.
+   (`_cmd_ingest` was named in earlier drafts but on inspection
+   only appends one `IngestRoutedEvent` and never calls
+   `safe_write` — the vault-side ingest skill is what produces the
+   page writes, in a separate Claude session.)
 
-   *Done when:* the two positive tests pass; the negative pin (or
-   an equivalent direct assertion) demonstrates the optimization
-   actually fires.
+   *Done when:* the two positive integration pins pass;
+   `test_safe_write_outside_cache_scope_unchanged` (unit) carries
+   the no-cache regression pin (the original plan named an
+   integration-level negative pin but the unit-level pin does the
+   equivalent job at a less brittle boundary).
 
 1. **ADR-0002 §Negative gains a §Revisions entry naming this spec.**
 
