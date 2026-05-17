@@ -340,7 +340,7 @@ def test_doctor_surfaces_orphan_page_event_as_missing(
     from llm_wiki_kit.journal import append_event
     from llm_wiki_kit.models import PageWriteEvent
 
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     # Journal a write for a path that does not exist on disk.
     append_event(
         _journal_path(vault),
@@ -355,7 +355,7 @@ def test_doctor_surfaces_orphan_page_event_as_missing(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
@@ -373,7 +373,7 @@ def test_doctor_surfaces_orphan_managed_region_event_as_drift(
     from llm_wiki_kit.journal import append_event
     from llm_wiki_kit.models import ManagedRegionWriteEvent
 
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     # Append a managed-region event whose content_hash doesn't match
     # the on-disk region body (``wiki init`` already seeded AGENTS.md
     # with empty region buckets).
@@ -391,7 +391,7 @@ def test_doctor_surfaces_orphan_managed_region_event_as_drift(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
@@ -409,7 +409,7 @@ def test_doctor_surfaces_orphan_resolve_events(
     from llm_wiki_kit.journal import append_event
     from llm_wiki_kit.models import PageConflictResolvedEvent, PageWriteEvent
 
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     # Two events: PageWrite + PageConflictResolved, file never written.
     now = datetime.now(UTC)
     append_event(
@@ -434,7 +434,7 @@ def test_doctor_surfaces_orphan_resolve_events(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT

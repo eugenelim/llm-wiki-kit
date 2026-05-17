@@ -277,7 +277,7 @@ def test_wiki_add_over_unjournaled_user_file_proposes_not_overwrites(
     not silently overwrite — write ``.proposed`` and leave the user
     file untouched.
     """
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
 
     # Drop a user file at a path ``add ontology:people`` will render to.
@@ -286,7 +286,7 @@ def test_wiki_add_over_unjournaled_user_file_proposes_not_overwrites(
     user_content = "user's pre-existing notes about people\n"
     user_path.write_text(user_content, encoding="utf-8")
 
-    assert cli.main(["add", "ontology:people"]) == 0
+    assert cli.main(["add", "ontology:people"], kit_root=kit_root) == 0
 
     # User file untouched.
     assert user_path.read_text(encoding="utf-8") == user_content
