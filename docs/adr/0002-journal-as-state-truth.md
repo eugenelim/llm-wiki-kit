@@ -97,6 +97,11 @@ prefixed home-dir cache.
 
 - **Replay cost on every CLI invocation.** Mitigated: replay over 1000
   events fits comfortably under 100ms (acceptance criterion in Task 4).
+  The install pipeline's per-write baseline lookups (which formerly
+  re-read the journal on every ``safe_write``) are further amortised
+  by an in-process ``JournalReader`` cache scoped to the active CLI
+  handler — see
+  [`docs/specs/journal-reader-cache/spec.md`](../specs/journal-reader-cache/spec.md).
   If vaults grow past 10k events, we add a checkpoint event type; the
   schema accommodates it without breaking compatibility.
 - **No transactional writes across journal + disk.** If the kit crashes

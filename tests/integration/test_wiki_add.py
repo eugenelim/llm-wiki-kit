@@ -265,6 +265,51 @@ def test_add_refuses_when_cwd_is_not_a_vault(
     assert "not a wiki vault" in err
 
 
+def test_wiki_add_install_pipeline_reads_journal_once_via_cache(
+    tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """qC4: wiki add's install pipeline reads the journal exactly once.
+
+    Mirrors the wiki-init pin in tests/integration/test_wiki_init.py.
+    The cache scope wraps ``_cmd_add``'s install_primitives call; the
+    aggregator's safe_write_region pass should not re-read the
+    journal for each region.
+    """
+    import llm_wiki_kit.journal as _journal
+
+    vault = _init_vault(tmp_path, kit_root)
+    monkeypatch.chdir(vault)
+    journal_target = _journal_path(vault)
+
+    reads = {"n": 0}
+    original = _journal.read_events
+
+    def counting_read_events(p: Path) -> object:
+        if p == journal_target:
+            reads["n"] += 1
+        return original(p)
+
+    monkeypatch.setattr(_journal, "read_events", counting_read_events)
+
+    assert cli.main(["add", "content-type:meeting"], kit_root=kit_root) == 0
+    # Cache absorbs every baseline lookup after the first load.
+    #
+    # NOTE: ``_cmd_add`` calls ``replay_state(read_events(...))`` once
+    # BEFORE entering the cache scope (for the recipe / installed-set
+    # lookup). That pre-scope call goes through ``cli.read_events``
+    # — the import-time binding made via ``from llm_wiki_kit.journal
+    # import read_events`` — which the monkeypatch above does NOT
+    # intercept (we patch ``_journal.read_events``, the module
+    # attribute; ``cli.read_events`` still points at the original).
+    # So this assertion pins only the cache-load-once contract; the
+    # pre-scope read is invisible to the counter by design. If a
+    # future refactor changes the import to ``journal.read_events``
+    # (via the module), this comment needs revisiting.
+    assert reads["n"] == 1, (
+        f"expected one cache-load read of the vault journal across wiki add, got {reads['n']}"
+    )
+
+
 def test_wiki_add_over_unjournaled_user_file_proposes_not_overwrites(
     tmp_path: Path,
     kit_root: Path,

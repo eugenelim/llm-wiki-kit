@@ -234,3 +234,36 @@ def test_init_is_idempotently_refused_on_rerun(
     assert exit_code == WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     assert "not empty" in err
+
+
+def test_wiki_init_install_pipeline_reads_journal_once_via_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """qC4: the install pipeline reads the journal exactly once.
+
+    Without the cache, every ``safe_write`` / ``safe_write_region``
+    call in the install pipeline calls ``read_events`` for its
+    baseline lookup — O(events * writes) on every fresh-vault render.
+    With the cache scope wrapping ``_cmd_init``, the read happens
+    once and ``append_event`` extends the in-memory list for the rest
+    of the handler.
+    """
+    import llm_wiki_kit.journal as _journal
+
+    vault = tmp_path / "v"
+    journal_target = vault / ".wiki.journal" / "journal.jsonl"
+    reads = {"n": 0}
+    original = _journal.read_events
+
+    def counting_read_events(p: Path) -> object:
+        if p == journal_target:
+            reads["n"] += 1
+        return original(p)
+
+    monkeypatch.setattr(_journal, "read_events", counting_read_events)
+
+    assert main(["init", str(vault), "--recipe", "family"]) == 0
+    # The cache absorbs every baseline lookup after the first load.
+    assert reads["n"] == 1, (
+        f"expected one read of the vault journal under the cache scope, got {reads['n']}"
+    )

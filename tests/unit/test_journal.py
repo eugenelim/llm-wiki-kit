@@ -29,12 +29,14 @@ import pytest
 from llm_wiki_kit.errors import JournalCorruptError
 from llm_wiki_kit.journal import (
     Corruption,
+    JournalReader,
     LockUnavailableError,
     append_event,
     read_events,
     read_events_lenient,
     replay_state,
     transaction,
+    use_journal_cache,
 )
 from llm_wiki_kit.models import (
     ConfigSetEvent,
@@ -1861,3 +1863,212 @@ def test_transaction_nonblocking_raises_lockunavailable_when_held(tmp_path: Path
         if holder.is_alive():
             holder.terminate()
             holder.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# journal-reader-cache spec (qC4)
+# ---------------------------------------------------------------------------
+
+
+def _seed_event(by: str = "core") -> VaultInitEvent:
+    return VaultInitEvent(timestamp=_at(0), by=by, vault_name="v", recipe="minimal")
+
+
+def test_journal_reader_caches_events_within_scope(tmp_path: Path) -> None:
+    """``events()`` returns the same list object on every call after first load."""
+    journal = tmp_path / "journal.jsonl"
+    append_event(journal, _seed_event())
+    reader = JournalReader(journal)
+    first = reader.events()
+    second = reader.events()
+    assert first is second  # identity, not just equality — the load-bearing pin
+
+
+def test_journal_reader_lazy_loads_only_when_events_called(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``JournalReader`` does not call ``read_events`` until ``events()`` fires."""
+    import llm_wiki_kit.journal as _journal
+
+    journal = tmp_path / "journal.jsonl"
+    append_event(journal, _seed_event())
+
+    calls = {"n": 0}
+    original = _journal.read_events
+
+    def counting_read_events(p: Path) -> list[Event]:
+        calls["n"] += 1
+        return original(p)
+
+    monkeypatch.setattr(_journal, "read_events", counting_read_events)
+    reader = JournalReader(journal)
+    assert calls["n"] == 0  # constructor does NOT read
+    reader.events()
+    assert calls["n"] == 1  # first call reads
+    reader.events()
+    assert calls["n"] == 1  # second call does not
+
+
+def test_journal_reader_notify_appended_extends_list_after_load(tmp_path: Path) -> None:
+    journal = tmp_path / "journal.jsonl"
+    append_event(journal, _seed_event(by="seed"))
+    reader = JournalReader(journal)
+    loaded = reader.events()
+    assert len(loaded) == 1
+
+    later = _seed_event(by="later")
+    reader.notify_appended(later)
+    assert reader.events()[-1] is later
+    assert len(reader.events()) == 2
+
+
+def test_journal_reader_notify_appended_is_noop_before_load(tmp_path: Path) -> None:
+    """Lazy-load contract: notify_appended is no-op until events() fires.
+
+    Without this, a notify_appended call before the first events()
+    would conjure an in-memory state for events we never observed by
+    reading — divergent from disk in a way that's hard to catch.
+    """
+    journal = tmp_path / "journal.jsonl"
+    append_event(journal, _seed_event(by="on-disk"))
+    reader = JournalReader(journal)
+
+    ghost = _seed_event(by="ghost")
+    reader.notify_appended(ghost)  # no-op (events() not yet called)
+
+    loaded = reader.events()
+    assert [e.by for e in loaded if isinstance(e, VaultInitEvent)] == ["on-disk"]
+
+
+def test_use_journal_cache_installs_and_resets_contextvar(tmp_path: Path) -> None:
+    import llm_wiki_kit.journal as _journal
+
+    journal = tmp_path / "journal.jsonl"
+    assert _journal._CURRENT_READER.get() is None
+    with use_journal_cache(journal) as reader:
+        assert _journal._CURRENT_READER.get() is reader
+    assert _journal._CURRENT_READER.get() is None
+
+
+def test_use_journal_cache_resets_on_exception(tmp_path: Path) -> None:
+    import llm_wiki_kit.journal as _journal
+
+    journal = tmp_path / "journal.jsonl"
+    with pytest.raises(RuntimeError, match="body raised"):
+        with use_journal_cache(journal):
+            raise RuntimeError("body raised")
+    assert _journal._CURRENT_READER.get() is None
+
+
+def test_use_journal_cache_non_recursive_raises(tmp_path: Path) -> None:
+    journal = tmp_path / "journal.jsonl"
+    with use_journal_cache(journal):
+        with pytest.raises(RuntimeError, match="non-recursive"):
+            with use_journal_cache(journal):
+                pass  # pragma: no cover — guard fires before this line
+
+
+def test_append_event_notifies_active_reader_on_matching_journal(tmp_path: Path) -> None:
+    """Inside a cache scope, append_event extends the in-memory cache."""
+    journal = tmp_path / "journal.jsonl"
+    append_event(journal, _seed_event(by="seed"))
+
+    with use_journal_cache(journal) as reader:
+        loaded = reader.events()
+        assert len(loaded) == 1
+        append_event(journal, _seed_event(by="appended"))
+        assert len(reader.events()) == 2
+        assert reader.events()[-1].by == "appended"
+
+
+def test_append_event_does_not_notify_reader_for_different_journal(tmp_path: Path) -> None:
+    journal_a = tmp_path / "a.jsonl"
+    journal_b = tmp_path / "b.jsonl"
+    append_event(journal_a, _seed_event(by="a-seed"))
+    append_event(journal_b, _seed_event(by="b-seed"))
+
+    with use_journal_cache(journal_a) as reader_a:
+        loaded = reader_a.events()
+        assert len(loaded) == 1
+        append_event(journal_b, _seed_event(by="b-appended"))
+        # Reader for A unchanged — the append was to B.
+        assert reader_a.events() is loaded
+        assert len(reader_a.events()) == 1
+
+
+def test_append_event_does_nothing_to_cache_without_scope(tmp_path: Path) -> None:
+    """A reader for journal A is untouched when a scope-less append fires.
+
+    Pins the cross-path-without-scope contract: outside a
+    ``use_journal_cache`` block, ``_notify_reader`` looks up
+    ``_CURRENT_READER.get()``, sees ``None``, and does nothing.
+    A regression that crashed inside ``_notify_reader`` on
+    ``None.notify_appended`` (the AttributeError shape) would surface
+    here as an exception, not as a silent journal append.
+    """
+    import llm_wiki_kit.journal as _journal
+
+    journal = tmp_path / "journal.jsonl"
+    assert _journal._CURRENT_READER.get() is None
+    append_event(journal, _seed_event(by="alice"))
+    append_event(journal, _seed_event(by="bob"))
+    assert _journal._CURRENT_READER.get() is None
+    events = read_events(journal)
+    assert [e.by for e in events if isinstance(e, VaultInitEvent)] == ["alice", "bob"]
+
+
+def test_journal_reader_returns_empty_list_for_missing_journal(tmp_path: Path) -> None:
+    """Spec §Edge cases "Journal does not yet exist."
+
+    The cache scope opens *before* ``VaultInitEvent`` lands in
+    ``_cmd_init`` — on entry the journal file does not exist yet, so
+    ``events()`` must return ``[]`` cleanly. A future refactor that
+    pre-checked existence in ``__init__`` and raised would break the
+    fresh-vault flow.
+    """
+    journal = tmp_path / "absent.jsonl"
+    assert not journal.exists()
+    reader = JournalReader(journal)
+    assert reader.events() == []
+
+    # notify_appended after the empty load extends the cache normally.
+    event = _seed_event(by="post-empty")
+    reader.notify_appended(event)
+    assert reader.events() == [event]
+
+
+def test_append_event_inside_transaction_still_notifies_reader(tmp_path: Path) -> None:
+    """Held-fd branch of append_event must also notify the reader.
+
+    Otherwise multi-event operation runners (``journal.transaction``)
+    would see cache-vs-disk divergence inside the transaction body —
+    a subtle bug that this pin makes visible.
+    """
+    journal = tmp_path / "journal.jsonl"
+    append_event(journal, _seed_event(by="seed"))
+
+    with use_journal_cache(journal) as reader:
+        reader.events()  # force load
+        with transaction(journal, by="alice", reason="batch"):
+            append_event(journal, _seed_event(by="inside-tx"))
+            # LockAcquiredEvent + inside-tx + seed = 3 events
+        # …+ LockReleasedEvent = 4 events
+        cached_bys = [e.by for e in reader.events()]
+        # Acquire and release events also flow through append_event, so
+        # the cache should be aware of every event the transaction
+        # emitted, not just inside-tx.
+        assert "seed" in cached_bys
+        assert "inside-tx" in cached_bys
+        # Cross-check: on-disk file must agree.
+        disk_bys = [e.by for e in read_events(journal)]
+        assert cached_bys == disk_bys
+
+
+def test_use_journal_cache_nested_inside_transaction_is_allowed(tmp_path: Path) -> None:
+    """The two ContextVars are orthogonal — one is held-fd, one is cache."""
+    journal = tmp_path / "journal.jsonl"
+    with transaction(journal, by="alice", reason="outer"):
+        with use_journal_cache(journal) as reader:
+            append_event(journal, _seed_event(by="inside-both"))
+            cached_bys = [e.by for e in reader.events()]
+            assert "inside-both" in cached_bys

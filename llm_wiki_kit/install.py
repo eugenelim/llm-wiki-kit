@@ -31,16 +31,72 @@ already journaled by their own ``primitive.install`` events.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from llm_wiki_kit import journal
 from llm_wiki_kit.errors import PrimitiveError
 from llm_wiki_kit.journal import append_event
 from llm_wiki_kit.models import Contribution, Primitive, PrimitiveInstallEvent
 from llm_wiki_kit.render import render_tree
 from llm_wiki_kit.write_helper import safe_write_region
+
+_logger = logging.getLogger(__name__)
+
+# Above this many journal events, an install pipeline that runs
+# without an active ``use_journal_cache`` scope is operating on the
+# wrong perf curve (O(events * writes)). The warning surfaces the
+# discipline gap at the same severity as the journal-locking
+# fallback warning in ``journal.py``.
+_UNCACHED_INSTALL_PIPELINE_WARN_THRESHOLD = 50
+
+# One warning per resolved journal path per process, so a multi-invocation
+# session (or a test that drives install_primitives many times) doesn't
+# carpet-bomb the log.
+_UNCACHED_PIPELINE_WARNED: set[Path] = set()
+
+
+def _warn_if_install_pipeline_uncached(journal_path: Path) -> None:
+    """Emit one WARNING per resolved journal path if no cache scope is active.
+
+    The cache is opt-in at the handler boundary; a new install-style
+    handler that forgets the ``with journal.use_journal_cache(...):``
+    wrapper falls back to O(events * writes) baseline lookups silently
+    — no test fails, the install is just slow. This warning is the
+    runtime signal that turns "the install feels slow" into a
+    grep-able log line naming the spec.
+
+    Below ``_UNCACHED_INSTALL_PIPELINE_WARN_THRESHOLD`` events, the
+    perf cliff is negligible; we don't warn. The threshold is
+    intentionally lenient — the warning is for an honest forgot-the-
+    wrapper bug on a real-sized vault, not a one-off small write.
+    """
+
+    if journal._CURRENT_READER.get() is not None:
+        return
+    if not journal_path.exists():
+        return  # fresh vault; nothing yet to count
+    try:
+        event_count = sum(1 for _ in journal_path.open("r", encoding="utf-8"))
+    except OSError:
+        return  # don't crash on a transient read failure
+    if event_count < _UNCACHED_INSTALL_PIPELINE_WARN_THRESHOLD:
+        return
+    resolved = journal_path.resolve()
+    if resolved in _UNCACHED_PIPELINE_WARNED:
+        return
+    _UNCACHED_PIPELINE_WARNED.add(resolved)
+    _logger.warning(
+        "install pipeline running without a journal.use_journal_cache() "
+        "scope on a vault with %d events at %s — baseline lookups will "
+        "be O(events * writes). See docs/specs/journal-reader-cache/spec.md.",
+        event_count,
+        resolved,
+    )
+
 
 _REGIONS_SUBDIR = "regions"
 
@@ -230,6 +286,7 @@ def install_primitives(
     primitive name itself, matching the existing render contract.
     """
 
+    _warn_if_install_pipeline_uncached(journal_path)
     vault_root = journal_path.parent.parent
     for primitive in to_install:
         append_event(

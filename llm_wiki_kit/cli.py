@@ -35,7 +35,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from llm_wiki_kit import __version__
+from llm_wiki_kit import __version__, journal
 from llm_wiki_kit.doctor import format_issue, run_doctor
 from llm_wiki_kit.errors import WikiError
 from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
@@ -285,29 +285,36 @@ def _cmd_init(args: argparse.Namespace) -> int:
     context = _build_context(recipe, vault_name)
     now = datetime.now(UTC)
 
-    append_event(
-        journal_path,
-        VaultInitEvent(
-            timestamp=now,
-            by=INSTALL_VEHICLE_INIT,
-            vault_name=vault_name,
-            recipe=recipe.name,
-        ),
-    )
+    # Install pipeline amortises baseline lookups through one
+    # JournalReader scope (qC4). Every `safe_write` /
+    # `safe_write_region` inside reads the journal at most once;
+    # subsequent baseline lookups consult the in-memory cache that
+    # `append_event` extends after each fsync. See
+    # `docs/specs/journal-reader-cache/spec.md`.
+    with journal.use_journal_cache(journal_path):
+        append_event(
+            journal_path,
+            VaultInitEvent(
+                timestamp=now,
+                by=INSTALL_VEHICLE_INIT,
+                vault_name=vault_name,
+                recipe=recipe.name,
+            ),
+        )
 
-    # Per-primitive render + the second-pass region aggregator
-    # (ADR-0006). ``install_primitives`` runs ``to_install`` ==
-    # ``all_installed`` for ``wiki init`` because every primitive in
-    # the closure is new to this vault.
-    install_primitives(
-        to_install=ordered,
-        all_installed=ordered,
-        sources=sources,
-        journal_path=journal_path,
-        context=context,
-        install_vehicle=INSTALL_VEHICLE_INIT,
-        now=now,
-    )
+        # Per-primitive render + the second-pass region aggregator
+        # (ADR-0006). ``install_primitives`` runs ``to_install`` ==
+        # ``all_installed`` for ``wiki init`` because every primitive in
+        # the closure is new to this vault.
+        install_primitives(
+            to_install=ordered,
+            all_installed=ordered,
+            sources=sources,
+            journal_path=journal_path,
+            context=context,
+            install_vehicle=INSTALL_VEHICLE_INIT,
+            now=now,
+        )
     return 0
 
 
@@ -446,15 +453,17 @@ def _cmd_add(args: argparse.Namespace) -> int:
     context = _build_context(recipe, state.vault_name)
     now = datetime.now(UTC)
 
-    install_primitives(
-        to_install=to_install,
-        all_installed=all_installed_ordered,
-        sources=sources,
-        journal_path=journal_path,
-        context=context,
-        install_vehicle=INSTALL_VEHICLE_ADD,
-        now=now,
-    )
+    # qC4 install-pipeline cache scope, same shape as _cmd_init.
+    with journal.use_journal_cache(journal_path):
+        install_primitives(
+            to_install=to_install,
+            all_installed=all_installed_ordered,
+            sources=sources,
+            journal_path=journal_path,
+            context=context,
+            install_vehicle=INSTALL_VEHICLE_ADD,
+            now=now,
+        )
     return 0
 
 

@@ -318,3 +318,93 @@ def test_aggregate_raises_when_primitive_source_missing(tmp_path: Path) -> None:
             journal_path=_journal(vault),
             by="wiki-init",
         )
+
+
+# ---------------------------------------------------------------------------
+# _warn_if_install_pipeline_uncached
+# ---------------------------------------------------------------------------
+
+
+def test_uncached_install_pipeline_warns_on_large_journal(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An install run on a vault with >= threshold events warns when no cache scope is active."""
+    import logging
+
+    from llm_wiki_kit import install
+    from llm_wiki_kit.install import _warn_if_install_pipeline_uncached
+    from llm_wiki_kit.journal import append_event
+    from llm_wiki_kit.models import VaultInitEvent
+
+    install._UNCACHED_PIPELINE_WARNED.clear()
+    journal_path = tmp_path / ".wiki.journal" / "journal.jsonl"
+    journal_path.parent.mkdir(parents=True)
+    # Seed the journal with enough events to trip the threshold.
+    from datetime import UTC, datetime
+
+    for i in range(install._UNCACHED_INSTALL_PIPELINE_WARN_THRESHOLD + 5):
+        append_event(
+            journal_path,
+            VaultInitEvent(timestamp=datetime.now(UTC), by=f"seed-{i}", vault_name="v", recipe="r"),
+        )
+
+    with caplog.at_level(logging.WARNING, logger="llm_wiki_kit.install"):
+        _warn_if_install_pipeline_uncached(journal_path)
+    messages = [r.message for r in caplog.records]
+    assert any("install pipeline running without" in m for m in messages)
+
+
+def test_uncached_install_pipeline_warning_suppressed_under_active_cache(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Inside ``use_journal_cache``, the warning is silent — the discipline is satisfied."""
+    import logging
+    from datetime import UTC, datetime
+
+    from llm_wiki_kit import install
+    from llm_wiki_kit.install import _warn_if_install_pipeline_uncached
+    from llm_wiki_kit.journal import append_event, use_journal_cache
+    from llm_wiki_kit.models import VaultInitEvent
+
+    install._UNCACHED_PIPELINE_WARNED.clear()
+    journal_path = tmp_path / ".wiki.journal" / "journal.jsonl"
+    journal_path.parent.mkdir(parents=True)
+    for i in range(install._UNCACHED_INSTALL_PIPELINE_WARN_THRESHOLD + 5):
+        append_event(
+            journal_path,
+            VaultInitEvent(timestamp=datetime.now(UTC), by=f"seed-{i}", vault_name="v", recipe="r"),
+        )
+
+    with use_journal_cache(journal_path):
+        with caplog.at_level(logging.WARNING, logger="llm_wiki_kit.install"):
+            _warn_if_install_pipeline_uncached(journal_path)
+    messages = [r.message for r in caplog.records]
+    assert not any("install pipeline running without" in m for m in messages)
+
+
+def test_uncached_install_pipeline_warning_suppressed_below_threshold(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A small journal doesn't trigger the warning — the perf cliff isn't reached."""
+    import logging
+    from datetime import UTC, datetime
+
+    from llm_wiki_kit import install
+    from llm_wiki_kit.install import _warn_if_install_pipeline_uncached
+    from llm_wiki_kit.journal import append_event
+    from llm_wiki_kit.models import VaultInitEvent
+
+    install._UNCACHED_PIPELINE_WARNED.clear()
+    journal_path = tmp_path / ".wiki.journal" / "journal.jsonl"
+    journal_path.parent.mkdir(parents=True)
+    # Far below the threshold.
+    for i in range(5):
+        append_event(
+            journal_path,
+            VaultInitEvent(timestamp=datetime.now(UTC), by=f"seed-{i}", vault_name="v", recipe="r"),
+        )
+
+    with caplog.at_level(logging.WARNING, logger="llm_wiki_kit.install"):
+        _warn_if_install_pipeline_uncached(journal_path)
+    messages = [r.message for r in caplog.records]
+    assert not any("install pipeline running without" in m for m in messages)

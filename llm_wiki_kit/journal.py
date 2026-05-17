@@ -111,6 +111,82 @@ class _HeldFd:
 # ``append_event`` has always taken.
 _HELD_FD: ContextVar[_HeldFd | None] = ContextVar("_HELD_FD", default=None)
 
+
+class JournalReader:
+    """Per-invocation read cache for one journal path.
+
+    ``write_helper``'s baseline lookups (``_baseline_hash``,
+    ``_managed_region_baseline_hash``, ``_known_regions_for_file``)
+    each call ``read_events`` on every ``safe_write`` —
+    O(events * writes) across an install pipeline. This cache
+    amortises the read over one CLI invocation:
+
+    - First ``events()`` call reads the file from disk via
+      ``read_events(self.journal_path)`` and caches the list.
+    - Subsequent ``events()`` calls return the same list object.
+    - ``notify_appended(event)`` is called by ``append_event`` after
+      its ``fsync`` returns, extending the in-memory list so the
+      cache stays equal to disk for the rest of the scope (single-
+      writer assumption per ADR-0002).
+
+    Lifecycle is bounded by a ``use_journal_cache`` scope; outside
+    the scope, ``read_events`` is called every time as today.
+
+    See ``docs/specs/journal-reader-cache/spec.md`` for the full
+    contract.
+    """
+
+    def __init__(self, journal_path: Path) -> None:
+        # Resolve on construction so the reader's identity is frozen
+        # for the scope's lifetime — matches the spec's promise and
+        # avoids re-resolving the same path on every ``notify_appended``
+        # check, which would also create a tiny window where the
+        # identity could shift if CWD changed mid-scope.
+        self.journal_path = journal_path.resolve()
+        self._events: list[Event] | None = None
+
+    def events(self) -> list[Event]:
+        """Return the cached event list (lazy-loaded on first call).
+
+        The returned list is the internal cache; callers must not
+        mutate it. A defensive copy would double the memory cost for
+        no real safety win against in-process callers.
+        """
+
+        if self._events is None:
+            self._events = read_events(self.journal_path)
+            _logger.debug(
+                "journal cache loaded %d events from %s",
+                len(self._events),
+                self.journal_path,
+            )
+        return self._events
+
+    def notify_appended(self, event: Event) -> None:
+        """Extend the cache with ``event`` if the cache is loaded.
+
+        No-op when ``events()`` has not yet been called — the lazy-load
+        contract says "don't conjure an in-memory state for events
+        we never observed by reading." A subsequent ``events()`` call
+        reads from disk and sees ``event`` there (because the writer
+        already ``fsync``'d it before calling here).
+        """
+
+        if self._events is not None:
+            self._events.append(event)
+            _logger.debug(
+                "journal cache extended (%d events) for %s",
+                len(self._events),
+                self.journal_path,
+            )
+
+
+# Per-context active reader, analogous to ``_HELD_FD``. ``write_helper``
+# consults this; ``append_event`` extends the matching reader after
+# ``fsync`` returns. Default ``None`` means "no cache scope is active
+# in this context" — fall through to ``read_events`` semantics.
+_CURRENT_READER: ContextVar[JournalReader | None] = ContextVar("_CURRENT_READER", default=None)
+
 # Module-level stash for fds left open by ``transaction(persist=True)``'s
 # clean exit. Keyed on resolved journal path. Without this, the fd opened
 # inside ``transaction`` is a generator-frame local: once the generator
@@ -348,8 +424,9 @@ def append_event(journal_path: Path, event: Event, *, nonblocking: bool = False)
     journal_path.parent.mkdir(parents=True, exist_ok=True)
     line = _EVENT_ADAPTER.dump_json(event).decode() + "\n"
 
+    resolved_journal = journal_path.resolve()
     held = _HELD_FD.get()
-    if held is not None and held.resolved_path == journal_path.resolve():
+    if held is not None and held.resolved_path == resolved_journal:
         # Inside an open transaction for this journal: reuse the held fd,
         # skip per-call open + flock. The outer transaction took LOCK_EX
         # once; re-flocking here would be a no-op at best (the kernel
@@ -359,6 +436,7 @@ def append_event(journal_path: Path, event: Event, *, nonblocking: bool = False)
         held.fh.write(line)
         held.fh.flush()
         os.fsync(held.fh.fileno())
+        _notify_reader(resolved_journal, event)
         return
 
     with journal_path.open("a", encoding="utf-8") as fh:
@@ -366,6 +444,79 @@ def append_event(journal_path: Path, event: Event, *, nonblocking: bool = False)
         fh.write(line)
         fh.flush()
         os.fsync(fh.fileno())
+        # Cache update *inside* the with block so a ``close()`` failure
+        # (rare; possible on network mounts) cannot leave the cache
+        # short of one event that's already durable on disk.
+        # ``notify_appended`` is a list append — fast enough that
+        # extending the LOCK_EX hold window is negligible.
+        _notify_reader(resolved_journal, event)
+
+
+def _notify_reader(resolved_journal: Path, event: Event) -> None:
+    """Extend the active ``JournalReader`` if it tracks the same journal.
+
+    Called by ``append_event`` after ``fsync`` returns (both the
+    per-event-lock branch and the held-fd branch). The path-equality
+    test ensures a cache for journal `A` is never extended by an
+    append to journal `B`. The reader's ``journal_path`` is already
+    resolved (constructor-time) so the comparison here is between two
+    resolved paths — symbolic and case-equivalent forms collapse to
+    one identity.
+
+    Exceptions from ``notify_appended`` (in practice only
+    ``MemoryError`` from ``list.append``) are caught and logged,
+    NOT propagated. The semantic contract is: an ``append_event``
+    that returns successfully has ``fsync``'d the line to disk —
+    a cache-side failure after that point must not surface as
+    "your write failed." The cache is now stale; the next
+    ``events()`` call (or the next handler) reads from disk and
+    reconciles.
+    """
+
+    reader = _CURRENT_READER.get()
+    if reader is not None and reader.journal_path == resolved_journal:
+        try:
+            reader.notify_appended(event)
+        except Exception:
+            _logger.exception(
+                "journal cache notify_appended failed for %s — "
+                "the disk write is durable; the cache is now stale "
+                "and will reconcile on next events() read",
+                resolved_journal,
+            )
+
+
+@contextmanager
+def use_journal_cache(journal_path: Path) -> Iterator[JournalReader]:
+    """Install a :class:`JournalReader` for the duration of the ``with`` block.
+
+    Inside the block, ``write_helper``'s baseline lookups consult the
+    cached event list instead of re-reading the journal from disk on
+    every call. ``append_event`` extends the cache after ``fsync``
+    returns, keeping it in sync with disk for the rest of the scope.
+
+    Non-recursive: entering this manager while another is already
+    active in the same context raises ``RuntimeError`` (mirrors
+    :func:`transaction`). The ``ContextVar`` makes the guard
+    per-task / per-thread, so a future async runner can scope
+    different readers across different tasks without leakage.
+
+    See ``docs/specs/journal-reader-cache/spec.md`` for the full
+    contract.
+    """
+
+    if _CURRENT_READER.get() is not None:
+        raise RuntimeError(
+            "journal.use_journal_cache() is non-recursive: a cache scope is "
+            "already active in this context. Nested entries would silently "
+            "discard the inner reader on exit and confuse the lookup."
+        )
+    reader = JournalReader(journal_path)
+    token = _CURRENT_READER.set(reader)
+    try:
+        yield reader
+    finally:
+        _CURRENT_READER.reset(token)
 
 
 @contextmanager
