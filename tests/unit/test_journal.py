@@ -595,10 +595,10 @@ def test_replay_source_ingest_indexes_by_source() -> None:
 
 def test_replay_operation_run_keeps_most_recent_per_operation() -> None:
     first = OperationRunEvent(
-        timestamp=_at(0), by="core", operation="weekly-digest", status="success"
+        timestamp=_at(0), by="core", operation="weekly-digest", status="dispatched"
     )
     second = OperationRunEvent(
-        timestamp=_at(1), by="core", operation="weekly-digest", status="success"
+        timestamp=_at(1), by="core", operation="weekly-digest", status="dispatched"
     )
     state = replay_state([first, second])
     assert state.recent_operations == {"weekly-digest": second}

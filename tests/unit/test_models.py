@@ -235,12 +235,13 @@ def test_operation_contract_accepts_period_and_skill() -> None:
             "description": "Synthesize the week.",
             "period": "weekly",
             "skill": "weekly-digest",
-            "inputs": {"sources": "list[Page]"},
+            "inputs": {"sources": {"type": "list", "items": "content-type"}},
             "outputs": {"digest": "Page"},
         }
     )
     assert c.period == "weekly"
     assert c.skill == "weekly-digest"
+    assert c.inputs["sources"].type == "list"
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +312,7 @@ EVENT_FIXTURES: dict[str, dict[str, object]] = {
     "operation.run": {
         "operation": "weekly-digest",
         "period": "2026-W20",
-        "status": "success",
+        "status": "dispatched",
         "produced_pages": ["digests/2026-W20.md"],
     },
     "research.query": {
