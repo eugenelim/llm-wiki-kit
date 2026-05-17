@@ -478,7 +478,7 @@ def _ingest_event_from_result(
             source=source,
             content_type=result.content_type,
             candidates=[result.content_type],
-            via=result.via,  # type: ignore[arg-type]
+            via=result.via,
             signals=result.signals,
         )
     if isinstance(result, Ambiguous):

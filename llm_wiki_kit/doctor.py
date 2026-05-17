@@ -54,16 +54,12 @@ JOURNAL_CORRUPT = "journal-corrupt"
 # when the env var is absent, blank, or unparseable.
 _DEFAULT_STALE_HOURS = 24
 
-# Kit-owned vault paths. Files outside these are user-owned and invisible
-# to the orphan check by design (ADR-0004: the kit never touches user
-# territory). Keep in sync with the install pipeline's render targets.
-KIT_OWNED_FILES: tuple[str, ...] = (
-    "AGENTS.md",
-    "CORE.md",
-    "frontmatter.schema.yaml",
-    ".gitignore",
-)
-KIT_OWNED_DIRS: tuple[str, ...] = ("skills", "_templates", "wiki")
+# Kit-owned vault paths are derived from ``state.page_writes`` rather
+# than enumerated as a static tuple (retro-review qC10 + C6). The kit
+# claims territory by writing it; an empty vault claims nothing, and
+# the orphan check stays silent until ``wiki init`` (or a later
+# ``safe_write``) has journaled at least one path. ADR-0004: the kit
+# never touches user territory.
 
 
 @dataclass(frozen=True)
@@ -202,19 +198,54 @@ def check_missing(state: VaultState, vault_root: Path) -> list[Issue]:
 def check_orphans(state: VaultState, vault_root: Path) -> list[Issue]:
     """Files under kit-owned paths with no corresponding journal event.
 
-    Skips ``.proposed`` sidecars (those surface as pending-proposal)
-    and files outside :data:`KIT_OWNED_FILES` / :data:`KIT_OWNED_DIRS`
-    (user-owned territory).
+    Kit-owned territory is derived from ``state.page_writes``
+    (retro-review qC10 + C6): every path the kit has ever recorded a
+    ``page.write`` for contributes. The top-level directory of every
+    such path is treated as kit territory; journaled top-level
+    filenames are watched directly. Skips ``.proposed`` sidecars
+    (those surface as pending-proposal) and any path outside the
+    derived territory (user-owned by default).
+
+    Doctrine: only ``page.write`` events extend territory.
+    ``ManagedRegionWriteEvent``s always reference a file that was
+    seeded earlier via ``safe_write`` (which emits a ``PageWriteEvent``),
+    so the shared-file case is already covered by the page-writes
+    fold-in. ``SourceIngestEvent.produced_pages`` is a forward-looking
+    record; the actual page writes the vault-side ingester performs
+    flow through ``safe_write`` and emit their own ``PageWriteEvent``s.
+    Folding either of those event types in would double-count
+    territory without expanding what the kit actually owns.
+
+    Transition note: an empty journal claims no territory. The orphan
+    check fires only after the kit has journaled at least one write —
+    which the install pipeline does on every ``wiki init``. A user
+    adding files under a top-level dir before the kit has touched
+    that dir gets a silent pass; once the kit journals anything under
+    that dir, those files surface as orphans. The same was true under
+    the previous static tuples for ``skills/``, ``_templates/``, and
+    ``wiki/`` (categorically kit-owned), so the user-visible UX change
+    is bounded to the pre-init window.
     """
 
     journaled = set(state.page_writes)
     proposal_sidecars = {e.proposed_path for e in state.pending_proposals.values()}
 
+    owned_files: set[str] = set()
+    owned_dirs: set[str] = set()
+    for journaled_path in journaled:
+        parts = Path(journaled_path).parts
+        if not parts:
+            continue
+        if len(parts) == 1:
+            owned_files.add(parts[0])
+        else:
+            owned_dirs.add(parts[0])
+
     candidates: list[str] = []
-    for name in KIT_OWNED_FILES:
+    for name in owned_files:
         if (vault_root / name).is_file():
             candidates.append(name)
-    for dir_name in KIT_OWNED_DIRS:
+    for dir_name in owned_dirs:
         directory = vault_root / dir_name
         if not directory.is_dir():
             continue
