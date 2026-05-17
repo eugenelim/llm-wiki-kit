@@ -1,7 +1,7 @@
 """End-to-end ``wiki ingest`` integration tests (RFC-0001 Task 16).
 
-Uses the tmp-kit monkeypatch pattern from ``test_wiki_add.py``: a
-tmp ``_KIT_ROOT`` holds the real ``core`` plus a small set of
+Uses the tmp-kit threading pattern from ``test_wiki_add.py`` (qC8):
+a tmp kit holds the real ``core`` plus a small set of
 content-type primitives whose ``routing:`` blocks are pinned in this
 file. Pinning the routing surface here (rather than asserting against
 the bundled family-recipe primitives) keeps the test stable when later
@@ -70,7 +70,7 @@ def _write_content_type(
 
 
 @pytest.fixture
-def kit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def kit_root(tmp_path: Path) -> Path:
     kit = tmp_path / "kit"
     kit.mkdir()
     shutil.copytree(REPO_ROOT / "core", kit / "core")
@@ -122,14 +122,13 @@ def kit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(cli, "_KIT_ROOT", kit)
     return kit
 
 
 @pytest.fixture
 def vault(tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     v = tmp_path / "vault"
-    assert cli.main(["init", str(v), "--recipe", "minimal"]) == 0
+    assert cli.main(["init", str(v), "--recipe", "minimal"], kit_root=kit_root) == 0
     monkeypatch.chdir(v)
     return v
 
@@ -147,9 +146,11 @@ def _latest_routed(vault: Path) -> IngestRoutedEvent:
 
 
 def test_ingest_routes_recipe_url_to_recipe_primitive(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, kit_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    exit_code = cli.main(["ingest", "https://allrecipes.com/recipe/sheet-pan-tacos"])
+    exit_code = cli.main(
+        ["ingest", "https://allrecipes.com/recipe/sheet-pan-tacos"], kit_root=kit_root
+    )
     assert exit_code == 0
 
     out = capsys.readouterr().out
@@ -164,9 +165,9 @@ def test_ingest_routes_recipe_url_to_recipe_primitive(
 
 
 def test_ingest_routes_filename_pattern_to_medical_record(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, kit_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    exit_code = cli.main(["ingest", "EOB-2026-04-15-jake.txt"])
+    exit_code = cli.main(["ingest", "EOB-2026-04-15-jake.txt"], kit_root=kit_root)
     assert exit_code == 0
     assert "content-type:medical-record" in capsys.readouterr().out
 
@@ -181,12 +182,12 @@ def test_ingest_routes_filename_pattern_to_medical_record(
 
 
 def test_ingest_ambiguous_returns_exit_2_and_lists_candidates(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, kit_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # ``EOB-2026.pdf`` matches ``medical-record`` (filename pattern EOB-*)
     # and ``receipt`` (file extension .pdf). Both fire; orchestrator
     # refuses to pick.
-    exit_code = cli.main(["ingest", "EOB-2026-04-15.pdf"])
+    exit_code = cli.main(["ingest", "EOB-2026-04-15.pdf"], kit_root=kit_root)
     assert exit_code == cli.WIKI_ERROR_EXIT or exit_code == cli.INGEST_ROUTE_FAILED_EXIT
 
     err = capsys.readouterr().err
@@ -206,9 +207,9 @@ def test_ingest_ambiguous_returns_exit_2_and_lists_candidates(
 
 
 def test_ingest_no_match_returns_exit_2_and_lists_available(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, kit_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    exit_code = cli.main(["ingest", "/tmp/mystery.bin"])
+    exit_code = cli.main(["ingest", "/tmp/mystery.bin"], kit_root=kit_root)
     assert exit_code == cli.INGEST_ROUTE_FAILED_EXIT
 
     err = capsys.readouterr().err
@@ -226,12 +227,13 @@ def test_ingest_no_match_returns_exit_2_and_lists_available(
 
 
 def test_ingest_as_override_bypasses_detection(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, kit_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Source is a URL that *would* auto-route to ``recipe``; --as forces
     # ``interview`` instead, even though interview has no routing block.
     exit_code = cli.main(
-        ["ingest", "https://allrecipes.com/recipe/sheet-pan-tacos", "--as", "interview"]
+        ["ingest", "https://allrecipes.com/recipe/sheet-pan-tacos", "--as", "interview"],
+        kit_root=kit_root,
     )
     assert exit_code == 0
     assert "content-type:interview" in capsys.readouterr().out
@@ -243,9 +245,9 @@ def test_ingest_as_override_bypasses_detection(
 
 
 def test_ingest_as_override_for_unknown_primitive_is_wiki_error(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, kit_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    exit_code = cli.main(["ingest", "anything.txt", "--as", "nonexistent"])
+    exit_code = cli.main(["ingest", "anything.txt", "--as", "nonexistent"], kit_root=kit_root)
     assert exit_code == cli.WIKI_ERROR_EXIT
     assert "nonexistent" in capsys.readouterr().err
 
@@ -265,4 +267,4 @@ def test_ingest_outside_a_vault_is_wiki_error(
     not_a_vault = tmp_path / "elsewhere"
     not_a_vault.mkdir()
     monkeypatch.chdir(not_a_vault)
-    assert cli.main(["ingest", "foo.txt"]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["ingest", "foo.txt"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT

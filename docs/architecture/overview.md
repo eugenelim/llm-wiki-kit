@@ -84,6 +84,18 @@ any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
 `llm_wiki_kit/` is small on purpose — one job per module, each independently
 testable.
 
+The kit bundles `recipes/`, `core/`, and `templates/` into the wheel via
+a hatchling `force-include` relocation (see
+[`docs/specs/wheel-bundled-assets/spec.md`](../specs/wheel-bundled-assets/spec.md)).
+The source tree keeps them at the top level for catalog-editing ergonomics;
+the wheel relocates them under `llm_wiki_kit/_assets/`. `cli._kit_root()`
+resolves the right location for both install modes (wheel via
+`importlib.resources`, editable / source-checkout via the package's
+parent directory). Production code reads the resolved root through
+`cli._kit_paths()` or accepts an explicit override via
+`cli.main(argv, kit_root=...)`; the module-level `_KIT_ROOT` attribute
+is the lazy cache, never read directly from outside the resolver block.
+
 The dependency graph is intentionally a shallow DAG. `models.py` has no
 internal imports; `journal.py` depends only on `models.py`; `write_helper.py`
 depends on `journal.py` and `models.py`; everything else depends on the bottom

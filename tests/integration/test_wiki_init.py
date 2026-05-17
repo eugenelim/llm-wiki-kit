@@ -35,14 +35,17 @@ def _journal_path(vault: Path) -> Path:
 
 
 @pytest.fixture
-def core_only_recipe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    """Install a minimal core-only recipe alongside the bundled ones.
+def core_only_kit(tmp_path: Path) -> Path:
+    """Build a kit root with a 'core-only' recipe symlinked back to the real assets.
 
     The shipped recipes have all grown past the core-only shape, so we
-    drop a temporary ``recipes/core-only.yaml`` into the kit-paths root
-    by redirecting ``_KIT_ROOT`` at a tmp tree that symlinks back to the
-    real ``core/`` and ``templates/`` directories. The temporary recipe
-    lists no primitives; the loader auto-prepends ``core``.
+    drop a temporary ``recipes/core-only.yaml`` into a tmp kit tree that
+    symlinks back to the real ``core/`` and ``templates/`` directories.
+    The temporary recipe lists no primitives; the loader auto-prepends
+    ``core``.
+
+    Tests pass the returned path as ``cli.main(argv, kit_root=...)`` —
+    the post-qC8 threading pattern, no module-level monkeypatch.
     """
 
     from llm_wiki_kit import cli
@@ -59,17 +62,17 @@ def core_only_recipe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
         "  recipe_name: core-only\n",
         encoding="utf-8",
     )
-    (kit_root / "core").symlink_to(cli._KIT_ROOT / "core")
-    (kit_root / "templates").symlink_to(cli._KIT_ROOT / "templates")
+    repo_root = cli._kit_root()
+    (kit_root / "core").symlink_to(repo_root / "core")
+    (kit_root / "templates").symlink_to(repo_root / "templates")
 
-    monkeypatch.setattr(cli, "_KIT_ROOT", kit_root)
-    return "core-only"
+    return kit_root
 
 
-def test_init_renders_core_only_vault(tmp_path: Path, core_only_recipe: str) -> None:
+def test_init_renders_core_only_vault(tmp_path: Path, core_only_kit: Path) -> None:
     vault = tmp_path / "my-vault"
 
-    exit_code = main(["init", str(vault), "--recipe", core_only_recipe])
+    exit_code = main(["init", str(vault), "--recipe", "core-only"], kit_root=core_only_kit)
 
     assert exit_code == 0
 
@@ -103,17 +106,17 @@ def test_init_renders_core_only_vault(tmp_path: Path, core_only_recipe: str) -> 
     assert journal.is_file()
 
 
-def test_init_journal_state_replays_cleanly(tmp_path: Path, core_only_recipe: str) -> None:
+def test_init_journal_state_replays_cleanly(tmp_path: Path, core_only_kit: Path) -> None:
     vault = tmp_path / "another-vault"
 
-    assert main(["init", str(vault), "--recipe", core_only_recipe]) == 0
+    assert main(["init", str(vault), "--recipe", "core-only"], kit_root=core_only_kit) == 0
 
     events = read_events(_journal_path(vault))
 
     # (b) The first event is VaultInit; the second is PrimitiveInstall(core).
     assert isinstance(events[0], VaultInitEvent)
     assert events[0].vault_name == "another-vault"
-    assert events[0].recipe == core_only_recipe
+    assert events[0].recipe == "core-only"
     assert events[0].by == "wiki-init"
 
     assert isinstance(events[1], PrimitiveInstallEvent)
@@ -126,7 +129,7 @@ def test_init_journal_state_replays_cleanly(tmp_path: Path, core_only_recipe: st
 
     state = replay_state(events)
     assert state.vault_name == "another-vault"
-    assert state.recipe == core_only_recipe
+    assert state.recipe == "core-only"
     assert state.installed_primitives == {"core": "0.1.0"}
 
     # Each top-level file we rendered shows up in the state's page_writes.

@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import errno
 import fcntl
+import importlib.resources
 import os
 import sys
 import traceback
@@ -87,15 +88,91 @@ STALE_LOCK_RECLAIM_BY = "wiki-doctor"
 STALE_LOCK_RECLAIM_REASON = "stale lock reclaimed"
 
 # Where the kit's bundled assets (``recipes/``, ``core/``, ``templates/``)
-# live at runtime. We resolve them as siblings of the installed package via
-# ``Path(__file__).parent.parent``. This works for the ``pip install -e .``
-# checkout that every contributor uses today; under a real wheel install,
-# those directories are NOT yet copied into the wheel (see
-# ``pyproject.toml`` — ``hatch.build.targets.wheel.packages`` only lists
-# ``llm_wiki_kit``). TODO: package the asset dirs via hatchling and switch
-# to ``importlib.resources`` before the first wheel release. Pinning the
-# simpler approach now keeps Task 10 unblocked on the packaging work.
-_KIT_ROOT: Path = Path(__file__).resolve().parent.parent
+# live at runtime. ``importlib.resources`` reads the wheel's relocated
+# in-package ``_assets/`` tree; an editable / source-checkout install
+# falls back to ``Path(__file__).resolve().parent.parent`` (the repo root).
+# See ``docs/specs/wheel-bundled-assets/spec.md``.
+#
+# Resolution is **lazy**: ``_KIT_ROOT`` is populated by ``_kit_root()`` on
+# first call. ``import llm_wiki_kit.cli`` does not read the filesystem to
+# find the asset trees, so a misconfigured wheel still leaves
+# ``wiki --version`` / ``wiki --help`` usable for diagnosis. Production
+# code reads the kit root via ``_kit_root()`` or ``_kit_paths()``. The
+# grep guard in ``tests/unit/test_cli_kit_root.py`` pins the *cross-file*
+# boundary (no other module or test references the identifier
+# ``_KIT_ROOT``); intra-``cli.py`` discipline — only the resolver block
+# below reads the attribute — is convention, not gate-enforced.
+_BUNDLE_PREFIX = "_assets"
+_KIT_SUBDIRS: tuple[str, str, str] = ("recipes", "core", "templates")
+_KIT_ROOT: Path | None = None
+
+
+def _bundled_assets_path() -> Path | None:
+    """Return the in-package bundled-assets directory, or ``None``.
+
+    Separate seam so tests can monkeypatch this function directly
+    without faking the ``importlib.resources`` Traversable protocol.
+    Returns the path when it points at a real on-disk directory (the
+    wheel-install case); returns ``None`` for editable installs where
+    the relocated tree is not materialized inside the package.
+    """
+
+    traversable = importlib.resources.files("llm_wiki_kit").joinpath(_BUNDLE_PREFIX)
+    candidate = Path(str(traversable))
+    return candidate if candidate.is_dir() else None
+
+
+def _source_tree_kit_root() -> Path:
+    """Return the source-checkout root containing the asset trees.
+
+    Separate seam so the resolver's source-tree branch is monkeypatchable
+    without touching ``cli.__file__`` (which is fragile and interacts
+    with importlib/traceback machinery).
+    """
+
+    return Path(__file__).resolve().parent.parent
+
+
+def _resolve_kit_root() -> Path:
+    """Resolve the directory containing ``recipes/``, ``core/``, ``templates/``.
+
+    Tried in order: bundled (wheel install) → source-tree (editable /
+    source-checkout). Each candidate must contain ALL three subdirectories
+    to win; a half-valid candidate falls through. See
+    ``docs/specs/wheel-bundled-assets/spec.md``.
+    """
+
+    bundled = _bundled_assets_path()
+    if bundled is not None and all((bundled / s).is_dir() for s in _KIT_SUBDIRS):
+        return bundled
+    source = _source_tree_kit_root()
+    if all((source / s).is_dir() for s in _KIT_SUBDIRS):
+        return source
+    # Name both candidate paths and the missing subdir set so a 3am pager
+    # can tell wheel-misconfigured apart from running-from-wrong-Python.
+    raise WikiError(
+        "kit assets not found: "
+        f"bundled={bundled if bundled is not None else '(not present)'}, "
+        f"source-tree={source}. "
+        f"Neither contains all of {', '.join(s + '/' for s in _KIT_SUBDIRS)}"
+    )
+
+
+def _kit_root() -> Path:
+    """Lazy accessor; populates ``_KIT_ROOT`` on first call.
+
+    Production code reads the kit root via this function, never via the
+    module attribute. The cache is the module attribute itself; the
+    ``tests/conftest.py`` autouse fixture resets it between tests so a
+    unit test that monkeypatches ``_bundled_assets_path`` cannot leak
+    state into the next test.
+    """
+
+    global _KIT_ROOT
+    if _KIT_ROOT is None:
+        _KIT_ROOT = _resolve_kit_root()
+    return _KIT_ROOT
+
 
 # Templates-directory layout per ``docs/architecture/overview.md``: each
 # ``PrimitiveKind`` maps to a pluralized subdirectory of ``templates/``.
@@ -116,10 +193,18 @@ def _stub(name: str) -> int:
     return NOT_IMPLEMENTED_EXIT
 
 
-def _kit_paths() -> tuple[Path, Path, Path]:
-    """Return ``(recipes_dir, core_dir, templates_dir)`` for the running kit."""
+def _kit_paths(kit_root: Path | None = None) -> tuple[Path, Path, Path]:
+    """Return ``(recipes_dir, core_dir, templates_dir)`` for the running kit.
 
-    return _KIT_ROOT / "recipes", _KIT_ROOT / "core", _KIT_ROOT / "templates"
+    Production callers pass ``args.kit_root`` (typically ``None``, in
+    which case the lazy resolver fires via :func:`_kit_root`). Tests pass
+    an explicit override via ``cli.main(argv, kit_root=...)``; the
+    threading is the qC8 fix for the previous monkeypatch-the-module
+    pattern.
+    """
+
+    root = kit_root if kit_root is not None else _kit_root()
+    return root / "recipes", root / "core", root / "templates"
 
 
 def _build_context(recipe: Recipe, vault_name: str) -> dict[str, str]:
@@ -178,7 +263,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
             "Choose an empty directory or remove its contents first."
         )
 
-    recipes_dir, core_dir, templates_dir = _kit_paths()
+    recipes_dir, core_dir, templates_dir = _kit_paths(args.kit_root)
     recipe = load_recipe(recipes_dir / f"{args.recipe}.yaml")
     catalog: list[Primitive] = [load_primitive(core_dir)]
     catalog.extend(discover_primitives(templates_dir))
@@ -309,7 +394,7 @@ def _cmd_add(args: argparse.Namespace) -> int:
             "the journal is incomplete and cannot be extended"
         )
 
-    recipes_dir, core_dir, templates_dir = _kit_paths()
+    recipes_dir, core_dir, templates_dir = _kit_paths(args.kit_root)
     catalog: list[Primitive] = [load_primitive(core_dir)]
     catalog.extend(discover_primitives(templates_dir))
     by_name: dict[str, Primitive] = {p.name: p for p in catalog}
@@ -392,7 +477,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     if not journal_path.is_file():
         raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
 
-    issues = run_doctor(vault_root, _KIT_ROOT)
+    issues = run_doctor(vault_root, args.kit_root if args.kit_root is not None else _kit_root())
 
     for issue in issues:
         print(format_issue(issue))
@@ -422,7 +507,7 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
 
     state = replay_state(read_events(journal_path))
 
-    _, core_dir, templates_dir = _kit_paths()
+    _, core_dir, templates_dir = _kit_paths(args.kit_root)
     catalog: list[Primitive] = [load_primitive(core_dir)]
     catalog.extend(discover_primitives(templates_dir))
     installed = [p for p in catalog if p.name in state.installed_primitives]
@@ -1084,9 +1169,19 @@ def _is_verbose(args: argparse.Namespace) -> bool:
     return os.environ.get("WIKI_DEBUG", "").strip().lower() in _WIKI_DEBUG_TRUTHY
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, kit_root: Path | None = None) -> int:
+    """Entry point. ``kit_root`` overrides the bundled-asset resolver.
+
+    Tests pass ``kit_root=tmp_path`` to point the CLI at a synthetic kit
+    layout without monkey-patching module state. Production callers
+    (the console script and ``python -m llm_wiki_kit``) leave it
+    ``None``; the lazy resolver fires on first asset-touching call.
+    See ``docs/specs/wheel-bundled-assets/spec.md`` §Behavior.
+    """
+
     parser = build_parser()
     args = parser.parse_args(argv)
+    args.kit_root = kit_root
     func = args.func
     try:
         return int(func(args))

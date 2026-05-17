@@ -93,12 +93,14 @@ review** loop. Summary:
 
 ```
 pip install -e .[dev]       # one-time setup (installs runtime + dev deps)
-pytest                       # run unit + integration tests
+pytest                       # run unit + integration tests (skips `slow` by convention; CI runs `pytest -m 'not slow'`)
+pytest -m 'not slow'         # explicit opt-out (the CI invocation)
+pytest -m slow               # wheel-acceptance suite (builds + installs the wheel)
 pytest tests/unit            # unit tests only (fast)
 pytest tests/evals           # eval suite (slow, also runs in separate CI workflow)
 ruff check llm_wiki_kit/     # lint
 ruff format llm_wiki_kit/    # format
-mypy llm_wiki_kit/           # type-check
+mypy llm_wiki_kit tests      # type-check (note: includes tests/, matches CI)
 wiki --help                  # exercise the CLI
 ```
 

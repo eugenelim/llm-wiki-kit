@@ -42,4 +42,4 @@ jobs:
         run: mypy llm_wiki_kit tests
 
       - name: Run tests (pytest)
-        run: pytest
+        run: pytest -m 'not slow'
