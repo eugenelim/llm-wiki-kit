@@ -55,7 +55,7 @@ The kit's own situation tightens the "when NOT" list in two ways:
 - **Don't run Ralph against a user's vault.** The kit's code never touches
   a vault outside of tests; Ralph should follow the same rule. Tests use
   `tmp_path` fixtures or `tests/fixtures/*-vault/`. See
-  [`AGENTS.md` § Things you should not do without asking](../AGENTS.md#things-you-should-not-do-without-asking).
+  [`AGENTS.md` § Check before acting](../AGENTS.md#check-before-acting).
 
 Ralph fits the kit later, once v2 is shipped and the surface area is
 stable. Plausible first uses:

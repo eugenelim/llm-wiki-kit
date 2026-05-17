@@ -6,6 +6,11 @@
 - **Status:** Draft | Implemented | Deprecated
 - **Owner:** <module or person>
 - **Related:** RFC-NNNN, ADR-NNNN, `docs/specs/<thing>/plan.md`
+- **Constrained by:** ADR-NNNN, RFC-NNNN, or `none` — external decisions
+  this spec inherits from. The adversarial-reviewer reads ADRs cited
+  here when running in spec/plan-review mode. Distinct from
+  `## Constraints` below, which lists self-imposed structural choices
+  for this spec.
 
 ## What this is
 
@@ -54,3 +59,28 @@ What does "done" look like? These translate directly into tests.
 ## Non-goals
 
 What this thing *won't* do, in case anyone asks.
+
+## Constraints
+
+What *implementation strategies* are off the table for this spec? Where
+Non-goals enumerates behaviors we won't ship, Constraints enumerates the
+structural choices we won't make — the dependencies, module boundaries,
+or architectural surface area that this work must not introduce.
+
+This is what protects the diff from sprawl. A spec can be tight on
+non-goals and still produce three new abstraction layers; Constraints
+is what prevents that. The work-loop SKILL's structural-change trigger
+measures the plan against this list when it fires; if this section is
+empty or missing, it falls back to Non-goals, the plan's
+declined-pattern register, and AGENTS.md.
+
+Each entry names a *specific* structural choice. Generic guardrails
+("keep it simple", "avoid over-engineering") belong in code review,
+not here.
+
+Examples:
+- No new module boundary under `llm_wiki_kit/`.
+- No new top-level dependency (would require an ADR per AGENTS.md).
+- No new top-level directory at the repo root.
+- No bypass of `write_helper.safe_write()`.
+- No new public CLI verb beyond what Behavior describes.

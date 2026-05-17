@@ -369,9 +369,8 @@ contributing back if we find gaps is the cheaper path.
 ## Drawbacks
 
 - **Adds one new top-level directory (`.claude/`).** [`CLAUDE.md`
-  § Things you should not do without asking](../../CLAUDE.md#things-you-should-not-do-without-asking)
-  asks for an RFC before adding top-level directories. This RFC is
-  that ask.
+  § Check before acting](../../CLAUDE.md#check-before-acting) asks for
+  an RFC before adding top-level directories. This RFC is that ask.
 - **CONVENTIONS.md expansion is substantial.** The current
   ~139 lines roughly doubles. The added sections are necessary for the
   reviewer subagents to function (see § Runtime quality), not optional
@@ -401,3 +400,48 @@ the kit-side `.claude/`, and CONVENTIONS.md grows the five required
 H2 anchors with substantive content. The kit's existing v2 migration
 (RFC-0001 tasks 17–22) continues unchanged in commit format and task
 shape; only the surrounding review discipline tightens.
+
+### Upstream baseline
+
+The adoption tracks upstream
+[`eugenelim/agent-ready-repo`](https://github.com/eugenelim/agent-ready-repo).
+Each refresh PR records the upstream HEAD it syncs against here so
+the next sync isn't archaeology.
+
+#### 2026-05-17 — baseline `e6bb41f`
+
+First post-adoption refresh after the initial RFC-0002 imports
+(PR-1 through PR-5).
+
+- **Imported / refreshed:**
+  - `.claude/skills/work-loop/SKILL.md` — declined-pattern register
+    in PLAN; structural-change pre-EXECUTE trigger; two new
+    anti-patterns; gates adapted to ruff/mypy/pytest per kit; commit
+    format restored to `v2: task <N> - <summary>`.
+  - `.claude/agents/adversarial-reviewer.md` — spec/plan-review
+    trigger expanded to cover structural changes without spec edit.
+  - `docs/_templates/spec.md` — surgical add of `## Constraints`
+    subsection (kit template kept its existing shape; full upstream
+    template not adopted to avoid orphaning existing kit specs).
+  - `AGENTS.md` — added "Keeping changes minimal" section; renamed
+    "Things you should not do without asking" → "Check before
+    acting" with positive-imperative phrasing; all kit-specific
+    bullets preserved.
+- **Upstream PRs folded in:** #5 (QE fuzz coverage), #6 (state
+  schema + caps), #7 (supervisor + implementer + parallel dispatch),
+  #8 (knowledge base lifecycle), #11 (broadened work-loop trigger
+  surface), #13 (spec template Constraints), #14 (pre-EXECUTE
+  structural-change trigger).
+- **Loose commits folded in:** `04e1f8d` (changes-minimal block),
+  `3b678a3` (B1 dodge-deferment hardening), `acea0d5` (declined-pattern
+  register).
+- **No-op (local already matches or exceeds upstream):**
+  `quality-engineer.md`, `implementer.md`, `security-reviewer.md`,
+  `docs/_templates/state.json`, `docs/knowledge/patterns.jsonl`
+  (local has 7 entries; upstream's is empty seed),
+  `docs/knowledge/README.md` (local is kit-adapted).
+- **Skipped per kit scope:** `new-package` skill (kit is single
+  Python package), `.claude/commands/conventions-check.md`
+  (deferred), brownfield-adopter guidance (#12, template-only),
+  `USING_THIS_TEMPLATE.md`, `LICENSE-*`, template README refresh,
+  `packages/_example/`.
