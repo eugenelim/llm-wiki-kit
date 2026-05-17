@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit.write_helper`
 - **Related:** [ADR-0002](../../adr/0002-journal-as-state-truth.md) (journal as state truth — `safe_write` is its largest event producer; §Negative amended by this spec), [ADR-0003](../../adr/0003-managed-regions-for-shared-files.md) (managed regions — shares the proposal path; not amended by this spec), [ADR-0004](../../adr/0004-drift-detection-and-proposal-flow.md) (drift detection — §Mechanics + §Negative amended by this spec via a §Revisions entry), [`docs/specs/safe-write-ordering/plan.md`](plan.md), retro-review issue [#23](https://github.com/eugenelim/llm-wiki-kit/issues/23) (findings `qC3`, `qC6`, `C2`)
 
@@ -150,8 +150,10 @@ substantive reason. Instead:
 2. **Re-read `abs_path` and recompute `on_disk_hash`.** If the
    re-read hash diverges from `new_hash`, a concurrent editor wrote
    between the original read at the top of `safe_write` and now —
-   abandon the fast-path and fall through to the drift predicate
-   (which will see `bytes differ` and route to `.proposed`). The
+   abandon the fast-path and route directly to the proposal branch
+   with the kit's `new_hash` (no predicate re-evaluation; the top-of-
+   function `on_disk_hash` snapshot is stale by construction, so the
+   first-read-based decision data is no longer trustworthy). The
    re-read shrinks the kit-attributable-phantom-hash window
    substantially; see the residual-races discussion below for the
    exact bound.
@@ -254,8 +256,14 @@ The user's content survives until the `wiki-conflict` skill drives
    every known region present in the resolved content, **append one
    `ManagedRegionWriteEvent`** with the region's hash in the resolved
    content (the F-B1 fix, unchanged in shape, moved before the disk
-   write). If the resolution destroys markers, return after the page-
-   write events without emitting region events (today's behavior).
+   write). If the resolution destroys markers, skip the region event
+   loop but still write the resolved content to disk — the user's
+   merge survives; subsequent `safe_write_region` calls will raise
+   `ManagedRegionError` on the next attempt, which is the surfacing
+   mechanism. (Pre-spec behaviour returned without writing, which
+   silently discarded the user's resolution work. The event-before-
+   disk reorder forced this question, and "preserve the user's
+   resolution" is the safer answer.)
 6. Write `content` to `abs_path`.
 7. Delete `<abs_path>.proposed` if present.
 
@@ -510,20 +518,20 @@ succeeds, the event is durable *before* the disk write happens"
 future refactor that flipped the order in the happy path (and
 left the failure path intact) cannot pass both:
 
-- [ ] `test_safe_write_event_durable_when_disk_write_raises` —
+- [x] `test_safe_write_event_durable_when_disk_write_raises` —
       monkeypatch `Path.write_bytes` (path-scoped) to raise
       `OSError`; call `safe_write` for a fresh path; observe the
       exception; assert the journal contains the `PageWriteEvent`
       AND `not abs_path.exists()`. Today's code raises before
       appending, so the event assertion fails red. After the
       reorder, the event is durable and both assertions hold.
-- [ ] `test_safe_write_region_event_durable_when_disk_write_raises` —
+- [x] `test_safe_write_region_event_durable_when_disk_write_raises` —
       same shape; `ManagedRegionWriteEvent` durable; file content
       unchanged from pre-call.
-- [ ] `test_resolve_proposal_events_durable_when_disk_write_raises` —
+- [x] `test_resolve_proposal_events_durable_when_disk_write_raises` —
       same shape; both `PageWriteEvent` and
       `PageConflictResolvedEvent` durable; file unchanged.
-- [ ] `test_safe_write_event_in_journal_at_moment_of_disk_write` —
+- [x] `test_safe_write_event_in_journal_at_moment_of_disk_write` —
       pin the happy-path ordering at a contract surface (the
       construction tests in `plan.md` also pin this but are
       revisable; this one is durable). Wrap `Path.write_bytes`
@@ -537,8 +545,8 @@ left the failure path intact) cannot pass both:
       append_event` (the failure-injection family above would not
       catch this rewrite). Same shape covers `safe_write_region`
       and `resolve_proposal`:
-- [ ] `test_safe_write_region_event_in_journal_at_moment_of_disk_write`
-- [ ] `test_resolve_proposal_events_in_journal_at_moment_of_disk_write`
+- [x] `test_safe_write_region_event_in_journal_at_moment_of_disk_write`
+- [x] `test_resolve_proposal_events_in_journal_at_moment_of_disk_write`
 
 #### Recovery contract — GREEN today, pinned for the future
 
@@ -547,16 +555,16 @@ the gap. They pass against today's code as well — their job is to
 pin the §Edge cases recovery story so a future refactor can't
 silently drop the doctor's reconciliation hook:
 
-- [ ] `test_doctor_surfaces_orphan_page_event_as_missing` —
+- [x] `test_doctor_surfaces_orphan_page_event_as_missing` —
       append a `PageWriteEvent` directly for a path that is then
       never written; run `run_doctor`; assert `Issue(MISSING,
       "<path>")` is in the result.
-- [ ] `test_doctor_surfaces_orphan_managed_region_event_as_drift` —
+- [x] `test_doctor_surfaces_orphan_managed_region_event_as_drift` —
       append a `ManagedRegionWriteEvent` whose `content_hash`
       differs from the on-disk region body; assert
       `Issue(MANAGED_REGION_DRIFT, "<file>:<region>")` is reported
       (no trailing detail for hash-mismatch per `doctor.py`).
-- [ ] `test_doctor_surfaces_orphan_resolve_events` — same shape
+- [x] `test_doctor_surfaces_orphan_resolve_events` — same shape
       for the resolve path; assert `MISSING` or `PAGE_DRIFT` as
       appropriate.
 
@@ -575,13 +583,13 @@ extracted helper *must* inline the explicit pre-state assertion
 predicate, so a regression in one sub-case cannot be masked by a
 "fix" in the shared plumbing.
 
-- [ ] `test_safe_write_recovers_missing_file_when_baseline_journaled` —
+- [x] `test_safe_write_recovers_missing_file_when_baseline_journaled` —
       manually append a `PageWriteEvent` for a fresh path; call
       `safe_write` with the same content; assert `WriteResult.WRITTEN`,
       file is on disk with the journaled content, no `.proposed`
       sidecar is created, exactly one *new* `PageWriteEvent` is
       appended (two total: the seed and the recovery write).
-- [ ] `test_resolve_proposal_crash_recovery_produces_idempotent_state` —
+- [x] `test_resolve_proposal_crash_recovery_produces_idempotent_state` —
       drive a `resolve_proposal` call that crashes after the events
       are durable but before `abs_path.write_bytes`; re-run
       `resolve_proposal` with the same content; assert
@@ -590,7 +598,7 @@ predicate, so a regression in one sub-case cannot be masked by a
       match the single-call outcome (last-write-wins idempotence;
       duplicate audit events in the journal are acceptable
       per §Edge cases).
-- [ ] `test_safe_write_region_crash_recovery_routes_to_proposal` —
+- [x] `test_safe_write_region_crash_recovery_routes_to_proposal` —
       pre-seed a vault with a managed-region file; journal a
       `ManagedRegionWriteEvent` whose `content_hash` differs from
       the on-disk region body (simulating "event durable, write
@@ -603,18 +611,18 @@ predicate, so a regression in one sub-case cannot be masked by a
 
 ### Unjournaled existing pages are drift, byte-identical is adopt (qC6)
 
-- [ ] `test_safe_write_to_unjournaled_existing_file_writes_proposal` —
+- [x] `test_safe_write_to_unjournaled_existing_file_writes_proposal` —
       *inverts* today's
       `test_first_write_overwrites_existing_file_without_journal_entry`.
       Pre-existing file content survives; sidecar is created;
       `PageProposalEvent` is appended. Bytes differ.
-- [ ] `test_safe_write_to_unjournaled_existing_file_does_not_touch_original` —
+- [x] `test_safe_write_to_unjournaled_existing_file_does_not_touch_original` —
       explicit assertion on the original bytes.
-- [ ] `test_safe_write_first_write_to_absent_file_still_writes_directly` —
+- [x] `test_safe_write_first_write_to_absent_file_still_writes_directly` —
       guard against over-broadening the change: no-journal-AND-no-disk
       stays on the direct-write path (this is what makes `wiki init`
       work).
-- [ ] `test_safe_write_adopt_fastpath_byte_identical_existing_file_writes_no_sidecar` —
+- [x] `test_safe_write_adopt_fastpath_byte_identical_existing_file_writes_no_sidecar` —
       pre-existing file content is byte-identical to the kit's
       proposed content; `safe_write` returns `WriteResult.WRITTEN`,
       appends one `PageWriteEvent`, leaves the file's **inode**
@@ -623,12 +631,12 @@ predicate, so a regression in one sub-case cannot be masked by a
       is a noisy proxy that breaks on coarse-mtime filesystems),
       and produces no `.proposed` sidecar. Assert
       `target.stat().st_ino == pre_ino` (captured before the call).
-- [ ] `test_safe_write_adopt_fastpath_baseline_becomes_journaled` —
+- [x] `test_safe_write_adopt_fastpath_baseline_becomes_journaled` —
       after the adopt fast-path, a subsequent `safe_write` with the
       same content sees the journaled baseline and takes the repeat-
       write path; with drifted content, takes the classic drift
       path.
-- [ ] `test_safe_write_adopt_fastpath_abandons_when_disk_changes_between_reads`
+- [x] `test_safe_write_adopt_fastpath_abandons_when_disk_changes_between_reads`
       — pre-seed an unjournaled file whose bytes match the kit's
       proposed content; install a path-scoped `Path.read_bytes`
       recorder that flips the on-disk content on its second
@@ -638,7 +646,7 @@ predicate, so a regression in one sub-case cannot be masked by a
       `PageProposalEvent` (not `PageWriteEvent`). Pins the adopt
       fast-path's abandon branch — the only contract test that
       catches an implementer who drops the re-read.
-- [ ] `test_safe_write_adopt_fastpath_records_post_reread_timestamp`
+- [x] `test_safe_write_adopt_fastpath_records_post_reread_timestamp`
       — pin spec §Behavior "Adopt fast-path" step 3's `now`
       recompute. Freeze `datetime.now` with a recorder that
       appends each call to a list and returns the next of
@@ -649,13 +657,13 @@ predicate, so a regression in one sub-case cannot be masked by a
       catches a future refactor that adds or drops a `now` call;
       the timestamp-equality assertion catches the original
       "implementer reused call-entry `now`" case.
-- [ ] `test_wiki_add_over_unjournaled_user_file_proposes_not_overwrites` —
+- [x] `test_wiki_add_over_unjournaled_user_file_proposes_not_overwrites` —
       integration test driving the CLI in
       `tests/integration/test_wiki_add.py`: pre-seed a vault, drop
       a user-authored markdown file at a path a primitive will
       render to with differing content, run `wiki add`, assert
       `.proposed` sidecar lands and the user file is untouched.
-- [ ] `test_safe_write_region_unjournaled_region_byte_identical_still_writes_directly` —
+- [x] `test_safe_write_region_unjournaled_region_byte_identical_still_writes_directly` —
       explicit guard distinct from the existing
       `test_safe_write_region_first_write_with_drifted_baseline_is_written`
       pin. The existing pin covers the differing-bytes
@@ -671,27 +679,27 @@ predicate, so a regression in one sub-case cannot be masked by a
 
 ### `.obsidianignore` is a documented non-journaled bypass (C2)
 
-- [ ] `test_ensure_obsidianignore_does_not_journal` — first drift on
+- [x] `test_ensure_obsidianignore_does_not_journal` — first drift on
       a fresh vault produces zero `PageWriteEvent`s whose `path` is
       `".obsidianignore"`. Pins the spec's contract that this is the
       explicit choice, not an oversight.
-- [ ] `test_ensure_obsidianignore_remains_idempotent_via_pattern_check` —
+- [x] `test_ensure_obsidianignore_remains_idempotent_via_pattern_check` —
       second and subsequent drift events do not rewrite
       `.obsidianignore` once the pattern is present.
-- [ ] `test_obsidianignore_bypass_doc_constant_points_at_this_spec` —
+- [x] `test_obsidianignore_bypass_doc_constant_points_at_this_spec` —
       `from llm_wiki_kit.write_helper import OBSIDIANIGNORE_BYPASS_DOC`;
       assert `OBSIDIANIGNORE_BYPASS_DOC == "docs/specs/safe-write-ordering/spec.md"`.
       The constant is the load-bearing pin; the docstring
       references it by name. A paraphrase of the docstring no
       longer silently shifts the contract — only changing the
       constant's value does, and that's grep-discoverable.
-- [ ] `test_ensure_obsidianignore_docstring_references_bypass_constant` —
+- [x] `test_ensure_obsidianignore_docstring_references_bypass_constant` —
       `"OBSIDIANIGNORE_BYPASS_DOC"` appears in
       `_ensure_obsidianignore.__doc__`. Cheap-and-brittle by
       design, paired with the constant test above so the two
       together catch both "constant renamed but docstring stale"
       and "docstring paraphrased away from the constant".
-- [ ] `test_doctor_does_not_flag_obsidianignore_as_orphan` —
+- [x] `test_doctor_does_not_flag_obsidianignore_as_orphan` —
       `.obsidianignore` exists in a vault with no journal entry for
       it; `run_doctor` does not produce `Issue(ORPHAN,
       ".obsidianignore")`. Post qC10 + C6, the orphan check derives
@@ -702,26 +710,26 @@ predicate, so a regression in one sub-case cannot be masked by a
 
 ### Pin removal and ADR amendment
 
-- [ ] **DELETE** `tests/unit/test_write_helper.py::test_first_write_overwrites_existing_file_without_journal_entry`.
+- [x] **DELETE** `tests/unit/test_write_helper.py::test_first_write_overwrites_existing_file_without_journal_entry`.
       Its replacement above pins the inverted contract for the
       differing-bytes case; the adopt fast-path test covers the
       byte-identical case. The PR description names the removal
       explicitly so a reviewer doesn't mistake the deletion for
       a regression.
-- [ ] `tests/unit/test_write_helper.py::test_safe_write_region_first_write_with_drifted_baseline_is_written`
+- [x] `tests/unit/test_write_helper.py::test_safe_write_region_first_write_with_drifted_baseline_is_written`
       **stays as-is** (pins the differing-bytes unjournaled-region
       case). The new
       `test_safe_write_region_unjournaled_region_byte_identical_still_writes_directly`
       pins the byte-identical complement. Together they pin the
       page-vs-region distinction per §Non-goals "Why qC6 is
       page-scoped".
-- [ ] `docs/adr/0004-drift-detection-and-proposal-flow.md` §Mechanics
+- [x] `docs/adr/0004-drift-detection-and-proposal-flow.md` §Mechanics
       step 2 and steps 4/5 are amended; §Negative grows two
       bullets; §Revisions gets a dated entry naming this spec.
-- [ ] `docs/adr/0002-journal-as-state-truth.md` §Negative drops the
+- [x] `docs/adr/0002-journal-as-state-truth.md` §Negative drops the
       "Mitigated: `safe_write` writes the file *after* validating
       the event" sentence and gains a pointer to this spec.
-- [ ] `AGENTS.md` (repo root) §"Things you should not do without
+- [x] `AGENTS.md` (repo root) §"Things you should not do without
       asking" — the "Don't bypass `write_helper.safe_write()`"
       bullet gains a new parenthetical carve-out (none exists
       today) naming both `resolve_proposal` and
@@ -730,7 +738,7 @@ predicate, so a regression in one sub-case cannot be masked by a
 
 ### Knowledge capture
 
-- [ ] One entry appended to `docs/knowledge/patterns.jsonl` scoped
+- [x] One entry appended to `docs/knowledge/patterns.jsonl` scoped
       to `llm_wiki_kit/write_helper.py`. Uses the canonical
       `{id, kind, scope, title, body, source, created, updated}`
       schema; cites K-0002 as the entry it extends (the existing

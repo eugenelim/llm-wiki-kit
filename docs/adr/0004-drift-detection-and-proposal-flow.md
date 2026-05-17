@@ -52,18 +52,36 @@ Mechanics:
 1. `safe_write` computes the on-disk hash (`sha256`) of `path`. If the
    file doesn't exist, treat the hash as empty.
 2. It walks the journal backward to find the latest `PageWrite` event
-   whose `path` matches. If none, this is a first write — go to step 4.
-3. If the on-disk hash matches the journaled hash, the user hasn't
-   touched it since — safe to overwrite. Go to step 4.
-4. Direct write: write `content` to `path`, compute the new hash,
-   append a `PageWrite` event recording `path`, `hash`, `by`
-   (the primitive or operation responsible), timestamp. Return
-   `WriteResult.WRITTEN`.
-5. If the hashes diverge, the user edited the file. Write `content` to
-   `<path>.proposed` (the sidecar), append a `PageProposal` event with
-   the same fields plus a `proposed_path`. Return `WriteResult.PROPOSAL`.
-   The CLI surface prints a one-line prompt telling the user to run the
-   `wiki-conflict` skill.
+   whose `path` matches. Six sub-cases follow:
+   - None found, file absent on disk → first write; go to step 4.
+   - None found, file present, bytes already match `content` →
+     **adopt fast-path**: append `PageWrite`, skip the disk write,
+     return `WriteResult.WRITTEN`. The file's inode is preserved (load-
+     bearing for Obsidian / `inotify` consumers).
+   - None found, file present, bytes differ → treat as drift; go to
+     step 5. The unjournaled-existing-file case (`safe-write-ordering`
+     spec qC6).
+   - Found, on-disk hash matches the journaled hash → no drift; go to
+     step 4.
+   - Found, file absent on disk → crash-recovery direct-write: a
+     re-run after a crash between event-append and disk-write lands
+     here. Go to step 4 (not step 5); the journaled event already
+     exists, so re-proposing would surface a duplicate concern on top
+     of the existing `missing` issue.
+   - Found, on-disk hash differs (and file present) → drift; go to
+     step 5.
+3. *(Reserved — see step 2's hash-match sub-case.)*
+4. Direct write: append a `PageWrite` event recording `path`, `hash`,
+   `by` (the primitive or operation responsible), timestamp; then
+   write `content` to `path`. The event is `fsync`'d to the journal
+   before the file is opened for writing — see
+   `docs/specs/safe-write-ordering/spec.md` for the event-before-disk
+   invariant. Return `WriteResult.WRITTEN`.
+5. Drift path: append a `PageProposal` event with the same fields plus
+   a `proposed_path`, then write `content` to `<path>.proposed` (the
+   sidecar). Same event-before-disk ordering as step 4. Return
+   `WriteResult.PROPOSAL`. The CLI surface prints a one-line prompt
+   telling the user to run the `wiki-conflict` skill.
 6. When the user runs the vault-side `wiki-conflict` skill, Claude
    reads `path`, `path.proposed`, the journal context, and (where
    available) the originating source, and helps the user produce a
@@ -127,6 +145,21 @@ and can call `write_text` freely.
   baseline. Mitigated: `wiki init` over a non-empty folder either
   refuses (default) or runs an explicit `--adopt` path that journals
   every existing file as a `PageWrite` at adoption time.
+- **The noisy-existing-folder case extends to every CLI command, not
+  just `wiki init`.** Any `safe_write` over a path the kit has never
+  journaled now routes through the proposal flow (`safe-write-ordering`
+  spec qC6). Mitigated by the per-file adopt fast-path: byte-identical
+  existing files journal without surfacing as proposals. Residual case
+  (differing bytes) routes through the standard `.proposed` sidecar
+  flow; the user reconciles via `wiki-conflict`.
+- **`.obsidianignore` is a documented non-journaled bypass.** The file
+  is small, additive, and user-editable; journaling it would register
+  every user edit as `page-drift` in `wiki doctor`, and routing through
+  `safe_write` proper would produce `.obsidianignore.proposed` (which
+  Obsidian then indexes — a self-defeating bootstrap). The bypass is
+  pinned via the `OBSIDIANIGNORE_BYPASS_DOC` constant in
+  `write_helper.py`. See
+  `docs/specs/safe-write-ordering/spec.md` §Non-goals.
 - **A 0-byte file is a valid hash.** The kit treats a hash-empty
   baseline as "no prior knowledge," which collapses to the same write
   path. Edge handled in tests.
@@ -179,6 +212,23 @@ losing their edits and losing the kit's update without a third path.
 
 ## Revisions
 
+- **2026-05-17** — Step 2 rewritten to spell out five sub-cases
+  (fresh-path, adopt fast-path, unjournaled drift, no-drift, journaled
+  drift / crash-recovery). Steps 4 and 5 reordered internally so the
+  journal event is appended *before* the disk write, per the
+  event-before-disk invariant in
+  [`docs/specs/safe-write-ordering/spec.md`](../specs/safe-write-ordering/spec.md).
+  Page-level `safe_write` no longer silently overwrites unjournaled
+  existing files (qC6); byte-identical content adopts via the
+  per-file fast-path; differing bytes route through `.proposed`.
+  `_ensure_obsidianignore` promoted from quiet bypass to documented
+  non-journaled bypass (anchored via the `OBSIDIANIGNORE_BYPASS_DOC`
+  constant). §Negative gains two bullets — universal
+  noisy-existing-folder consequence, and `.obsidianignore` as the
+  named bypass. No change to the overall decision or to
+  `safe_write_region`'s no-prior-event-direct-write semantics (spec
+  §Non-goals "Why qC6 is page-scoped" — the install pipeline's
+  `aggregate_region_contributions` depends on it).
 - **2026-05-16** — Step 6 extended for managed-region resolves
   (retro-review #F-B1). The 2026-05-15 wording only re-baselined the
   page-level lookup (`PageWriteEvent`), which left

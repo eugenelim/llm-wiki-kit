@@ -101,9 +101,12 @@ prefixed home-dir cache.
   schema accommodates it without breaking compatibility.
 - **No transactional writes across journal + disk.** If the kit crashes
   between appending an event and writing the file, the journal records
-  an intent that didn't materialize. Mitigated: `safe_write` writes the
-  file *after* validating the event but reconciles on next run via
-  `wiki doctor`. Crash window is small and recoverable.
+  an intent that didn't materialize. Mitigated: `safe_write` appends
+  the event before touching disk per
+  [`docs/specs/safe-write-ordering/spec.md`](../specs/safe-write-ordering/spec.md);
+  a crash between the event append and the disk write is reconciled by
+  `wiki doctor`'s `missing` / `page-drift` / `managed-region-drift`
+  checks. Crash window is small and recoverable.
 - **Schema evolution requires care.** Adding a field to an existing
   event type must default-populate for older lines. Pydantic v2 makes
   this explicit via `default=` and `model_validator(mode="before")`.
