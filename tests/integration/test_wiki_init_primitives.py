@@ -9,10 +9,10 @@ second pass — region aggregation per ADR-0006.
 The shipped recipes (``family``, ``work-os``, ``personal``) keep their
 ``primitives: [core]`` listing in this task; Tasks 13/14/15 expand
 them. To drive the new primitives through ``wiki init`` without
-mutating the shipped recipes, the tests monkeypatch
-``cli._KIT_ROOT`` at a tmp directory and write a custom
-``recipes/full.yaml`` there. This is the same shape an end user would
-get if they wrote their own recipe.
+mutating the shipped recipes, the tests pass an explicit ``kit_root``
+into ``cli.main`` (qC8) pointing at a tmp directory with a custom
+``recipes/full.yaml``. This is the same shape an end user would get
+if they wrote their own recipe.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _install_kit(tmp_path: Path) -> Path:
     """Build a tmp kit directory with the real core + Task-11 primitives.
 
-    Returns the kit root suitable for monkeypatching ``cli._KIT_ROOT``.
+    Returns the kit root that tests pass via ``cli.main(argv, kit_root=...)``.
     The kit's bundled ``recipes/`` is recreated with one test recipe
     (``full.yaml``) that lists all three Task-11 primitives plus
     ``core`` (resolved transitively by the recipe loader).
@@ -76,10 +76,8 @@ def _install_kit(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def kit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    kit = _install_kit(tmp_path)
-    monkeypatch.setattr(cli, "_KIT_ROOT", kit)
-    return kit
+def kit_root(tmp_path: Path) -> Path:
+    return _install_kit(tmp_path)
 
 
 def _journal_path(vault: Path) -> Path:
@@ -89,7 +87,7 @@ def _journal_path(vault: Path) -> Path:
 def test_init_renders_three_primitives_into_vault(tmp_path: Path, kit_root: Path) -> None:
     vault = tmp_path / "v"
 
-    assert cli.main(["init", str(vault), "--recipe", "full"]) == 0
+    assert cli.main(["init", str(vault), "--recipe", "full"], kit_root=kit_root) == 0
 
     # Each primitive's ``files/`` tree lands in the expected place.
     assert (vault / "wiki" / "people" / "README.md").is_file()
@@ -105,7 +103,7 @@ def test_init_renders_three_primitives_into_vault(tmp_path: Path, kit_root: Path
 def test_init_aggregates_meeting_into_schema_regions(tmp_path: Path, kit_root: Path) -> None:
     vault = tmp_path / "v"
 
-    assert cli.main(["init", str(vault), "--recipe", "full"]) == 0
+    assert cli.main(["init", str(vault), "--recipe", "full"], kit_root=kit_root) == 0
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
     # The ``types`` region's seed body is replaced by ``- meeting``.
@@ -125,7 +123,7 @@ def test_init_aggregates_meeting_into_schema_regions(tmp_path: Path, kit_root: P
 
 def test_init_journal_order_with_three_primitives(tmp_path: Path, kit_root: Path) -> None:
     vault = tmp_path / "v"
-    assert cli.main(["init", str(vault), "--recipe", "full"]) == 0
+    assert cli.main(["init", str(vault), "--recipe", "full"], kit_root=kit_root) == 0
 
     events = read_events(_journal_path(vault))
 
@@ -183,7 +181,7 @@ def test_init_fails_loudly_on_missing_snippet(
     snippet.unlink()
 
     vault = tmp_path / "v"
-    exit_code = cli.main(["init", str(vault), "--recipe", "full"])
+    exit_code = cli.main(["init", str(vault), "--recipe", "full"], kit_root=kit_root)
 
     assert exit_code == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
@@ -209,7 +207,7 @@ def test_init_fails_loudly_on_orphan_snippet(
     orphan.write_text("stray\n", encoding="utf-8")
 
     vault = tmp_path / "v"
-    exit_code = cli.main(["init", str(vault), "--recipe", "full"])
+    exit_code = cli.main(["init", str(vault), "--recipe", "full"], kit_root=kit_root)
 
     assert exit_code == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err

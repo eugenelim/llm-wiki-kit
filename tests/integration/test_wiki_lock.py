@@ -2,9 +2,11 @@
 
 Tests the CLI surface defined in
 ``docs/specs/journal-locking/spec.md`` §CLI surface acceptance criteria.
-Vault construction reuses the monkeypatched ``cli._KIT_ROOT`` pattern from
-``test_wiki_doctor.py``; ``cli.main(["lock", ...])`` exercises the
-subcommands through their real argparse + handler path.
+Vault construction reuses the kit-root threading pattern from
+``test_wiki_doctor.py`` (qC8); ``cli.main(["lock", ...])`` exercises the
+subcommands through their real argparse + handler path. ``wiki lock``
+itself doesn't read kit assets, so its individual invocations don't
+need ``kit_root=``; only the bootstrapping ``wiki init`` does.
 
 Same-process test isolation matters: ``wiki lock acquire`` persists the
 open journal fd in :data:`journal._PERSISTED_FDS` so the OS lock outlives
@@ -51,16 +53,14 @@ def _install_kit(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def kit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    kit = _install_kit(tmp_path)
-    monkeypatch.setattr(cli, "_KIT_ROOT", kit)
-    return kit
+def kit_root(tmp_path: Path) -> Path:
+    return _install_kit(tmp_path)
 
 
 @pytest.fixture
 def vault(tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     v = tmp_path / "vault"
-    assert cli.main(["init", str(v), "--recipe", "minimal"]) == 0
+    assert cli.main(["init", str(v), "--recipe", "minimal"], kit_root=kit_root) == 0
     monkeypatch.chdir(v)
     return v
 

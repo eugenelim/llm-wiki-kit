@@ -1,0 +1,63 @@
+name: Wheel acceptance
+
+# Runs the ``@pytest.mark.slow`` suites that build and install the kit's
+# wheel and exercise it end-to-end. Triggered on PRs that touch any
+# input the wheel reads (packaging, the package itself, or the bundled
+# asset trees), plus a nightly run that catches changes outside the
+# path filter. See docs/specs/wheel-bundled-assets/spec.md.
+#
+# Note: the qC8 grep guard at tests/unit/test_cli_kit_root.py is fast
+# (not @slow) and runs in the default ci.yml workflow, so it is not
+# listed under `paths:` here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "llm_wiki_kit/**"
+      - "recipes/**"
+      - "core/**"
+      - "templates/**"
+      - "tests/conftest.py"
+      - "tests/integration/conftest.py"
+      - "tests/integration/test_wheel_*.py"
+      - ".github/workflows/wheel-acceptance.yml"
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "llm_wiki_kit/**"
+      - "recipes/**"
+      - "core/**"
+      - "templates/**"
+      - "tests/conftest.py"
+      - "tests/integration/conftest.py"
+      - "tests/integration/test_wheel_*.py"
+      - ".github/workflows/wheel-acceptance.yml"
+  schedule:
+    - cron: "0 7 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wheel-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run slow tests (wheel build + install)
+        run: pytest -m slow

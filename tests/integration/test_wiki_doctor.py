@@ -8,9 +8,10 @@ Drives four vault states through the CLI:
   triggers the proposal sidecar; doctor surfaces the sidecar path.
 * **orphan** — a stray file under ``skills/`` with no journal event.
 
-Vault construction reuses the monkeypatched ``cli._KIT_ROOT`` pattern
-from ``test_wiki_init_primitives.py``; doctor is invoked via
-``cli.main(["doctor"])`` after ``monkeypatch.chdir(vault)``.
+Vault construction reuses the kit-root threading pattern from
+``test_wiki_init_primitives.py`` (qC8); doctor is invoked via
+``cli.main(["doctor"], kit_root=kit_root)`` after
+``monkeypatch.chdir(vault)``.
 """
 
 from __future__ import annotations
@@ -47,15 +48,13 @@ def _install_kit(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def kit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    kit = _install_kit(tmp_path)
-    monkeypatch.setattr(cli, "_KIT_ROOT", kit)
-    return kit
+def kit_root(tmp_path: Path) -> Path:
+    return _install_kit(tmp_path)
 
 
-def _init_vault(tmp_path: Path) -> Path:
+def _init_vault(tmp_path: Path, kit_root: Path) -> Path:
     vault = tmp_path / "v"
-    assert cli.main(["init", str(vault), "--recipe", "minimal"]) == 0
+    assert cli.main(["init", str(vault), "--recipe", "minimal"], kit_root=kit_root) == 0
     return vault
 
 
@@ -74,11 +73,11 @@ def test_doctor_clean_vault_exits_zero(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    assert cli.main(["doctor"]) == 0
+    assert cli.main(["doctor"], kit_root=kit_root) == 0
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
@@ -95,14 +94,14 @@ def test_doctor_reports_page_drift(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     # Simulate a user edit outside the kit's write path.
     (vault / "AGENTS.md").write_text("user override\n", encoding="utf-8")
 
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
@@ -120,7 +119,7 @@ def test_doctor_reports_pending_proposal(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     # Drift the file, then drive ``safe_write`` again so it falls through
     # to a ``.proposed`` sidecar + ``page.proposal`` event — the exact
     # state ``wiki doctor`` is designed to surface.
@@ -136,7 +135,7 @@ def test_doctor_reports_pending_proposal(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
@@ -158,7 +157,7 @@ def test_doctor_reports_orphan_under_kit_path(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     stray = vault / "skills" / "rogue" / "SKILL.md"
     stray.parent.mkdir(parents=True)
     stray.write_text("not from any primitive", encoding="utf-8")
@@ -166,7 +165,7 @@ def test_doctor_reports_orphan_under_kit_path(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
@@ -179,7 +178,7 @@ def test_doctor_does_not_flag_user_owned_paths(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     # A user-created folder outside the kit-owned roots must be invisible.
     (vault / "journal").mkdir()
     (vault / "journal" / "2026-05-16.md").write_text("daily note", encoding="utf-8")
@@ -187,7 +186,7 @@ def test_doctor_does_not_flag_user_owned_paths(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    assert cli.main(["doctor"]) == 0
+    assert cli.main(["doctor"], kit_root=kit_root) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +207,7 @@ def test_doctor_does_not_double_report_pending_managed_region_proposal(
 
     from llm_wiki_kit.write_helper import safe_write_region
 
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     journal_path = _journal_path(vault)
 
     # Seed a managed-region baseline so subsequent drift is detectable.
@@ -240,7 +239,7 @@ def test_doctor_does_not_double_report_pending_managed_region_proposal(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
@@ -265,7 +264,7 @@ def test_doctor_runs_against_corrupt_journal_and_reports_journal_corrupt(
     is partially corrupt.
     """
 
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     journal = _journal_path(vault)
 
     # Snapshot the valid-event count so the assertion can name the
@@ -288,7 +287,7 @@ def test_doctor_runs_against_corrupt_journal_and_reports_journal_corrupt(
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    exit_code = cli.main(["doctor"])
+    exit_code = cli.main(["doctor"], kit_root=kit_root)
     out = capsys.readouterr().out.strip().splitlines()
 
     assert exit_code == cli.DOCTOR_ISSUES_EXIT
@@ -315,6 +314,6 @@ def test_doctor_refuses_when_cwd_is_not_a_vault(
     bare.mkdir()
     monkeypatch.chdir(bare)
 
-    assert cli.main(["doctor"]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["doctor"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     assert "not a wiki vault" in err

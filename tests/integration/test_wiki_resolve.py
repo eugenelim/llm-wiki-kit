@@ -49,15 +49,13 @@ def _install_kit(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def kit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    kit = _install_kit(tmp_path)
-    monkeypatch.setattr(cli, "_KIT_ROOT", kit)
-    return kit
+def kit_root(tmp_path: Path) -> Path:
+    return _install_kit(tmp_path)
 
 
-def _init_vault(tmp_path: Path) -> Path:
+def _init_vault(tmp_path: Path, kit_root: Path) -> Path:
     vault = tmp_path / "v"
-    assert cli.main(["init", str(vault), "--recipe", "minimal"]) == 0
+    assert cli.main(["init", str(vault), "--recipe", "minimal"], kit_root=kit_root) == 0
     return vault
 
 
@@ -95,7 +93,7 @@ def test_resolve_accept_writes_proposed_content_and_journals_events(
     kit_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     target, sidecar = _drive_to_proposal(vault)
 
@@ -114,7 +112,7 @@ def test_resolve_keep_re_baselines_to_user_edits(
     kit_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     target, sidecar = _drive_to_proposal(vault)
 
@@ -128,7 +126,7 @@ def test_resolve_stdin_writes_merged_content(
     kit_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     target, _sidecar = _drive_to_proposal(vault)
     monkeypatch.setattr("sys.stdin", io.StringIO("user-merged version"))
@@ -143,7 +141,7 @@ def test_resolve_accept_without_sidecar_errors(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     (vault / "page.md").write_text("standalone", encoding="utf-8")
 
@@ -173,7 +171,7 @@ def test_resolve_keep_and_accept_are_mutually_exclusive(
     kit_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     _drive_to_proposal(vault)
 

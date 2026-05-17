@@ -1,12 +1,12 @@
 """End-to-end ``wiki add`` integration tests (RFC-0001 Task 12).
 
-Uses the same monkeypatched ``cli._KIT_ROOT`` pattern as
-``test_wiki_init_primitives.py``: a tmp kit holds the real ``core`` and
-the three Task-11 primitives, plus a minimal ``recipes/minimal.yaml``
-that resolves to core-only. ``wiki init`` lays down the core vault;
-``wiki add`` then layers a primitive on top, exercising the closure
-walk, the installed-set filter, and the aggregator's second pass over
-the *full* installed set.
+Uses the same kit-root threading pattern as
+``test_wiki_init_primitives.py`` (qC8): a tmp kit holds the real
+``core`` and the three Task-11 primitives, plus a minimal
+``recipes/minimal.yaml`` that resolves to core-only. ``wiki init``
+lays down the core vault; ``wiki add`` then layers a primitive on
+top, exercising the closure walk, the installed-set filter, and the
+aggregator's second pass over the *full* installed set.
 """
 
 from __future__ import annotations
@@ -59,19 +59,17 @@ def _install_kit(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def kit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    kit = _install_kit(tmp_path)
-    monkeypatch.setattr(cli, "_KIT_ROOT", kit)
-    return kit
+def kit_root(tmp_path: Path) -> Path:
+    return _install_kit(tmp_path)
 
 
 def _journal_path(vault: Path) -> Path:
     return vault / ".wiki.journal" / "journal.jsonl"
 
 
-def _init_vault(tmp_path: Path) -> Path:
+def _init_vault(tmp_path: Path, kit_root: Path) -> Path:
     vault = tmp_path / "v"
-    assert cli.main(["init", str(vault), "--recipe", "minimal"]) == 0
+    assert cli.main(["init", str(vault), "--recipe", "minimal"], kit_root=kit_root) == 0
     return vault
 
 
@@ -83,11 +81,11 @@ def _init_vault(tmp_path: Path) -> Path:
 def test_add_installs_a_zero_requires_primitive(
     tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     events_before = read_events(_journal_path(vault))
 
-    assert cli.main(["add", "ontology:people"]) == 0
+    assert cli.main(["add", "ontology:people"], kit_root=kit_root) == 0
 
     # The people primitive's files/ tree lands in the expected place.
     assert (vault / "wiki" / "people" / "README.md").is_file()
@@ -114,10 +112,10 @@ def test_add_pulls_transitive_requires_in_topological_order(
 ) -> None:
     # ``meeting`` requires ``people``; adding it should install both, in
     # the order ``primitives.resolve_dependencies`` produces.
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
 
-    assert cli.main(["add", "content-type:meeting"]) == 0
+    assert cli.main(["add", "content-type:meeting"], kit_root=kit_root) == 0
 
     events = read_events(_journal_path(vault))
     install_order = [e.primitive for e in events if isinstance(e, PrimitiveInstallEvent)]
@@ -133,10 +131,10 @@ def test_add_aggregator_runs_over_full_installed_set(
     # The aggregator must compose every contributor's snippet — not just
     # the new primitive's — or it would clobber existing region bodies
     # to "new-only" (Task-12 design callout).
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
 
-    assert cli.main(["add", "content-type:meeting"]) == 0
+    assert cli.main(["add", "content-type:meeting"], kit_root=kit_root) == 0
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
     types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
@@ -156,11 +154,11 @@ def test_add_aggregator_runs_over_full_installed_set(
 def test_add_event_order_install_then_pages_then_regions(
     tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     before_count = len(read_events(_journal_path(vault)))
 
-    assert cli.main(["add", "content-type:meeting"]) == 0
+    assert cli.main(["add", "content-type:meeting"], kit_root=kit_root) == 0
 
     events = read_events(_journal_path(vault))
     new_events = events[before_count:]
@@ -183,14 +181,14 @@ def test_add_event_order_install_then_pages_then_regions(
 def test_add_is_idempotent_on_rerun(
     tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
 
-    assert cli.main(["add", "ontology:people"]) == 0
+    assert cli.main(["add", "ontology:people"], kit_root=kit_root) == 0
     events_first = read_events(_journal_path(vault))
 
     # Re-add: should be a clean no-op — no new events, no drift.
-    assert cli.main(["add", "ontology:people"]) == 0
+    assert cli.main(["add", "ontology:people"], kit_root=kit_root) == 0
     events_second = read_events(_journal_path(vault))
 
     assert events_second == events_first
@@ -211,11 +209,11 @@ def test_add_rejects_malformed_spec(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    assert cli.main(["add", "people"]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["add", "people"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     assert "<kind>:<name>" in err
 
@@ -226,11 +224,11 @@ def test_add_rejects_unknown_kind(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    assert cli.main(["add", "widget:people"]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["add", "widget:people"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     assert "widget" in err
 
@@ -242,11 +240,11 @@ def test_add_rejects_wrong_kind_for_existing_primitive(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # ``people`` exists, but as an ontology, not an operation.
-    vault = _init_vault(tmp_path)
+    vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
     capsys.readouterr()
 
-    assert cli.main(["add", "operation:people"]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["add", "operation:people"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     # operation/<name> won't exist on disk; surfaces via PrimitiveError.
     assert "people" in err
@@ -262,6 +260,6 @@ def test_add_refuses_when_cwd_is_not_a_vault(
     bare.mkdir()
     monkeypatch.chdir(bare)
 
-    assert cli.main(["add", "ontology:people"]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["add", "ontology:people"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     assert "not a wiki vault" in err
