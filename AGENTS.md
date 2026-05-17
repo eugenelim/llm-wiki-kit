@@ -19,6 +19,26 @@ operations wired up.
 
 The detailed map of what lives where is in [`docs/architecture/overview.md`](docs/architecture/overview.md). **Read it before exploring.** It will save you 20 minutes of grep.
 
+## Keeping changes minimal
+
+Scope each change precisely to the request.
+
+- **Limit the diff to what the request requires — extra changes hide
+  the real one from review.** If the request needs it — or would ship
+  broken without it — it's in scope, even discoveries you make
+  mid-implementation.
+- **Add a flag or option only when a second caller actually needs to
+  differ.** Today's one caller is enough to define the shape.
+- **Add docstrings and types to code the change actually touches.**
+  Leave nearby untouched code as it is.
+- **Validate at boundaries the request crosses** (user input, external
+  APIs). Trust internal callers and framework guarantees.
+- **Inline a single-use operation.** Extract a helper once a second
+  caller actually appears.
+
+When you defer something out of this PR — unrelated find or same-area
+cleanup — note it in the PR description with a one-line reason.
+
 ## Source of truth
 
 For each kind of decision, there is exactly one place it lives:
@@ -131,29 +151,35 @@ Vault-side skills, copied into a user’s vault by `wiki init`, live under
 `core/files/skills/` and `templates/*/files/skills/`. Different scope,
 different audience, never mix.
 
-## Things you should not do without asking
+## Check before acting
 
-- **Don’t run destructive commands** (`rm -rf`, `git push --force`, dropping
-  database tables) without explicit confirmation in the same turn.
-- **Don’t edit `docs/CHARTER.md` directly** — substantive changes go through
-  an RFC. Trivial edits (typos, broken links) are fine as a normal PR.
-- **Don’t add runtime dependencies** without an ADR. Dependencies are forever.
-- **Don’t fabricate APIs.** If you’re not sure a function exists, grep first.
-  Inventing imports that “look right” wastes everyone’s time when the build fails.
-- **Don’t create new top-level directories.** The structure is intentional. If
-  you think a new one is needed, propose it in an RFC.
-- **Don’t reach into a user’s hypothetical vault** during development. Tests
-  use `tmp_path` fixtures or `tests/fixtures/*-vault/`. The kit’s code should
-  never assume a vault path other than what’s explicitly passed in.
-- **Don’t bypass `write_helper.safe_write()`** for any file write that lands
-  in a user’s vault. Drift detection is load-bearing. (Documented exceptions:
-  `write_helper.resolve_proposal` for user-mediated merges,
-  `write_helper._ensure_obsidianignore` for the additive Obsidian-index
-  config — see `docs/specs/safe-write-ordering/spec.md`.)
-- **Don’t merge kit-side and vault-side skill scopes.** Repo-root `.claude/`
-  is for the kit’s own development; `core/files/skills/` and
-  `templates/*/files/skills/` are what `wiki init` copies into a user’s
-  vault.
+- **Get user confirmation for destructive commands** (`rm -rf`,
+  `git push --force`, dropping database tables) **in the same turn**
+  before running them. Yesterday's "rm is fine" doesn't cover today's
+  `rm -rf`.
+- **Route substantive `docs/CHARTER.md` edits through an RFC.** Trivial
+  fixes (typos, broken links) are fine as normal PRs.
+- **Write an ADR before adding any runtime dependency.** The kit ships
+  to end users who aren't engineers; every dep is a thing they could
+  fail to install. Dev deps don't count.
+- **Grep to verify a function exists** before importing it. Imports
+  that "look right" but aren't waste the time of everyone who hits the
+  broken build.
+- **Propose new top-level directories via RFC.** The structure is
+  intentional.
+- **Use `tmp_path` or `tests/fixtures/*-vault/` for vault paths in
+  development.** Kit code should never assume a vault path other than
+  what's explicitly passed in.
+- **Route every kit write into a user's vault through
+  `write_helper.safe_write()`.** Drift detection is load-bearing.
+  (Documented exceptions: `write_helper.resolve_proposal` for
+  user-mediated merges, `write_helper._ensure_obsidianignore` for the
+  additive Obsidian-index config — see
+  `docs/specs/safe-write-ordering/spec.md`.)
+- **Keep kit-side and vault-side skill scopes separate.** Repo-root
+  `.claude/` is for the kit's own development; `core/files/skills/`
+  and `templates/*/files/skills/` are what `wiki init` copies into a
+  user's vault.
 
 ## When this file is wrong
 
