@@ -924,8 +924,93 @@ def _cmd_lock_release(args: argparse.Namespace) -> int:
     return 0
 
 
+RUN_HELP_TOKENS: frozenset[str] = frozenset({"--help", "-h"})
+
+
+def _render_dispatch_value(value: object) -> str:
+    """Render an effective input value for stdout echo.
+
+    Per ``docs/specs/task-17-wiki-run/spec.md`` §Outputs:
+    booleans → lowercase ``true``/``false``; ints → ``str(int)``;
+    lists → comma-joined element ``str()`` (no brackets, no
+    quoting); anything else → ``str(value)``. The renderer is
+    deliberately asymmetric with the journal ``args`` field, which
+    keeps the user's typed casing — see §Non-goals.
+    """
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, list):
+        return ",".join(_render_dispatch_value(element) for element in value)
+    return str(value)
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
-    return _stub("run")
+    """Validate args against the operation contract and journal one run.
+
+    Real handler since RFC-0001 Task 17. The orchestrator is in
+    :mod:`llm_wiki_kit.run`; this handler is the I/O boundary.
+
+    The ``--help``/``-h`` short-circuit lives here (not in
+    ``dispatch``) because only the CLI has access to the subparser
+    needed to ``print_help``. Pre-scanning ``args.op_args`` for an
+    exact match on either token (no ``=``, no trailing characters)
+    sidesteps ``argparse.REMAINDER``'s capture; value-form tokens
+    like ``--help=false`` flow through the normal validation path
+    and produce ``invalid_args``.
+    """
+
+    op_args: list[str] = list(args.op_args or [])
+    if any(token in RUN_HELP_TOKENS for token in op_args):
+        # The `wiki run` subparser is stashed on the namespace by
+        # ``build_parser`` via ``set_defaults(_subparser=run)``, so
+        # the short-circuit can call ``print_help`` directly without
+        # iterating ``parser._actions`` (which depends on argparse's
+        # private API surface).
+        args._subparser.print_help()
+        return 0
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
+
+    # Local import keeps the module-load surface narrow — dispatch
+    # is the only consumer here.
+    from llm_wiki_kit.run import dispatch
+
+    kit_root = args.kit_root if args.kit_root is not None else _kit_root()
+    result = dispatch(
+        args.operation,
+        op_args,
+        vault_root=vault_root,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=datetime.now(UTC),
+    )
+
+    if result.status == "invalid_args":
+        # The journal already carries the failing args + error.
+        # Surface a one-liner to stderr and exit with the standard
+        # wiki-error code.
+        assert result.error is not None  # invariant pinned by DispatchResult.__post_init__
+        print(
+            f"wiki run {result.operation}: {result.error}",
+            file=sys.stderr,
+        )
+        return WIKI_ERROR_EXIT
+
+    # Happy path: one header line + one `  name=value` line per
+    # effective input, sorted by name.
+    print(f"Dispatched {result.operation}. Run `{result.skill}` in your Claude session.")
+    for name in sorted(result.parsed):
+        print(f"  {name}={_render_dispatch_value(result.parsed[name])}")
+    return 0
 
 
 def _cmd_research(args: argparse.Namespace) -> int:
@@ -1107,7 +1192,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run a named operation.",
     )
     run.add_argument("operation", help="Operation name (e.g. weekly-digest).")
-    run.set_defaults(func=_cmd_run)
+    # `argparse.REMAINDER` captures everything after `<operation>`
+    # verbatim — the operation's contract.yaml drives the vocabulary
+    # for these flags, not argparse. Side-effect: `--verbose` and
+    # `--help` after the operation positional are captured here;
+    # `_cmd_run` pre-scans for `--help`/`-h` (see
+    # ``docs/specs/task-17-wiki-run/spec.md``).
+    run.add_argument(
+        "op_args",
+        nargs=argparse.REMAINDER,
+        help=(
+            "Operation-specific args of the form --name=value or --name. See "
+            "`wiki run <operation>'s` contract.yaml for the field set. "
+            "Put `--verbose` BEFORE the subcommand (`wiki --verbose run …`)."
+        ),
+    )
+    # Stash the subparser on the namespace so ``_cmd_run``'s
+    # ``--help`` short-circuit can call ``print_help()`` without
+    # walking ``parser._actions`` (argparse private API).
+    run.set_defaults(func=_cmd_run, _subparser=run)
 
     research = subparsers.add_parser(
         "research",

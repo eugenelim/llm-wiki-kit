@@ -117,6 +117,31 @@ class Recipe(_StrictModel):
 # ---------------------------------------------------------------------------
 
 
+class OperationInputSpec(_StrictModel):
+    """Per-input declaration inside an operation's ``contract.yaml``.
+
+    Captures the on-disk shape used across the shipped catalog:
+    every input has a ``type`` tag; the rest is optional. Field set
+    pinned in ``docs/specs/task-17-wiki-run/spec.md`` §Contracts.
+
+    ``type`` values seen in production: ``string``, ``iso_week``,
+    ``list``, ``integer``, ``int`` (alias for integer), ``boolean``,
+    and ``page`` (used by ``trip-prep``). Unknown values are
+    accepted at the schema level; coercion in
+    :mod:`llm_wiki_kit.run` decides what to do with them.
+
+    ``default: None`` (Python ``None``, either from an absent
+    ``default:`` key or an explicit ``default: null``) means "no
+    default applied" — see spec §Behavior step 8.
+    """
+
+    type: str
+    description: str | None = None
+    default: object | None = None
+    optional: bool = False
+    items: str | None = None
+
+
 class OperationContract(_StrictModel):
     """The schema of an operation primitive's ``contract.yaml``."""
 
@@ -124,7 +149,7 @@ class OperationContract(_StrictModel):
     description: str
     period: str | None = None
     skill: str | None = None
-    inputs: dict[str, object] = Field(default_factory=dict)
+    inputs: dict[str, OperationInputSpec] = Field(default_factory=dict)
     outputs: dict[str, object] = Field(default_factory=dict)
 
 
@@ -226,11 +251,24 @@ class PageConflictResolvedEvent(_EventBase):
 
 
 class OperationRunEvent(_EventBase):
+    """Recorded by ``wiki run`` on every invocation that gets past the
+    contract-load step (``docs/specs/task-17-wiki-run/spec.md``).
+
+    ``args`` and ``error`` are additive extensions per ADR-0002
+    §Negative's additive-schema rule — both have defaults so older
+    journal lines (Task 3) keep replaying unchanged. ``status`` is
+    a Literal-bounded enum: pre-Task-17 lines could only have
+    carried ``"dispatched"`` (no other emitter existed), so the
+    narrowing rejects no legitimate legacy value.
+    """
+
     type: Literal["operation.run"] = "operation.run"
     operation: str
-    status: str
+    status: Literal["dispatched", "invalid_args"]
     period: str | None = None
     produced_pages: list[str] = Field(default_factory=list)
+    args: dict[str, str] = Field(default_factory=dict)
+    error: str | None = None
 
 
 class ResearchQueryEvent(_EventBase):
