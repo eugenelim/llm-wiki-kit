@@ -118,9 +118,9 @@ pytest -m 'not slow'         # explicit opt-out (the CI invocation)
 pytest -m slow               # wheel-acceptance suite (builds + installs the wheel)
 pytest tests/unit            # unit tests only (fast)
 pytest tests/evals           # eval suite (slow, also runs in separate CI workflow)
-ruff check llm_wiki_kit/     # lint
-ruff format llm_wiki_kit/    # format
-mypy llm_wiki_kit tests      # type-check (note: includes tests/, matches CI)
+ruff check llm_wiki_kit tests       # lint (note: includes tests/, matches CI)
+ruff format --check llm_wiki_kit tests  # format check (separate CI gate from `ruff check`)
+mypy llm_wiki_kit tests             # type-check (note: includes tests/, matches CI)
 wiki --help                  # exercise the CLI
 ```
 

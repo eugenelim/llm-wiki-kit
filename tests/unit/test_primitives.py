@@ -385,3 +385,68 @@ def test_core_primitive_resolves_alone() -> None:
     which is the precondition for the installer always-include policy."""
     primitive = load_primitive(CORE_DIR)
     assert resolve_dependencies([primitive]) == [primitive]
+
+
+# ---------------------------------------------------------------------------
+# Task 18 — infrastructure:research and infrastructure:research-perplexity
+# ---------------------------------------------------------------------------
+
+
+def test_research_primitive_loads() -> None:
+    """Seed primitive: kind ``infrastructure``, no contributes_to."""
+
+    from llm_wiki_kit.install import validate_contributions
+
+    primitive = load_primitive(REPO_ROOT / "templates" / "infrastructure" / "research")
+    assert primitive.name == "research"
+    assert primitive.kind is PrimitiveKind.INFRASTRUCTURE
+    assert primitive.contributes_to == []
+    assert primitive.requires == []
+    # Seed ships the shared file with empty managed region.
+    seed = (
+        REPO_ROOT
+        / "templates"
+        / "infrastructure"
+        / "research"
+        / "files"
+        / "research-providers.yaml"
+    )
+    assert seed.is_file()
+    body = seed.read_text(encoding="utf-8")
+    assert "# BEGIN MANAGED: providers" in body
+    assert "# END MANAGED: providers" in body
+    validate_contributions(primitive, seed.parent.parent)
+
+
+def test_research_perplexity_primitive_loads() -> None:
+    """Provider primitive: kind ``infrastructure``, requires ``research``,
+    contributes to ``research-providers.yaml:providers``."""
+
+    from llm_wiki_kit.install import validate_contributions
+
+    root = REPO_ROOT / "templates" / "infrastructure" / "research-perplexity"
+    primitive = load_primitive(root)
+    assert primitive.name == "research-perplexity"
+    assert primitive.kind is PrimitiveKind.INFRASTRUCTURE
+    assert primitive.requires == ["research"]
+    assert primitive.contributes_to == [
+        Contribution(file="research-providers.yaml", region="providers")
+    ]
+    snippet = root / "regions" / "research-providers.yaml.providers"
+    assert snippet.is_file()
+    snippet_body = snippet.read_text(encoding="utf-8")
+    assert "perplexity:" in snippet_body
+    assert "api_key_env: PERPLEXITY_API_KEY" in snippet_body
+    validate_contributions(primitive, root)
+
+
+def test_research_primitives_resolve_in_dependency_order() -> None:
+    """``resolve_dependencies`` puts ``research`` before ``research-perplexity``."""
+
+    research = load_primitive(REPO_ROOT / "templates" / "infrastructure" / "research")
+    perplexity_primitive = load_primitive(
+        REPO_ROOT / "templates" / "infrastructure" / "research-perplexity"
+    )
+    ordered = resolve_dependencies([perplexity_primitive, research])
+    names = [p.name for p in ordered]
+    assert names.index("research") < names.index("research-perplexity")

@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 NAME_PATTERN = r"^[a-z][a-z0-9-]*$"
 SEMVER_PATTERN = r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
@@ -154,6 +154,53 @@ class OperationContract(_StrictModel):
 
 
 # ---------------------------------------------------------------------------
+# Research providers config (ADR-0003 managed region body)
+# ---------------------------------------------------------------------------
+
+
+class ProviderConfig(_StrictModel):
+    """One provider's block inside ``research-providers.yaml``.
+
+    Each ``infrastructure:research-*`` primitive contributes one of
+    these into the ``providers`` managed region of the shared config.
+    ``api_key_env`` is schema-optional so future providers (e.g. Task
+    19's Semantic Scholar, which works without a key) can omit it;
+    per-provider code (e.g. Perplexity's ``dispatch``) enforces its
+    own requirement. See ``docs/specs/task-18-research-perplexity/spec.md``
+    §"ProviderConfig schema".
+    """
+
+    api_key_env: str | None = None
+    endpoint: str | None = None
+    model: str | None = None
+    cost_signal: Literal["free", "low", "medium", "high"] | None = None
+    strengths: list[str] = Field(default_factory=list)
+
+
+class ResearchProvidersConfig(RootModel[dict[str, ProviderConfig]]):
+    """The shape of the ``providers`` managed region in ``research-providers.yaml``.
+
+    A flat mapping ``<provider_slug>: ProviderConfig`` — no wrapping
+    ``providers:`` key. The dispatcher reads only the managed-region
+    body (via ``managed_regions.parse``) and YAML-loads that slice;
+    text outside the markers is preserved on disk (ADR-0003) but
+    ignored here.
+
+    The root-model shape means any string key becomes a candidate
+    provider slug. Unknown *inner* keys on a ``ProviderConfig`` block
+    (e.g. ``endpiont:`` typo) are rejected by ``_StrictModel``'s
+    ``extra="forbid"``; an unknown slug whose implementation isn't
+    registered is caught separately by the dispatcher's
+    "no implementation" path.
+    """
+
+    def slugs(self) -> list[str]:
+        """Return installed provider slugs in sorted order."""
+
+        return sorted(self.root.keys())
+
+
+# ---------------------------------------------------------------------------
 # Journal events
 # ---------------------------------------------------------------------------
 
@@ -272,10 +319,20 @@ class OperationRunEvent(_EventBase):
 
 
 class ResearchQueryEvent(_EventBase):
+    """Recorded by ``wiki research`` on every dispatch attempt.
+
+    Task 18 extended the original shape with two optional fields with
+    defaults so older journal lines keep replaying (ADR-0002 additive-
+    schema invariant). See ``docs/specs/task-18-research-perplexity/spec.md``
+    §"To the journal".
+    """
+
     type: Literal["research.query"] = "research.query"
     query: str
     provider: str
     result_path: str | None = None
+    model: str | None = None
+    status: Literal["ok", "error"] = "ok"
 
 
 class LintRunEvent(_EventBase):

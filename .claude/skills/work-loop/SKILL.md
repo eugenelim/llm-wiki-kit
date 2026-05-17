@@ -333,10 +333,10 @@ entirely and execute as the sole agent — that's the default flow above.
 Run, in order, and only proceed if each passes:
 
 ```bash
-ruff check llm_wiki_kit/          # style and basic correctness
-ruff format --check llm_wiki_kit/ # formatter (separate CI job — passing check doesn't imply format-clean)
-mypy llm_wiki_kit tests           # type safety (includes test files; matches CI)
-pytest -m 'not slow'              # behavior (CI excludes the wheel-acceptance suite)
+ruff check llm_wiki_kit tests       # style and basic correctness (includes tests/; matches CI)
+ruff format --check llm_wiki_kit tests  # formatter (separate CI job — passing check doesn't imply format-clean)
+mypy llm_wiki_kit tests             # type safety (includes test files; matches CI)
+pytest -m 'not slow'                # behavior (CI excludes the wheel-acceptance suite)
 ```
 
 These are the project's **objective** completion criteria. If a gate fails,

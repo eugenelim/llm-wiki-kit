@@ -37,7 +37,9 @@ from llm_wiki_kit.models import (
     PrimitiveRemoveEvent,
     PrimitiveRouting,
     PrimitiveUpgradeEvent,
+    ProviderConfig,
     Recipe,
+    ResearchProvidersConfig,
     ResearchQueryEvent,
     SourceIngestEvent,
     VaultInitEvent,
@@ -594,3 +596,165 @@ def test_vault_state_round_trips_with_held_lock() -> None:
 def test_vault_state_rejects_extra_fields() -> None:
     with pytest.raises(PydanticValidationError):
         VaultState.model_validate({"surprise": 1})
+
+
+# ---------------------------------------------------------------------------
+# Research providers config (Task 18)
+# ---------------------------------------------------------------------------
+
+
+def test_provider_config_minimal_yaml_round_trip() -> None:
+    """An empty block parses with every field defaulted.
+
+    Key-optional at the schema level — Task 19's Semantic Scholar will
+    ship with no ``api_key_env``. Per-provider code (e.g. Perplexity's
+    ``dispatch``) enforces its own requirements.
+    """
+
+    c = ProviderConfig.model_validate({})
+    assert c.api_key_env is None
+    assert c.endpoint is None
+    assert c.model is None
+    assert c.cost_signal is None
+    assert c.strengths == []
+
+
+def test_provider_config_with_api_key_env_set() -> None:
+    c = ProviderConfig.model_validate({"api_key_env": "PERPLEXITY_API_KEY"})
+    assert c.api_key_env == "PERPLEXITY_API_KEY"
+
+
+def test_provider_config_accepts_full_shape() -> None:
+    c = ProviderConfig.model_validate(
+        {
+            "api_key_env": "PERPLEXITY_API_KEY",
+            "endpoint": "https://api.perplexity.ai/chat/completions",
+            "model": "sonar-pro",
+            "cost_signal": "low",
+            "strengths": ["current_web_state", "cited_factual_lookup"],
+        }
+    )
+    assert c.endpoint == "https://api.perplexity.ai/chat/completions"
+    assert c.model == "sonar-pro"
+    assert c.cost_signal == "low"
+    assert c.strengths == ["current_web_state", "cited_factual_lookup"]
+
+
+def test_provider_config_rejects_unknown_inner_key() -> None:
+    """``_StrictModel`` enforces ``extra="forbid"`` on the inner block.
+
+    A typo (`endpiont:` instead of `endpoint:`) surfaces here. The CLI
+    boundary in ``_cmd_research`` wraps the ``ValidationError`` as a
+    ``WikiError`` whose user-facing message quotes the bad field name —
+    that contract is pinned in the CLI integration tests.
+    """
+
+    with pytest.raises(PydanticValidationError) as exc_info:
+        ProviderConfig.model_validate({"endpiont": "https://example/x"})
+    assert "endpiont" in str(exc_info.value)
+
+
+def test_provider_config_rejects_unknown_cost_signal() -> None:
+    with pytest.raises(PydanticValidationError):
+        ProviderConfig.model_validate({"cost_signal": "exorbitant"})
+
+
+def test_research_providers_config_one_provider() -> None:
+    rpc = ResearchProvidersConfig.model_validate(
+        {"perplexity": {"api_key_env": "PERPLEXITY_API_KEY", "model": "sonar-pro"}}
+    )
+    assert rpc.slugs() == ["perplexity"]
+    assert rpc.root["perplexity"].api_key_env == "PERPLEXITY_API_KEY"
+
+
+def test_research_providers_config_two_providers() -> None:
+    rpc = ResearchProvidersConfig.model_validate(
+        {
+            "perplexity": {"api_key_env": "PERPLEXITY_API_KEY"},
+            "gemini": {"api_key_env": "GEMINI_API_KEY"},
+        }
+    )
+    assert rpc.slugs() == ["gemini", "perplexity"]
+
+
+def test_research_providers_config_empty_root_parses() -> None:
+    """A seed file with no contributors yet parses as an empty mapping.
+
+    The dispatcher then surfaces ``no research providers installed``.
+    """
+
+    rpc = ResearchProvidersConfig.model_validate({})
+    assert rpc.slugs() == []
+
+
+def test_research_query_event_additive_fields_default() -> None:
+    """New ``model`` and ``status`` fields default to ``None`` and ``"ok"``.
+
+    Task 18 extended ``ResearchQueryEvent`` with two optional fields;
+    older constructors that don't supply them still produce a valid
+    event (ADR-0002 additive-schema invariant).
+    """
+
+    e = ResearchQueryEvent(
+        timestamp=NOW,
+        by="wiki-research",
+        query="rust async runtimes",
+        provider="perplexity",
+    )
+    assert e.model is None
+    assert e.status == "ok"
+    assert e.result_path is None
+
+
+def test_research_query_event_legacy_json_without_new_fields_replays() -> None:
+    """A pre-Task-18 journal line (no ``model`` / ``status``) replays cleanly.
+
+    The disk format from before this PR shipped is what gets read on
+    replay — additive-schema rule means older lines must parse via
+    ``Event`` validation and gain defaulted new fields.
+    """
+
+    legacy_payload = {
+        "type": "research.query",
+        "timestamp": NOW.isoformat(),
+        "by": "wiki-research",
+        "query": "rust async runtimes",
+        "provider": "perplexity",
+        "result_path": None,
+    }
+    parsed = EVENT_ADAPTER.validate_python(legacy_payload)
+    assert isinstance(parsed, ResearchQueryEvent)
+    assert parsed.model is None
+    assert parsed.status == "ok"
+
+
+def test_research_query_event_round_trips_with_new_fields() -> None:
+    original = ResearchQueryEvent(
+        timestamp=NOW,
+        by="wiki-research",
+        query="rust async runtimes",
+        provider="perplexity",
+        result_path="research/rust-async.md",
+        model="sonar-pro",
+        status="ok",
+    )
+    text = EVENT_ADAPTER.dump_json(original).decode()
+    parsed = EVENT_ADAPTER.validate_json(text)
+    assert parsed == original
+    assert isinstance(parsed, ResearchQueryEvent)
+    assert parsed.model == "sonar-pro"
+    assert parsed.status == "ok"
+
+
+def test_research_query_event_rejects_unknown_status() -> None:
+    with pytest.raises(PydanticValidationError):
+        ResearchQueryEvent.model_validate(
+            {
+                "type": "research.query",
+                "timestamp": NOW.isoformat(),
+                "by": "wiki-research",
+                "query": "q",
+                "provider": "perplexity",
+                "status": "partial",
+            }
+        )

@@ -1013,8 +1013,127 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+RESEARCH_VEHICLE = "wiki-research"
+
+
 def _cmd_research(args: argparse.Namespace) -> int:
-    return _stub("research")
+    """Dispatch a query to a configured research provider.
+
+    Three sequenced boundary checks before the dispatcher runs (spec
+    §Behavior happy path steps 1-2):
+
+    1. Vault root must contain ``.wiki.journal/journal.jsonl`` — same
+       check ``_cmd_add`` / ``_cmd_doctor`` / ``_cmd_ingest`` use.
+    2. When ``--out`` is set, the path must resolve under the vault
+       root. Absolute paths, ``..`` escapes, and symlinks that resolve
+       out of tree are rejected *before* any HTTP attempt — no
+       ``research.query`` event is appended.
+
+    After ``research.dispatch_query`` returns, two flows:
+
+    - **stdout flow** (one event total): bare ``append_event``, then
+      ``print(markdown)``.
+    - **--out flow** (two events): wrap the event-and-write pair in
+      ``journal.transaction(by="wiki-research", reason="research
+      <slug>")`` so a concurrent ``wiki add`` cannot interleave its
+      own events. Inside the transaction: ``append_event(result.event)``
+      then ``safe_write(out_path, markdown, by="wiki-research",
+      journal_path=...)``.
+
+    On ``ResearchDispatchError``: append ``exc.event`` (with the
+    journal-append wrapped so a fsync failure surfaces as ``__cause__``
+    of the original dispatch exception, not the other way around — spec
+    invariant 10). Then re-raise; ``main()`` catches as ``WikiError``
+    and exits 2.
+    """
+
+    from llm_wiki_kit.research import ResearchDispatchError, dispatch_query
+    from llm_wiki_kit.write_helper import WriteResult, safe_write
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
+
+    out_relative: str | None = None
+    out_abs: Path | None = None
+    if args.out is not None:
+        out_relative, out_abs = _resolve_out_path(args.out, vault_root)
+
+    now = datetime.now(UTC)
+    try:
+        result = dispatch_query(args.query, args.provider, vault_root, now=now)
+    except ResearchDispatchError as exc:
+        # Provider-side runtime failure: journal the prepared error
+        # event *before* re-raising so the audit trail records the
+        # attempt. If the append itself raises (fsync EIO, disk full),
+        # preserve the original dispatch error as the primary signal —
+        # spec invariant 10.
+        try:
+            append_event(journal_path, exc.event)
+        except OSError as journal_exc:
+            raise exc from journal_exc
+        raise
+
+    if out_abs is None:
+        # stdout flow — one event, no transaction.
+        append_event(journal_path, result.event)
+        print(result.markdown, end="" if result.markdown.endswith("\n") else "\n")
+        return 0
+
+    # --out flow: two events, wrapped in a transaction.
+    out_event = result.event.model_copy(update={"result_path": out_relative})
+    with transaction(
+        journal_path,
+        by=RESEARCH_VEHICLE,
+        reason=f"research {result.event.provider}",
+    ):
+        append_event(journal_path, out_event)
+        write_result = safe_write(
+            out_abs,
+            result.markdown,
+            by=RESEARCH_VEHICLE,
+            journal_path=journal_path,
+        )
+
+    if write_result is WriteResult.PROPOSAL:
+        sidecar = out_abs.with_name(out_abs.name + ".proposed")
+        print(
+            f"Wrote {sidecar.relative_to(vault_root)} (drift detected on {out_relative}); "
+            f"run the wiki-conflict skill to merge."
+        )
+    return 0
+
+
+def _resolve_out_path(raw: str, vault_root: Path) -> tuple[str, Path]:
+    """Resolve ``--out`` to ``(vault-relative posix, absolute Path)``.
+
+    Rejects absolute paths, ``..`` escapes, and symlinks that resolve
+    out of the vault tree. ``Path.resolve(strict=False)`` follows
+    symlinks in any existing prefix even when the leaf doesn't exist
+    yet — the symlink-escape test exercises that path. The resolved
+    location must be the vault root or a descendant of it.
+
+    Raises ``WikiError`` with a one-line message; no journal event has
+    been appended at this point in the CLI's flow.
+    """
+
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        raise WikiError(f"--out path must be relative to the vault root: got {raw!r}")
+    abs_path = (vault_root / candidate).resolve(strict=False)
+    resolved_root = vault_root.resolve()
+    try:
+        rel = abs_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise WikiError(
+            f"--out path must resolve under the vault root: "
+            f"{raw!r} resolves to {abs_path}, outside {resolved_root}"
+        ) from exc
+    return rel.as_posix(), abs_path
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
@@ -1218,6 +1337,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dispatch a query to a configured research provider.",
     )
     research.add_argument("query", help="The research query.")
+    research.add_argument(
+        "--provider",
+        default=None,
+        metavar="<name>",
+        help=(
+            "Provider slug (e.g. perplexity). Required when more than one "
+            "provider is installed; optional when exactly one is."
+        ),
+    )
+    research.add_argument(
+        "--out",
+        default=None,
+        metavar="<path>",
+        help=(
+            "Vault-relative path to write the markdown answer to "
+            "(via safe_write). Drift detection applies. Default: print "
+            "to stdout."
+        ),
+    )
     research.set_defaults(func=_cmd_research)
 
     search = subparsers.add_parser(

@@ -16,11 +16,11 @@ from llm_wiki_kit.cli import NOT_IMPLEMENTED_EXIT, build_parser, main
 SUBCOMMANDS_WITH_ARGS: list[list[str]] = [
     # ``init`` graduated from stub to real handler in Task 10; ``add``
     # and ``doctor`` graduated in Task 12; ``ingest`` graduated in
-    # Task 16; ``run`` graduated in Task 17. Each has its own
-    # integration suite under ``tests/integration/``.
+    # Task 16; ``run`` graduated in Task 17; ``research`` graduated in
+    # Task 18. Each has its own integration suite under
+    # ``tests/integration/``.
     ["upgrade"],
     ["upgrade", "--primitive", "people"],
-    ["research", "what is rust"],
     ["search", "stakeholder"],
     ["journal", "tail"],
     ["journal", "tail", "-n", "20"],
