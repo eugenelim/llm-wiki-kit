@@ -52,7 +52,7 @@ Mechanics:
 1. `safe_write` computes the on-disk hash (`sha256`) of `path`. If the
    file doesn't exist, treat the hash as empty.
 2. It walks the journal backward to find the latest `PageWrite` event
-   whose `path` matches. Five sub-cases follow:
+   whose `path` matches. Six sub-cases follow:
    - None found, file absent on disk → first write; go to step 4.
    - None found, file present, bytes already match `content` →
      **adopt fast-path**: append `PageWrite`, skip the disk write,
@@ -63,10 +63,13 @@ Mechanics:
      spec qC6).
    - Found, on-disk hash matches the journaled hash → no drift; go to
      step 4.
-   - Found, on-disk hash differs OR file absent → drift; go to step 5.
-     (The file-absent disjunct is the crash-recovery branch: a re-run
-     after a crash between event-append and disk-write lands here and
-     direct-writes through step 4.)
+   - Found, file absent on disk → crash-recovery direct-write: a
+     re-run after a crash between event-append and disk-write lands
+     here. Go to step 4 (not step 5); the journaled event already
+     exists, so re-proposing would surface a duplicate concern on top
+     of the existing `missing` issue.
+   - Found, on-disk hash differs (and file present) → drift; go to
+     step 5.
 3. *(Reserved — see step 2's hash-match sub-case.)*
 4. Direct write: append a `PageWrite` event recording `path`, `hash`,
    `by` (the primitive or operation responsible), timestamp; then

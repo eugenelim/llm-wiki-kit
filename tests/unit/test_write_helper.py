@@ -781,6 +781,39 @@ def test_safe_write_region_event_durable_when_disk_write_raises(
     assert target.read_text() == pre_text  # untouched
 
 
+def test_safe_write_region_drift_event_durable_when_sidecar_write_raises(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """qC3 for the region drift path — pairs with the page-level drift pin.
+
+    A future refactor that flipped order specifically in the region
+    drift branch (write sidecar → if-succeed append) would otherwise
+    pass every existing test. This pin closes that gap.
+    """
+    target = _seed_agents_md(vault)
+    safe_write_region(target, "content-types", "v1", by="core", journal_path=journal)
+    # User edits inside the region — drives the next call to drift.
+    drifted = target.read_text().replace("v1", "user override")
+    target.write_text(drifted)
+    pre_text = target.read_text()
+
+    proposed = vault / "AGENTS.md.proposed"
+    _patch_path_method(
+        monkeypatch,
+        "write_text",
+        proposed,
+        raise_exc=OSError("simulated region sidecar failure"),
+    )
+
+    with pytest.raises(OSError, match="simulated region sidecar failure"):
+        safe_write_region(target, "content-types", "v2", by="core", journal_path=journal)
+
+    proposals = [e for e in read_events(journal) if isinstance(e, PageProposalEvent)]
+    assert [e.path for e in proposals] == ["AGENTS.md"]
+    assert not proposed.exists()
+    assert target.read_text() == pre_text  # original untouched
+
+
 def test_resolve_proposal_events_durable_when_disk_write_raises(
     vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -880,6 +913,15 @@ def test_resolve_proposal_events_in_journal_at_moment_of_disk_write(
 
 
 # --- construction (call-sequence snapshot, plan-level) ---------------------
+#
+# These observe disk state at journal-append time (legitimate, not
+# mock-shape). They're explicitly classified as construction-grade in
+# the plan and pair with the happy-path snapshot family above: that
+# family observes the journal state at disk-write time, this family
+# observes the disk state at append-event time. Together they pin both
+# halves of the event-before-disk contract. Deleting either family
+# alone loses the contract — keep them paired.
+# ---------------------------------------------------------------------------
 
 
 def test_safe_write_calls_append_event_before_write_bytes(
@@ -1063,6 +1105,87 @@ def test_resolve_proposal_crash_recovery_produces_idempotent_state(
     assert target.read_text() == "merged"
 
 
+def _drive_region_file_to_proposal(vault: Path, journal: Path) -> Path:
+    """Seed a managed-region file and drive it to a pending proposal.
+
+    Used by the two marker-destruction tests below to share setup
+    without sharing assertions.
+    """
+    target = _seed_agents_md(vault, body="seed-body")
+    safe_write_region(target, "content-types", "kit v1", by="core", journal_path=journal)
+    drifted = target.read_text().replace("kit v1", "user override")
+    target.write_text(drifted)
+    safe_write_region(target, "content-types", "kit v2", by="core", journal_path=journal)
+    assert (vault / "AGENTS.md.proposed").exists()
+    return target
+
+
+def _assert_resolve_proposal_marker_destruction_observables(
+    vault: Path, journal: Path, target: Path, expected_content: str
+) -> None:
+    """Shared assertions for the two marker-destruction tests below.
+
+    Spec §Behavior ``resolve_proposal`` step 5 contract: page-level
+    events landed, the region-event loop was skipped, the user's
+    merged content lands on disk, sidecar removed.
+    """
+    events = read_events(journal)
+    page_writes_to_target = [
+        e for e in events if isinstance(e, PageWriteEvent) and e.path == "AGENTS.md"
+    ]
+    resolves = [
+        e for e in events if isinstance(e, PageConflictResolvedEvent) and e.path == "AGENTS.md"
+    ]
+    assert len(page_writes_to_target) == 1  # the resolve event
+    assert len(resolves) == 1
+    region_writes = [
+        e for e in events if isinstance(e, ManagedRegionWriteEvent) and e.file == "AGENTS.md"
+    ]
+    # The seed wrote one region event (no-drift path). The destroyed
+    # markers must not produce a second one.
+    assert len(region_writes) == 1
+    assert target.read_text() == expected_content
+    assert not (vault / "AGENTS.md.proposed").exists()
+
+
+def test_resolve_proposal_no_markers_skips_region_events_but_still_writes_disk(
+    vault: Path, journal: Path
+) -> None:
+    """Spec §Behavior ``resolve_proposal`` step 5 — empty-parse arm.
+
+    The user's merge has no BEGIN/END markers at all; ``managed_regions.parse``
+    returns ``{}`` (no exception). The region-event loop iterates the
+    known regions but every ``.get()`` returns ``None`` so no
+    ``ManagedRegionWriteEvent`` is emitted; the disk write proceeds
+    and preserves the user's resolution.
+    """
+    target = _drive_region_file_to_proposal(vault, journal)
+    destroyed = "no markers at all — just plain prose\n"
+    resolve_proposal(target, destroyed, by="wiki-conflict", journal_path=journal)
+    _assert_resolve_proposal_marker_destruction_observables(vault, journal, target, destroyed)
+
+
+def test_resolve_proposal_malformed_markers_skips_region_events_but_still_writes_disk(
+    vault: Path, journal: Path
+) -> None:
+    """Spec §Behavior ``resolve_proposal`` step 5 — ``except ManagedRegionError`` arm.
+
+    The user's merge has an unclosed ``BEGIN MANAGED`` marker;
+    ``managed_regions.parse`` raises ``ManagedRegionError``. The
+    implementation's ``try/except`` arm catches it, sets
+    ``resolved_regions = None``, skips the region-event loop, and the
+    disk write still proceeds — same end state as the empty-parse arm.
+    A regression that removed the ``try/except`` (letting the error
+    propagate and thus skipping the disk write) would fail this test
+    on the ``target.read_text() == destroyed`` assertion.
+    """
+    target = _drive_region_file_to_proposal(vault, journal)
+    # Unclosed BEGIN block — parses as malformed (raises ManagedRegionError).
+    destroyed = "<!-- BEGIN MANAGED: content-types -->\nunclosed body\n"
+    resolve_proposal(target, destroyed, by="wiki-conflict", journal_path=journal)
+    _assert_resolve_proposal_marker_destruction_observables(vault, journal, target, destroyed)
+
+
 def test_safe_write_region_crash_recovery_routes_to_proposal(vault: Path, journal: Path) -> None:
     """Event durable, region body diverges → recovery is proposal, not direct retry.
 
@@ -1228,10 +1351,19 @@ def test_safe_write_adopt_fastpath_abandons_when_disk_changes_between_reads(
 ) -> None:
     """A concurrent editor between the original read and the re-read abandons adopt.
 
-    The only contract test that catches an implementer who drops the
-    re-read. Without it, a stale "byte-identical" snapshot at the top
-    of ``safe_write`` could journal a baseline that no longer matches
-    disk.
+    The route-to-``PROPOSAL`` + ``PageProposalEvent``-tail assertions
+    catch the headline regression (an implementer who drops the
+    re-read), without which a stale "byte-identical" snapshot at the
+    top of ``safe_write`` could journal a baseline that no longer
+    matches disk.
+
+    The trailing ``events[-1].hash`` assertion separately pins the
+    abandon branch's hash semantics: a regression that journaled the
+    *post-flip re-read hash* instead of the kit's ``new_hash`` would
+    fail. (The stale-snapshot regression is covered by the route-to-
+    PROPOSAL assertion above, not the hash assertion — in this
+    fixture, the pre-flip ``on_disk_hash`` equals ``new_hash`` by
+    construction.)
     """
     target = vault / "page.md"
     target.write_text("original bytes")
@@ -1259,6 +1391,9 @@ def test_safe_write_adopt_fastpath_abandons_when_disk_changes_between_reads(
     assert sidecar.exists()
     events = read_events(journal)
     assert isinstance(events[-1], PageProposalEvent)
+    # The proposal carries the kit's new_hash, not anything derived
+    # from the stale top-of-function snapshot.
+    assert events[-1].hash == _sha256("original bytes")
 
 
 def test_safe_write_adopt_fastpath_records_post_reread_timestamp(

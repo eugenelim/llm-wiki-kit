@@ -116,6 +116,10 @@ def safe_write(
     new_hash = _hash(new_bytes)
     on_disk_hash = _hash(abs_path.read_bytes()) if abs_path.exists() else None
     baseline_hash = _baseline_hash(journal_path, relative_path)
+    # Single timestamp by design — direct-write and proposal are one
+    # logical decision at call entry. Only the adopt fast-path
+    # recomputes (see below), because the re-read shrinks the race
+    # window and the timestamp should reflect the *adoption* decision.
     now = _now()
 
     no_history = baseline_hash is None
@@ -125,7 +129,7 @@ def safe_write(
     direct_write = (
         (no_history and not file_present)  # fresh path
         or (not no_history and on_disk_hash == baseline_hash)  # no drift
-        or (not no_history and not file_present)  # crash-recovery retry
+        or (not no_history and not file_present)  # crash-recovery (spec §Edge cases sub-case 1)
     )
     if direct_write:
         abs_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,8 +144,18 @@ def safe_write(
         # Adopt fast-path. Re-read to shrink the race: an editor that
         # wrote between the first ``read_bytes`` above and this point
         # would otherwise let us journal a hash no longer on disk.
-        # If the re-read diverges, abandon the fast-path — the drift
-        # branch below will see bytes-differ and route to .proposed.
+        # If the re-read diverges, abandon the fast-path — control
+        # falls through to the proposal branch below, which uses the
+        # kit's ``new_hash`` (no predicate re-evaluation; the top-of-
+        # function ``on_disk_hash`` snapshot is stale by construction).
+        # See spec §Behavior "Adopt fast-path" step 2.
+        #
+        # FUTURE (Phase D, when ``wiki journal tail`` lands): consider
+        # adding a ``reason: Literal["fresh","adopt","recovery"]`` field
+        # to ``PageWriteEvent`` so a user staring at the tail can
+        # distinguish "kit adopted my existing file" from "kit wrote a
+        # fresh file" from "kit re-wrote after a crash" — today's
+        # ``by`` field alone doesn't carry that provenance.
         reread_hash = _hash(abs_path.read_bytes())
         if reread_hash == new_hash:
             # Spec §Behavior "Adopt fast-path" step 3: recompute ``now``
