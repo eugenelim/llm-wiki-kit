@@ -317,3 +317,125 @@ def test_doctor_refuses_when_cwd_is_not_a_vault(
     assert cli.main(["doctor"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     assert "not a wiki vault" in err
+
+
+# ---------------------------------------------------------------------------
+# safe-write-ordering spec — recovery family
+#
+# Pre-seed the journal manually with a "kit wrote an event but the file
+# never materialized" state and assert ``run_doctor`` surfaces it. These
+# pass against today's code; their job is to pin the §Edge cases recovery
+# contract so a future refactor can't drop the reconciliation hook.
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_surfaces_orphan_page_event_as_missing(
+    tmp_path: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from datetime import UTC, datetime
+
+    from llm_wiki_kit.journal import append_event
+    from llm_wiki_kit.models import PageWriteEvent
+
+    vault = _init_vault(tmp_path)
+    # Journal a write for a path that does not exist on disk.
+    append_event(
+        _journal_path(vault),
+        PageWriteEvent(
+            timestamp=datetime.now(UTC),
+            by="meeting",
+            path="meetings/2026-05-15.md",
+            hash="a" * 64,
+        ),
+    )
+
+    monkeypatch.chdir(vault)
+    capsys.readouterr()
+
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert exit_code == cli.DOCTOR_ISSUES_EXIT
+    assert "missing: meetings/2026-05-15.md" in out
+
+
+def test_doctor_surfaces_orphan_managed_region_event_as_drift(
+    tmp_path: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from datetime import UTC, datetime
+
+    from llm_wiki_kit.journal import append_event
+    from llm_wiki_kit.models import ManagedRegionWriteEvent
+
+    vault = _init_vault(tmp_path)
+    # Append a managed-region event whose content_hash doesn't match
+    # the on-disk region body (``wiki init`` already seeded AGENTS.md
+    # with empty region buckets).
+    append_event(
+        _journal_path(vault),
+        ManagedRegionWriteEvent(
+            timestamp=datetime.now(UTC),
+            by="core",
+            file="AGENTS.md",
+            region="content-types",
+            content_hash="b" * 64,
+        ),
+    )
+
+    monkeypatch.chdir(vault)
+    capsys.readouterr()
+
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert exit_code == cli.DOCTOR_ISSUES_EXIT
+    assert "managed-region-drift: AGENTS.md:content-types" in out
+
+
+def test_doctor_surfaces_orphan_resolve_events(
+    tmp_path: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from datetime import UTC, datetime
+
+    from llm_wiki_kit.journal import append_event
+    from llm_wiki_kit.models import PageConflictResolvedEvent, PageWriteEvent
+
+    vault = _init_vault(tmp_path)
+    # Two events: PageWrite + PageConflictResolved, file never written.
+    now = datetime.now(UTC)
+    append_event(
+        _journal_path(vault),
+        PageWriteEvent(
+            timestamp=now,
+            by="wiki-conflict",
+            path="orphan-resolve.md",
+            hash="c" * 64,
+        ),
+    )
+    append_event(
+        _journal_path(vault),
+        PageConflictResolvedEvent(
+            timestamp=now,
+            by="wiki-conflict",
+            path="orphan-resolve.md",
+            hash="c" * 64,
+        ),
+    )
+
+    monkeypatch.chdir(vault)
+    capsys.readouterr()
+
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert exit_code == cli.DOCTOR_ISSUES_EXIT
+    assert "missing: orphan-resolve.md" in out

@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit.write_helper`
 - **Related:** [ADR-0002](../../adr/0002-journal-as-state-truth.md) (journal as state truth — `safe_write` is its largest event producer; §Negative amended by this spec), [ADR-0003](../../adr/0003-managed-regions-for-shared-files.md) (managed regions — shares the proposal path; not amended by this spec), [ADR-0004](../../adr/0004-drift-detection-and-proposal-flow.md) (drift detection — §Mechanics + §Negative amended by this spec via a §Revisions entry), [`docs/specs/safe-write-ordering/plan.md`](plan.md), retro-review issue [#23](https://github.com/eugenelim/llm-wiki-kit/issues/23) (findings `qC3`, `qC6`, `C2`)
 

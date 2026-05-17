@@ -263,3 +263,48 @@ def test_add_refuses_when_cwd_is_not_a_vault(
     assert cli.main(["add", "ontology:people"], kit_root=kit_root) == cli.WIKI_ERROR_EXIT
     err = capsys.readouterr().err
     assert "not a wiki vault" in err
+
+
+def test_wiki_add_over_unjournaled_user_file_proposes_not_overwrites(
+    tmp_path: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """qC6: ``wiki add`` over an unjournaled user file proposes, doesn't overwrite.
+
+    spec.md §Behavior "Drift path" sub-case (b): the user dropped a
+    markdown file at a path a primitive will render to. The kit must
+    not silently overwrite — write ``.proposed`` and leave the user
+    file untouched.
+    """
+    vault = _init_vault(tmp_path)
+    monkeypatch.chdir(vault)
+
+    # Drop a user file at a path ``add ontology:people`` will render to.
+    user_path = vault / "wiki" / "people" / "README.md"
+    user_path.parent.mkdir(parents=True)
+    user_content = "user's pre-existing notes about people\n"
+    user_path.write_text(user_content, encoding="utf-8")
+
+    assert cli.main(["add", "ontology:people"]) == 0
+
+    # User file untouched.
+    assert user_path.read_text(encoding="utf-8") == user_content
+    # Sidecar carries the kit's intended content.
+    sidecar = vault / "wiki" / "people" / "README.md.proposed"
+    assert sidecar.exists()
+    assert sidecar.read_text(encoding="utf-8") != user_content
+
+    # Journal records a proposal, not a page-write, for that path.
+    events = read_events(_journal_path(vault))
+    page_writes_to_user = [
+        e for e in events if isinstance(e, PageWriteEvent) and e.path == "wiki/people/README.md"
+    ]
+    assert page_writes_to_user == []
+    proposals_to_user = [
+        e
+        for e in events
+        if e.__class__.__name__ == "PageProposalEvent"
+        and getattr(e, "path", None) == "wiki/people/README.md"
+    ]
+    assert proposals_to_user, "expected a PageProposalEvent for the user-owned path"

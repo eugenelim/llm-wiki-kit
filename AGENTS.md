@@ -146,7 +146,10 @@ different audience, never mix.
   use `tmp_path` fixtures or `tests/fixtures/*-vault/`. The kit’s code should
   never assume a vault path other than what’s explicitly passed in.
 - **Don’t bypass `write_helper.safe_write()`** for any file write that lands
-  in a user’s vault. Drift detection is load-bearing.
+  in a user’s vault. Drift detection is load-bearing. (Documented exceptions:
+  `write_helper.resolve_proposal` for user-mediated merges,
+  `write_helper._ensure_obsidianignore` for the additive Obsidian-index
+  config — see `docs/specs/safe-write-ordering/spec.md`.)
 - **Don’t merge kit-side and vault-side skill scopes.** Repo-root `.claude/`
   is for the kit’s own development; `core/files/skills/` and
   `templates/*/files/skills/` are what `wiki init` copies into a user’s

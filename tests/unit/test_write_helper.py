@@ -14,6 +14,7 @@ These tests pin every numbered step from ADR-0004 §Mechanics.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ import pytest
 from llm_wiki_kit.errors import ManagedRegionError, WikiError
 from llm_wiki_kit.journal import read_events
 from llm_wiki_kit.models import (
+    Event,
     ManagedRegionWriteEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
@@ -28,7 +30,9 @@ from llm_wiki_kit.models import (
 )
 from llm_wiki_kit.write_helper import (
     OBSIDIAN_IGNORE_PROPOSED_PATTERN,
+    OBSIDIANIGNORE_BYPASS_DOC,
     WriteResult,
+    _ensure_obsidianignore,
     resolve_proposal,
     safe_write,
     safe_write_region,
@@ -96,21 +100,6 @@ def test_first_write_stores_path_relative_to_vault(vault: Path, journal: Path) -
     events = read_events(journal)
     assert isinstance(events[0], PageWriteEvent)
     assert events[0].path == "meetings/2026-05-15.md"
-
-
-def test_first_write_overwrites_existing_file_without_journal_entry(
-    vault: Path, journal: Path
-) -> None:
-    """ADR-0004 §Mechanics step 2: no prior PageWrite → direct write.
-
-    The mitigation against silent clobbering is at the ``wiki init`` layer
-    (refuse non-empty folders unless ``--adopt`` is passed), not here.
-    """
-    target = vault / "page.md"
-    target.write_text("user's pre-existing content")
-    result = safe_write(target, "kit content", by="core", journal_path=journal)
-    assert result is WriteResult.WRITTEN
-    assert target.read_text() == "kit content"
 
 
 def test_repeated_write_with_no_drift_overwrites_and_appends_new_event(
@@ -663,3 +652,754 @@ def test_safe_write_region_drift_event_carries_correct_hashes(vault: Path, journ
     # Only the first (no-drift) write produced a region event.
     assert len(region_writes) == 1
     assert region_writes[0].content_hash == _sha256("v1")
+
+
+# ---------------------------------------------------------------------------
+# safe-write-ordering spec — event-before-disk (qC3)
+# ---------------------------------------------------------------------------
+#
+# Failure-injection family + happy-path snapshot family pin the two halves
+# of the event-before-disk contract: "event durable when disk write fails"
+# and "event durable BEFORE the disk write happens." Together a future
+# refactor that flipped the order in the happy path (and left the failure
+# path intact) cannot pass both.
+#
+# Path-scoped monkeypatches: ``journal.append_event`` and the holder-file
+# helpers also call ``Path.write_text`` / ``Path.write_bytes``; a blanket
+# raise would break them and produce misleading test failures.
+# ---------------------------------------------------------------------------
+
+
+def _patch_path_method(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    target: Path,
+    *,
+    raise_exc: BaseException | None = None,
+    on_call: Callable[..., None] | None = None,
+) -> None:
+    """Path-scoped ``Path.<method_name>`` shim.
+
+    On a call against ``target``, invokes ``on_call(self, *args, **kwargs)``
+    if given, then raises ``raise_exc`` if given; otherwise delegates to
+    the original implementation. Compares by absolute path strings so
+    ``tmp_path``'s ``/private/var`` quirk on macOS doesn't desync.
+    """
+    original = getattr(Path, method_name)
+    target_abs = str(target.absolute())
+
+    def wrapper(self: Path, *args: object, **kwargs: object) -> object:
+        if str(self.absolute()) == target_abs:
+            if on_call is not None:
+                on_call(self, *args, **kwargs)
+            if raise_exc is not None:
+                raise raise_exc
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method_name, wrapper)
+
+
+# --- failure-injection family ----------------------------------------------
+
+
+def test_safe_write_event_durable_when_disk_write_raises(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failure-injected ``Path.write_bytes`` leaves the journal entry durable.
+
+    Under today's write→append order, the raise lands before the
+    ``append_event`` call, so the journal stays empty and this fails red.
+    After the reorder, the ``PageWriteEvent`` is durable and the file
+    is absent (recoverable via ``wiki doctor``'s ``missing`` check).
+    """
+    target = vault / "meetings" / "2026-05-15.md"
+    _patch_path_method(
+        monkeypatch,
+        "write_bytes",
+        target,
+        raise_exc=OSError("simulated disk failure"),
+    )
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        safe_write(target, "hello\n", by="meeting", journal_path=journal)
+
+    page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
+    assert [e.path for e in page_writes] == ["meetings/2026-05-15.md"]
+    assert page_writes[0].hash == _sha256("hello\n")
+    assert not target.exists()
+
+
+def test_safe_write_drift_event_durable_when_sidecar_write_raises(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same shape as above, drift path: sidecar write raises after event.
+
+    The proposal event is durable; the sidecar does not exist. The
+    original on-disk file is untouched.
+    """
+    target = vault / "page.md"
+    safe_write(target, "v1", by="core", journal_path=journal)
+    target.write_text("user edits")
+
+    proposed = vault / "page.md.proposed"
+    _patch_path_method(
+        monkeypatch,
+        "write_bytes",
+        proposed,
+        raise_exc=OSError("simulated sidecar failure"),
+    )
+
+    with pytest.raises(OSError, match="simulated sidecar failure"):
+        safe_write(target, "v2", by="core", journal_path=journal)
+
+    proposals = [e for e in read_events(journal) if isinstance(e, PageProposalEvent)]
+    assert [e.path for e in proposals] == ["page.md"]
+    assert proposals[0].hash == _sha256("v2")
+    assert not proposed.exists()
+    assert target.read_text() == "user edits"
+
+
+def test_safe_write_region_event_durable_when_disk_write_raises(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """qC3 for ``safe_write_region``'s happy path."""
+    target = _seed_agents_md(vault)
+    pre_text = target.read_text()
+    _patch_path_method(
+        monkeypatch,
+        "write_text",
+        target,
+        raise_exc=OSError("simulated write_text failure"),
+    )
+
+    with pytest.raises(OSError, match="simulated write_text failure"):
+        safe_write_region(target, "content-types", "kit v1", by="core", journal_path=journal)
+
+    region_writes = [e for e in read_events(journal) if isinstance(e, ManagedRegionWriteEvent)]
+    assert len(region_writes) == 1
+    assert region_writes[0].content_hash == _sha256("kit v1")
+    assert target.read_text() == pre_text  # untouched
+
+
+def test_resolve_proposal_events_durable_when_disk_write_raises(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """qC3 for ``resolve_proposal``.
+
+    Both ``PageWriteEvent`` and ``PageConflictResolvedEvent`` are
+    durable; the target file is unchanged (matches pre-call content).
+    """
+    target = _drive_to_proposal(vault, journal)
+    pre_text = target.read_text()
+    _patch_path_method(
+        monkeypatch,
+        "write_bytes",
+        target,
+        raise_exc=OSError("simulated resolve failure"),
+    )
+
+    with pytest.raises(OSError, match="simulated resolve failure"):
+        resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+
+    events = read_events(journal)
+    # Final two events from this call: PageWriteEvent then
+    # PageConflictResolvedEvent, in spec §Behavior ``resolve_proposal``
+    # step order.
+    assert isinstance(events[-2], PageWriteEvent)
+    assert isinstance(events[-1], PageConflictResolvedEvent)
+    assert events[-2].hash == _sha256("merged")
+    assert target.read_text() == pre_text
+
+
+# --- happy-path snapshot family --------------------------------------------
+
+
+def test_safe_write_event_in_journal_at_moment_of_disk_write(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the moment ``Path.write_bytes`` runs, the event is already in the journal.
+
+    Catches a future refactor that did ``write → if write_succeeded:
+    append_event`` (which the failure-injection family would not).
+    """
+    target = vault / "page.md"
+    snapshots: list[list[object]] = []
+
+    def snapshot(self: Path, *_args: object, **_kwargs: object) -> None:
+        snapshots.append(list(read_events(journal)))
+
+    _patch_path_method(monkeypatch, "write_bytes", target, on_call=snapshot)
+    safe_write(target, "hello", by="core", journal_path=journal)
+
+    assert len(snapshots) == 1
+    page_writes = [e for e in snapshots[0] if isinstance(e, PageWriteEvent)]
+    assert [e.path for e in page_writes] == ["page.md"]
+    assert page_writes[0].hash == _sha256("hello")
+
+
+def test_safe_write_region_event_in_journal_at_moment_of_disk_write(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _seed_agents_md(vault)
+    snapshots: list[list[object]] = []
+
+    def snapshot(self: Path, *_args: object, **_kwargs: object) -> None:
+        snapshots.append(list(read_events(journal)))
+
+    _patch_path_method(monkeypatch, "write_text", target, on_call=snapshot)
+    safe_write_region(target, "content-types", "kit v1", by="core", journal_path=journal)
+
+    assert len(snapshots) == 1
+    region_writes = [e for e in snapshots[0] if isinstance(e, ManagedRegionWriteEvent)]
+    assert len(region_writes) == 1
+    assert region_writes[0].content_hash == _sha256("kit v1")
+
+
+def test_resolve_proposal_events_in_journal_at_moment_of_disk_write(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _drive_to_proposal(vault, journal)
+    snapshots: list[list[object]] = []
+
+    def snapshot(self: Path, *_args: object, **_kwargs: object) -> None:
+        snapshots.append(list(read_events(journal)))
+
+    _patch_path_method(monkeypatch, "write_bytes", target, on_call=snapshot)
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+
+    assert len(snapshots) == 1
+    journal_at_write = snapshots[0]
+    # Both resolution events present at the moment of the disk write.
+    assert any(
+        isinstance(e, PageWriteEvent) and e.hash == _sha256("merged") for e in journal_at_write
+    )
+    assert any(
+        isinstance(e, PageConflictResolvedEvent) and e.hash == _sha256("merged")
+        for e in journal_at_write
+    )
+
+
+# --- construction (call-sequence snapshot, plan-level) ---------------------
+
+
+def test_safe_write_calls_append_event_before_write_bytes(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = vault / "page.md"
+    target_existed_at_event: list[bool] = []
+
+    from llm_wiki_kit.journal import append_event as journal_append_event
+
+    def recording_append(j: Path, event: Event) -> None:
+        target_existed_at_event.append(target.exists())
+        journal_append_event(j, event)
+
+    monkeypatch.setattr("llm_wiki_kit.write_helper.append_event", recording_append)
+    safe_write(target, "hello", by="core", journal_path=journal)
+
+    assert target_existed_at_event == [False]
+
+
+def test_safe_write_drift_calls_append_event_before_proposed_write_bytes(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = vault / "page.md"
+    safe_write(target, "v1", by="core", journal_path=journal)
+    target.write_text("user edits")
+
+    proposed = vault / "page.md.proposed"
+    proposed_existed_at_event: list[bool] = []
+
+    from llm_wiki_kit.journal import append_event as journal_append_event
+
+    def recording_append(j: Path, event: Event) -> None:
+        if isinstance(event, PageProposalEvent):
+            proposed_existed_at_event.append(proposed.exists())
+        journal_append_event(j, event)
+
+    monkeypatch.setattr("llm_wiki_kit.write_helper.append_event", recording_append)
+    safe_write(target, "v2", by="core", journal_path=journal)
+
+    assert proposed_existed_at_event == [False]
+
+
+def test_safe_write_region_calls_append_event_before_write_text(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _seed_agents_md(vault, body="seed-body")
+    body_at_event: list[str] = []
+
+    from llm_wiki_kit.journal import append_event as journal_append_event
+
+    def recording_append(j: Path, event: Event) -> None:
+        if isinstance(event, ManagedRegionWriteEvent):
+            body_at_event.append(target.read_text(encoding="utf-8"))
+        journal_append_event(j, event)
+
+    monkeypatch.setattr("llm_wiki_kit.write_helper.append_event", recording_append)
+    safe_write_region(target, "content-types", "kit v1", by="core", journal_path=journal)
+
+    assert len(body_at_event) == 1
+    # File body at append-event time is still the seed text — region
+    # has not been rewritten yet.
+    assert "seed-body" in body_at_event[0]
+    assert "kit v1" not in body_at_event[0]
+
+
+def test_resolve_proposal_calls_append_events_before_rewrite_and_unlink(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _drive_to_proposal(vault, journal)
+    sidecar = vault / "page.md.proposed"
+
+    target_at_event: list[bytes] = []
+    sidecar_present_at_event: list[bool] = []
+
+    from llm_wiki_kit.journal import append_event as journal_append_event
+
+    def recording_append(j: Path, event: Event) -> None:
+        if isinstance(event, PageWriteEvent | PageConflictResolvedEvent):
+            target_at_event.append(target.read_bytes())
+            sidecar_present_at_event.append(sidecar.exists())
+        journal_append_event(j, event)
+
+    monkeypatch.setattr("llm_wiki_kit.write_helper.append_event", recording_append)
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+
+    # At least two snapshots (PageWriteEvent + PageConflictResolvedEvent).
+    assert len(target_at_event) >= 2
+    # Both events fire while the target still carries the pre-resolve
+    # content (user edits) and the sidecar still exists.
+    assert all(snap == b"user edits" for snap in target_at_event)
+    assert all(sidecar_present_at_event)
+
+
+# --- crash-recovery retry (predicate disjunct lands in step 2) -------------
+#
+# These three pin the predicate refactor landed in plan step 2. They are
+# RED until step 2 lands; after step 2 they pin the §Edge cases recovery
+# contract. Fixture isolation: each test seeds the journal inline so a
+# regression in one sub-case cannot be masked by a shared helper.
+# ---------------------------------------------------------------------------
+
+
+def test_safe_write_recovers_missing_file_when_baseline_journaled(
+    vault: Path, journal: Path
+) -> None:
+    """Event durable, file absent → re-run takes the direct-write branch.
+
+    Pre-state: a ``PageWriteEvent`` for ``page.md`` is journaled, but
+    ``page.md`` was never (or no longer) on disk — the §Edge cases
+    "Crash between event append and disk write, ``safe_write`` happy
+    path, fresh file" case. The second-pass call must take the
+    direct-write branch (not proposal); ``check_missing`` clears on the
+    next doctor pass.
+    """
+    from datetime import UTC, datetime
+
+    from llm_wiki_kit.journal import append_event
+
+    seed_hash = _sha256("hello")
+    append_event(
+        journal,
+        PageWriteEvent(
+            timestamp=datetime.now(UTC),
+            by="core",
+            path="page.md",
+            hash=seed_hash,
+        ),
+    )
+
+    target = vault / "page.md"
+    assert not target.exists()  # explicit pre-state assertion (fixture isolation)
+    assert len(read_events(journal)) == 1
+
+    result = safe_write(target, "hello", by="core", journal_path=journal)
+
+    assert result is WriteResult.WRITTEN
+    assert target.read_text() == "hello"
+    assert not (vault / "page.md.proposed").exists()
+    events = read_events(journal)
+    page_writes = [e for e in events if isinstance(e, PageWriteEvent)]
+    # Seed + recovery write.
+    assert len(page_writes) == 2
+    assert all(e.path == "page.md" for e in page_writes)
+
+
+def test_resolve_proposal_crash_recovery_produces_idempotent_state(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Crash between events durable and disk write → retry produces same state."""
+    from llm_wiki_kit.journal import replay_state
+
+    target = _drive_to_proposal(vault, journal)
+
+    # Crash on the FIRST call against ``target``; subsequent calls
+    # delegate to the original. The family-(a) raise is unconditional
+    # on the target path and would crash the retry too.
+    original = Path.write_bytes
+    target_abs = str(target.absolute())
+    call_count = {"n": 0}
+
+    def fragile_write_bytes(self: Path, data: bytes) -> int:
+        if str(self.absolute()) == target_abs:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError("first-call crash")
+        return original(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", fragile_write_bytes)
+
+    with pytest.raises(OSError, match="first-call crash"):
+        resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+    # Second invocation succeeds.
+    resolve_proposal(target, "merged", by="wiki-conflict", journal_path=journal)
+
+    state = replay_state(read_events(journal))
+    # The path's last-write-wins page-write hash is the merged content,
+    # and the proposal has been resolved.
+    assert state.page_writes["page.md"].hash == _sha256("merged")
+    assert "page.md" not in state.pending_proposals
+    assert target.read_text() == "merged"
+
+
+def test_safe_write_region_crash_recovery_routes_to_proposal(vault: Path, journal: Path) -> None:
+    """Event durable, region body diverges → recovery is proposal, not direct retry.
+
+    Spec §Edge cases sub-case 2: pre-seed a managed-region file,
+    journal a ``ManagedRegionWriteEvent`` whose ``content_hash``
+    differs from the on-disk region body (simulating "event durable,
+    write partial"); second call routes through proposal.
+    """
+    from datetime import UTC, datetime
+
+    from llm_wiki_kit.journal import append_event
+
+    target = _seed_agents_md(vault, body="seed-body")
+    # Journal a ``ManagedRegionWriteEvent`` whose hash does NOT match
+    # the current on-disk region body — simulates "event durable, write
+    # partial or missed".
+    append_event(
+        journal,
+        ManagedRegionWriteEvent(
+            timestamp=datetime.now(UTC),
+            by="core",
+            file="AGENTS.md",
+            region="content-types",
+            content_hash=_sha256("would-have-been-written"),
+        ),
+    )
+    assert len(read_events(journal)) == 1
+
+    result = safe_write_region(
+        target, "content-types", "would-have-been-written", by="core", journal_path=journal
+    )
+
+    assert result is WriteResult.PROPOSAL
+    sidecar = vault / "AGENTS.md.proposed"
+    assert sidecar.exists()
+    assert "would-have-been-written" in sidecar.read_text()
+    events = read_events(journal)
+    assert isinstance(events[-1], PageProposalEvent)
+
+
+# ---------------------------------------------------------------------------
+# safe-write-ordering spec — unjournaled-existing → drift; byte-identical →
+# adopt fast-path (qC6)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_write_to_unjournaled_existing_file_writes_proposal(
+    vault: Path, journal: Path
+) -> None:
+    """Inverts the obsolete ``test_first_write_overwrites_existing_file_without_journal_entry``.
+
+    A user-authored file the kit has never journaled, with content that
+    differs from the kit's proposed content, must route through
+    ``.proposed`` — not silently overwrite.
+    """
+    target = vault / "page.md"
+    target.write_text("user's pre-existing content")
+    result = safe_write(target, "kit content", by="core", journal_path=journal)
+
+    assert result is WriteResult.PROPOSAL
+    sidecar = vault / "page.md.proposed"
+    assert sidecar.exists()
+    assert sidecar.read_text() == "kit content"
+    proposals = [e for e in read_events(journal) if isinstance(e, PageProposalEvent)]
+    assert len(proposals) == 1
+    assert proposals[0].hash == _sha256("kit content")
+
+
+def test_safe_write_to_unjournaled_existing_file_does_not_touch_original(
+    vault: Path, journal: Path
+) -> None:
+    """Pinned explicitly so a regression that touches the user file fails red."""
+    target = vault / "page.md"
+    pre_text = "user's pre-existing content"
+    target.write_text(pre_text)
+    pre_mtime = target.stat().st_mtime
+
+    safe_write(target, "kit content", by="core", journal_path=journal)
+
+    assert target.read_text() == pre_text
+    # mtime stability is a weaker signal than content equality (coarse-mtime
+    # filesystems exist), but useful as a cross-check that the file was
+    # not opened-for-write.
+    assert target.stat().st_mtime == pre_mtime
+
+
+def test_safe_write_first_write_to_absent_file_still_writes_directly(
+    vault: Path, journal: Path
+) -> None:
+    """Guard against over-broadening: no-journal AND no-disk stays on direct-write.
+
+    ``wiki init`` lands every primitive's first render through this
+    branch; if qC6 broadened to include it, every fresh-vault write
+    would propose.
+    """
+    target = vault / "fresh.md"
+    result = safe_write(target, "first kit write", by="core", journal_path=journal)
+    assert result is WriteResult.WRITTEN
+    assert target.read_text() == "first kit write"
+    page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
+    assert len(page_writes) == 1
+
+
+def test_safe_write_adopt_fastpath_byte_identical_existing_file_writes_no_sidecar(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adopt fast-path: bytes already match → journal baseline, skip the disk write.
+
+    Inode preservation is the load-bearing observable (Obsidian /
+    inotify consumers react to inode changes; mtime resolution varies
+    by filesystem). A path-scoped ``Path.write_bytes`` recorder pins
+    "the write was actually skipped" cross-platform.
+    """
+    target = vault / "page.md"
+    content = "byte-identical content\n"
+    target.write_text(content)
+    pre_ino = target.stat().st_ino
+
+    write_bytes_calls: list[Path] = []
+    original_write_bytes = Path.write_bytes
+    target_abs = str(target.absolute())
+
+    def recording_write_bytes(self: Path, data: bytes) -> int:
+        if str(self.absolute()) == target_abs:
+            write_bytes_calls.append(self)
+        return original_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", recording_write_bytes)
+
+    result = safe_write(target, content, by="core", journal_path=journal)
+
+    assert result is WriteResult.WRITTEN
+    assert target.read_text() == content
+    assert target.stat().st_ino == pre_ino
+    assert not (vault / "page.md.proposed").exists()
+    assert write_bytes_calls == []  # the disk write was skipped
+
+    page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
+    assert len(page_writes) == 1
+    assert page_writes[0].hash == _sha256(content)
+
+
+def test_safe_write_adopt_fastpath_baseline_becomes_journaled(vault: Path, journal: Path) -> None:
+    """After the adopt fast-path, a repeat write sees no drift; drift routes proposal."""
+    target = vault / "page.md"
+    content = "adopt me"
+    target.write_text(content)
+
+    safe_write(target, content, by="core", journal_path=journal)
+    # Repeat write: byte-equal — direct write, two events total.
+    result2 = safe_write(target, content, by="core", journal_path=journal)
+    assert result2 is WriteResult.WRITTEN
+    assert len([e for e in read_events(journal) if isinstance(e, PageWriteEvent)]) == 2
+
+    # Drift: user edits file, kit writes again — proposal.
+    target.write_text("user edits over the adopted baseline")
+    result3 = safe_write(target, "kit v2", by="core", journal_path=journal)
+    assert result3 is WriteResult.PROPOSAL
+
+
+def test_safe_write_adopt_fastpath_abandons_when_disk_changes_between_reads(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent editor between the original read and the re-read abandons adopt.
+
+    The only contract test that catches an implementer who drops the
+    re-read. Without it, a stale "byte-identical" snapshot at the top
+    of ``safe_write`` could journal a baseline that no longer matches
+    disk.
+    """
+    target = vault / "page.md"
+    target.write_text("original bytes")
+
+    saved_write_bytes = Path.write_bytes
+    saved_read_bytes = Path.read_bytes
+    target_abs = str(target.absolute())
+    read_count = {"n": 0}
+
+    def flipping_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
+        if str(self.absolute()) == target_abs:
+            read_count["n"] += 1
+            if read_count["n"] == 2:
+                # Adopt-branch re-read: flip disk content so the
+                # re-read hash diverges from new_hash.
+                saved_write_bytes(self, b"concurrent edit landed")
+        return saved_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", flipping_read_bytes)
+
+    result = safe_write(target, "original bytes", by="core", journal_path=journal)
+
+    assert result is WriteResult.PROPOSAL
+    sidecar = vault / "page.md.proposed"
+    assert sidecar.exists()
+    events = read_events(journal)
+    assert isinstance(events[-1], PageProposalEvent)
+
+
+def test_safe_write_adopt_fastpath_records_post_reread_timestamp(
+    vault: Path, journal: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec §Behavior Adopt fast-path step 3: timestamp is post-re-read, not call-entry."""
+    from datetime import UTC, datetime
+
+    target = vault / "page.md"
+    content = "adopt me"
+    target.write_text(content)
+
+    timestamps = [
+        datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        datetime(2026, 2, 2, 0, 0, tzinfo=UTC),
+        datetime(2026, 3, 3, 0, 0, tzinfo=UTC),
+    ]
+    now_calls: list[datetime] = []
+
+    def fake_now() -> datetime:
+        result = timestamps[len(now_calls)]
+        now_calls.append(result)
+        return result
+
+    monkeypatch.setattr("llm_wiki_kit.write_helper._now", fake_now)
+
+    result = safe_write(target, content, by="core", journal_path=journal)
+    assert result is WriteResult.WRITTEN
+
+    # Two calls: call-entry, then post-re-read recompute. A future
+    # refactor that drops or adds a now() call fails this.
+    assert len(now_calls) == 2
+
+    page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
+    assert len(page_writes) == 1
+    # Journaled timestamp matches the post-re-read recompute, not the
+    # call-entry now.
+    assert page_writes[0].timestamp == timestamps[1]
+
+
+def test_safe_write_region_unjournaled_region_byte_identical_still_writes_directly(
+    vault: Path, journal: Path
+) -> None:
+    """Byte-identical region complement to the existing drifted-baseline pin.
+
+    Pairs with
+    ``test_safe_write_region_first_write_with_drifted_baseline_is_written``;
+    together they pin the page-vs-region distinction per spec §Non-goals
+    "Why qC6 is page-scoped". A future "mirror the page-level adopt
+    fast-path into regions" refactor would fail this — the region's
+    direct-write semantics are load-bearing for
+    ``install.aggregate_region_contributions``.
+    """
+    target = _seed_agents_md(vault, body="kit v1")
+    result = safe_write_region(target, "content-types", "kit v1", by="core", journal_path=journal)
+    assert result is WriteResult.WRITTEN
+    region_writes = [e for e in read_events(journal) if isinstance(e, ManagedRegionWriteEvent)]
+    assert len(region_writes) == 1
+    assert region_writes[0].content_hash == _sha256("kit v1")
+
+
+# ---------------------------------------------------------------------------
+# safe-write-ordering spec — ``.obsidianignore`` documented non-journaled
+# bypass (C2)
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_obsidianignore_does_not_journal(vault: Path, journal: Path) -> None:
+    """First drift produces zero ``PageWriteEvent``s whose path is ``.obsidianignore``.
+
+    Pins the spec's contract: the bypass is the explicit choice, not an
+    oversight. A future maintainer who routes ``.obsidianignore``
+    through ``safe_write`` would re-introduce the page-drift-on-user-edit
+    UX the spec rejects.
+    """
+    target = vault / "page.md"
+    safe_write(target, "v1", by="core", journal_path=journal)
+    target.write_text("user edits")
+    safe_write(target, "v2 from kit", by="core", journal_path=journal)
+
+    # ``.obsidianignore`` was created (drift path appended the pattern).
+    assert (vault / ".obsidianignore").exists()
+    # …but no journal event names it.
+    page_writes = [e for e in read_events(journal) if isinstance(e, PageWriteEvent)]
+    assert not any(e.path == ".obsidianignore" for e in page_writes)
+
+
+def test_ensure_obsidianignore_remains_idempotent_via_pattern_check(
+    vault: Path, journal: Path
+) -> None:
+    """Subsequent drift events do not rewrite ``.obsidianignore`` once the pattern is present."""
+    target = vault / "page.md"
+    safe_write(target, "v1", by="core", journal_path=journal)
+    target.write_text("user edits")
+    safe_write(target, "v2", by="core", journal_path=journal)
+
+    first_mtime = (vault / ".obsidianignore").stat().st_mtime
+    # Drive a second drift on a different file.
+    target2 = vault / "other.md"
+    safe_write(target2, "v1", by="core", journal_path=journal)
+    target2.write_text("user edits")
+    safe_write(target2, "v2", by="core", journal_path=journal)
+
+    # ``.obsidianignore`` is untouched by the second drift — the
+    # additive-merge body's pattern-already-present check short-circuited.
+    assert (vault / ".obsidianignore").stat().st_mtime == first_mtime
+
+
+def test_obsidianignore_bypass_doc_constant_points_at_this_spec() -> None:
+    """The load-bearing pin: any change to the bypass authority is grep-discoverable."""
+    assert OBSIDIANIGNORE_BYPASS_DOC == "docs/specs/safe-write-ordering/spec.md"
+
+
+def test_ensure_obsidianignore_docstring_references_bypass_constant() -> None:
+    """Paired with the constant test so a docstring paraphrase fails red.
+
+    Intentionally brittle — the paraphrase failure mode is what this
+    test catches. A maintainer who legitimately renames the constant
+    updates both tests together.
+    """
+    doc = _ensure_obsidianignore.__doc__ or ""
+    assert "OBSIDIANIGNORE_BYPASS_DOC" in doc
+
+
+def test_doctor_does_not_flag_obsidianignore_as_orphan(vault: Path, journal: Path) -> None:
+    """``.obsidianignore`` with no journal entry must not surface as ``orphan``.
+
+    Post qC10 + C6 the orphan check derives its kit-owned set from
+    journaled writes, so an unjournaled ``.obsidianignore`` is never a
+    candidate. This test pins that absence so a future maintainer
+    doesn't add a special-case claim back in.
+    """
+    from llm_wiki_kit.doctor import ORPHAN, run_doctor
+
+    # Drive a proposal so ``.obsidianignore`` lands on disk.
+    target = vault / "page.md"
+    safe_write(target, "v1", by="core", journal_path=journal)
+    target.write_text("user edits")
+    safe_write(target, "v2", by="core", journal_path=journal)
+    assert (vault / ".obsidianignore").exists()
+
+    issues = run_doctor(vault, kit_root=Path("."))  # kit_root unused by orphan check
+    orphan_issues = [i for i in issues if i.kind == ORPHAN]
+    assert not any(i.path == ".obsidianignore" for i in orphan_issues)
