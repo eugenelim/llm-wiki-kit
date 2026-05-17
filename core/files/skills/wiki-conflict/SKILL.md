@@ -6,6 +6,17 @@ license: MIT
 
 # wiki-conflict
 
+> **⚠️ Some companion surfaces are not yet shipped in v2.0.0.dev.**
+> The primary `wiki resolve` action this skill commits through is
+> shipped and operational. The companion commands referenced for
+> triage and context — `wiki journal tail`, `wiki journal explain`,
+> `wiki upgrade`, and `wiki run` — are Phase D/E stubs that exit
+> non-zero with `wiki <cmd>: not yet implemented (v2 migration in
+> progress, see RFC-0001).` (see `llm_wiki_kit/cli.py`). Until they
+> land, read those commands as design references; for triage, read
+> `.wiki.journal/journal.jsonl` directly or run `wiki doctor`.
+> Tracked under retro-review concern C7 (issue #23).
+
 A `<path>.proposed` file means the kit wanted to write `<path>` but
 detected the on-disk content didn't match the version the kit last
 wrote. Rather than overwrite the user's edits, the kit dropped the

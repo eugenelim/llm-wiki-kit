@@ -6,6 +6,15 @@ license: MIT
 
 # onboarding-pack
 
+> **⚠️ Not yet shipped in v2.0.0.dev.** This operation runs via
+> `wiki run onboarding-pack`, and `wiki run` is a stub in v2.0.0.dev:
+> it prints `wiki run: not yet implemented (v2 migration in progress,
+> see RFC-0001).` and exits non-zero (see
+> `llm_wiki_kit/cli.py:_cmd_run`). The operation runner lands in
+> Phase D of the v2 migration. Until then, treat this SKILL.md as the
+> *design spec*, not an executable playbook. Tracked under
+> retro-review concern C7 (issue #23).
+
 Assemble the durable context a newcomer needs in their first week on
 a customer or project — the people, the recent decisions, the
 themes from customer feedback, the open risks. The output is one
