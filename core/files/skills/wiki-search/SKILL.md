@@ -6,6 +6,17 @@ license: MIT
 
 # wiki-search
 
+> **⚠️ Not yet shipped in v2.0.0.dev.** The CLI surface this skill
+> describes (`wiki search`) is a stub in v2.0.0.dev: invoking it
+> prints `wiki search: not yet implemented (v2 migration in progress,
+> see RFC-0001).` and exits non-zero (see
+> `llm_wiki_kit/cli.py:_cmd_search`). Until the ripgrep / FTS5 backend
+> lands in Phase D/E of the v2 migration, treat this SKILL.md as the
+> *design spec*, not an executable playbook. If you (the agent) try
+> to run `wiki search`, fall back to the IDE's Grep over `wiki/` or
+> ask the user to do a manual search. Tracked under retro-review
+> concern C7 (issue #23).
+
 Two-tier search over the vault. The skill calls one entry point; the
 backend is chosen automatically.
 

@@ -6,6 +6,15 @@ license: MIT
 
 # medical-summary
 
+> **⚠️ Not yet shipped in v2.0.0.dev.** This operation runs via
+> `wiki run medical-summary <person>`, and `wiki run` is a stub in
+> v2.0.0.dev: it prints `wiki run: not yet implemented (v2 migration
+> in progress, see RFC-0001).` and exits non-zero (see
+> `llm_wiki_kit/cli.py:_cmd_run`). The operation runner lands in
+> Phase D of the v2 migration. Until then, treat this SKILL.md as the
+> *design spec*, not an executable playbook. Tracked under
+> retro-review concern C7 (issue #23).
+
 Synthesizing operation. Walk a person's medical history and produce one
 durable summary suitable for sharing with a provider, attaching to a
 school form, or pulling up in an emergency. Tailor the emphasis to the
