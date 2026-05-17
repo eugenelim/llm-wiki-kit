@@ -6,6 +6,20 @@ license: MIT
 
 # wiki-doctor
 
+> **⚠️ Some companion surfaces are not yet shipped in v2.0.0.dev.**
+> The primary `wiki doctor` action this skill describes is shipped
+> and operational; the `--strict` flag this skill mentions is *not*
+> currently accepted by argparse and will exit with an `unrecognized
+> arguments` error. The recovery commands referenced below —
+> `wiki upgrade`, `wiki upgrade --primitive`, `wiki run`,
+> `wiki journal append`, and `wiki journal repair` — are Phase D/E
+> not-yet-shipped surfaces: the first three exit `wiki <cmd>: not yet
+> implemented (v2 migration in progress, see RFC-0001).`; the latter
+> two are not registered subcommands and argparse rejects them with
+> `invalid choice`. Until they land, read those commands as design
+> references and surface the gap to the user when a recovery step
+> needs one. Tracked under retro-review concern C7 (issue #23).
+
 The vault's source of truth is the journal at
 `.wiki.journal/journal.jsonl`. `wiki doctor` replays the journal,
 computes the state the kit thinks the vault should be in, diffs that

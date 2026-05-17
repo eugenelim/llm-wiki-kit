@@ -6,6 +6,15 @@ license: MIT
 
 # wiki-lint
 
+> **⚠️ Not yet shipped in v2.0.0.dev.** This skill is invoked via
+> `wiki run wiki-lint`, and `wiki run` is a stub in v2.0.0.dev: it
+> prints `wiki run: not yet implemented (v2 migration in progress,
+> see RFC-0001).` and exits non-zero (see
+> `llm_wiki_kit/cli.py:_cmd_run`). The operation runner lands in
+> Phase D of the v2 migration. Until then, treat this SKILL.md as the
+> *design spec* — the structural checks it describes are not wired
+> up. Tracked under retro-review concern C7 (issue #23).
+
 Comprehensive health checks. Some are deterministic (Python scripts);
 some are semantic (you decide). Run the deterministic ones first —
 they're cheap and surface most of what's wrong.
