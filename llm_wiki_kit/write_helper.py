@@ -264,6 +264,12 @@ def resolve_proposal(
                 body = resolved_regions.get(region)
                 if body is None:
                     continue
+                # Canonicalize before hashing — keeps the resolve-path
+                # baseline hash in lockstep with what
+                # ``safe_write_region`` recomputes on the next aggregator
+                # pass. Without this, a re-aggregate after resolve would
+                # see spurious drift the same way Task 19's
+                # multi-contributor aggregation would have.
                 append_event(
                     journal_path,
                     ManagedRegionWriteEvent(
@@ -271,7 +277,7 @@ def resolve_proposal(
                         by=by,
                         file=relative_path,
                         region=region,
-                        content_hash=_hash(body.encode("utf-8")),
+                        content_hash=_hash(managed_regions.canonical_region_body(body)),
                     ),
                 )
 
@@ -378,9 +384,21 @@ def safe_write_region(
     if region_id not in current_regions:
         raise ManagedRegionError(f"file '{relative_path}' has no managed region '{region_id}'")
 
-    current_region_hash = _hash(current_regions[region_id].encode("utf-8"))
+    # ``_normalise_snippet`` writes each contributor's snippet with a
+    # trailing newline; ``managed_regions.parse`` strips it when
+    # reading back (the body is "between markers", terminator excluded).
+    # The two forms differ by exactly one byte for any non-empty body,
+    # which would cause a spurious drift event the first time a second
+    # contributor lands in the same region. Canonicalize both sides
+    # before hashing — append a single trailing newline if non-empty,
+    # matching the form ``_normalise_snippet`` writes. Pre-existing
+    # ``ManagedRegionWriteEvent`` baseline hashes were computed against
+    # the with-trailing-newline form (the aggregator's ``new_content``
+    # is already in that form), so this canonicalization keeps the
+    # baseline comparison valid for Task 18 vaults.
+    current_region_hash = _hash(managed_regions.canonical_region_body(current_regions[region_id]))
     baseline_hash = _managed_region_baseline_hash(journal_path, relative_path, region_id)
-    new_region_hash = _hash(new_content.encode("utf-8"))
+    new_region_hash = _hash(managed_regions.canonical_region_body(new_content))
     rewritten = managed_regions.update(on_disk_text, region_id, new_content)
     now = _now()
 

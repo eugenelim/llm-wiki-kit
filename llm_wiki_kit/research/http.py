@@ -77,7 +77,7 @@ def request_json(
     method: str,
     url: str,
     headers: dict[str, str],
-    json_body: dict[str, Any],
+    json_body: dict[str, Any] | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
@@ -86,6 +86,13 @@ def request_json(
     On success, returns the parsed JSON response body as a dict. On any
     error after retries are exhausted, raises :class:`ResearchHTTPError`
     with a redacted message and (when known) the final status code.
+
+    Pass ``json_body=None`` for true GETs that should not ship a body —
+    the underlying :class:`urllib.request.Request` is built without
+    ``data=``, so the wire request has no body. Pass a dict (including
+    the empty dict ``{}``) to send a JSON body. The default is
+    ``None``; Task 18's Perplexity provider passes a dict and continues
+    to send JSON; Task 19's Semantic Scholar GET path passes ``None``.
 
     The retry-eligible exception set is ``HTTPError`` with status in
     ``_RETRY_HTTP_STATUSES`` (or any 5xx), ``URLError``, and
@@ -97,7 +104,11 @@ def request_json(
     "OK" and the bytes lied; retrying would only mask the lie.
     """
 
-    body_bytes = json.dumps(json_body).encode("utf-8")
+    body_bytes: bytes | None
+    if json_body is None:
+        body_bytes = None
+    else:
+        body_bytes = json.dumps(json_body).encode("utf-8")
 
     last_status: int | None = None
     last_message: str | None = None
@@ -105,8 +116,18 @@ def request_json(
     for attempt in range(max_retries + 1):
         # Build a fresh Request per attempt so a previous attempt's
         # object lifetime is bounded by this iteration. The headers
-        # dict is the caller's; we don't mutate or stash it.
-        request = Request(url=url, data=body_bytes, headers=dict(headers), method=method)
+        # dict is the caller's; we don't mutate or stash it. When
+        # ``body_bytes`` is ``None``, the ``Request`` is built without
+        # ``data=`` so the wire request has no body — this is the
+        # ``json_body=None`` path the helper offers for true GETs.
+        request_kwargs: dict[str, Any] = {
+            "url": url,
+            "headers": dict(headers),
+            "method": method,
+        }
+        if body_bytes is not None:
+            request_kwargs["data"] = body_bytes
+        request = Request(**request_kwargs)
         try:
             with urlopen(request, timeout=timeout) as response:
                 raw = response.read()
@@ -135,11 +156,11 @@ def request_json(
         except (URLError, TimeoutError) as exc:
             # ``socket.timeout`` aliases ``TimeoutError`` on Python
             # 3.10+, so the two-name pattern collapses to one. URLError
-            # wraps connect failures and DNS errors. Suppress the
-            # cause chain to keep the underlying object out of any
-            # traceback that might include request state (urllib's
-            # URLError can carry the original Request via ``reason``
-            # in some constructions).
+            # wraps an inner OSError whose ``repr`` may include
+            # resolved hostnames, socket family info, or the original
+            # ``Request`` via ``reason`` in some constructions —
+            # suppressing the cause chain keeps that out of any
+            # ``--verbose`` traceback (cf. spec invariant 2 redaction).
             last_status = None
             last_message = "connection failed"
             del exc  # explicit: do not let the local survive into the raise

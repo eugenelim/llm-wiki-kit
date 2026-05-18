@@ -7,10 +7,13 @@ owns the journal append + transaction bracketing — the dispatcher
 returns a ``DispatchResult(markdown, event)`` on success or raises
 ``ResearchDispatchError(message, event=...)`` on a runtime failure.
 
-The provider registry is module-private. Task 19 adds Gemini and
-Semantic Scholar by adding entries to ``_PROVIDER_REGISTRY`` directly
-in this file; tests inject fakes via ``monkeypatch.setattr`` on the
-provider module (the registry holds re-binding wrappers).
+The provider registry is module-private. Gemini and Semantic Scholar
+are registered alongside Perplexity (RFC-0001 Task 19); new providers
+join by adding a re-binding wrapper above and one entry to
+``_PROVIDER_REGISTRY``. Tests inject fakes via
+``monkeypatch.setattr`` on the provider module — the registry holds
+re-binding wrappers that re-read the provider's ``dispatch`` at call
+time, so the patch is seen.
 
 See ``docs/specs/task-18-research-perplexity/spec.md`` §"Dispatcher
 return-and-raise contract".
@@ -35,7 +38,7 @@ from llm_wiki_kit.models import (
     ResearchQueryEvent,
 )
 from llm_wiki_kit.research.http import ResearchHTTPError
-from llm_wiki_kit.research.providers import perplexity
+from llm_wiki_kit.research.providers import gemini, perplexity, semantic_scholar
 
 CONFIG_FILENAME = "research-providers.yaml"
 PROVIDERS_REGION_ID = "providers"
@@ -72,8 +75,24 @@ def _call_perplexity(config: ProviderConfig, query: str) -> _ProviderOutput:
     return _ProviderOutput(answer=result.answer, citations=result.citations, model=result.model)
 
 
+def _call_gemini(config: ProviderConfig, query: str) -> _ProviderOutput:
+    """Re-binding wrapper around :func:`gemini.dispatch` (Task 19)."""
+
+    result = gemini.dispatch(config, query)
+    return _ProviderOutput(answer=result.answer, citations=result.citations, model=result.model)
+
+
+def _call_semantic_scholar(config: ProviderConfig, query: str) -> _ProviderOutput:
+    """Re-binding wrapper around :func:`semantic_scholar.dispatch` (Task 19)."""
+
+    result = semantic_scholar.dispatch(config, query)
+    return _ProviderOutput(answer=result.answer, citations=result.citations, model=result.model)
+
+
 _PROVIDER_REGISTRY: dict[str, Callable[[ProviderConfig, str], _ProviderOutput]] = {
     perplexity.PROVIDER_SLUG: _call_perplexity,
+    gemini.PROVIDER_SLUG: _call_gemini,
+    semantic_scholar.PROVIDER_SLUG: _call_semantic_scholar,
 }
 
 

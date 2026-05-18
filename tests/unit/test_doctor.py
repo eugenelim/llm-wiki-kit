@@ -92,7 +92,7 @@ def test_page_drift_clean_match(tmp_path: Path) -> None:
     (vault / "AGENTS.md").write_text("hello", encoding="utf-8")
     state = _state_with_page("AGENTS.md", "hello")
 
-    assert check_page_drift(state, vault) == []
+    assert check_page_drift(state, vault, []) == []
 
 
 def test_page_drift_reports_edited_file(tmp_path: Path) -> None:
@@ -100,7 +100,7 @@ def test_page_drift_reports_edited_file(tmp_path: Path) -> None:
     (vault / "AGENTS.md").write_text("user edit", encoding="utf-8")
     state = _state_with_page("AGENTS.md", "hello")
 
-    assert check_page_drift(state, vault) == [Issue("page-drift", "AGENTS.md")]
+    assert check_page_drift(state, vault, []) == [Issue("page-drift", "AGENTS.md")]
 
 
 def test_page_drift_skipped_when_proposal_pending(tmp_path: Path) -> None:
@@ -120,7 +120,7 @@ def test_page_drift_skipped_when_proposal_pending(tmp_path: Path) -> None:
     )
 
     # Page-drift defers to the pending-proposal check; one issue per path, not two.
-    assert check_page_drift(state, vault) == []
+    assert check_page_drift(state, vault, []) == []
 
 
 def test_page_drift_skips_missing_files(tmp_path: Path) -> None:
@@ -128,7 +128,79 @@ def test_page_drift_skips_missing_files(tmp_path: Path) -> None:
     vault = _vault(tmp_path)
     state = _state_with_page("AGENTS.md", "hello")
 
-    assert check_page_drift(state, vault) == []
+    assert check_page_drift(state, vault, []) == []
+
+
+def test_page_drift_skipped_when_latest_write_is_region_write(tmp_path: Path) -> None:
+    """A file last written by ``safe_write_region`` is not flagged at the page level.
+
+    Contract: the install pipeline's aggregator mutates managed-region
+    files in place after the seed primitive's ``safe_write``. The seed's
+    ``PageWriteEvent`` baseline goes stale by design once any region
+    write happens; the file's *region-level* drift is what
+    ``check_managed_region_drift`` exists to catch, and double-reporting
+    at the page level would surface every region-bearing file as
+    drifted after every install (the Task-19 regression Blocker 2
+    fixed). This test pins the skip so a future contributor doesn't
+    revert the fix by "tightening" page-drift coverage. The
+    surrounding-text-survives contract this enables is also recorded
+    in AGENTS.md (user-vault content outside managed markers is the
+    user's territory; the kit does not police it).
+    """
+
+    vault = _vault(tmp_path)
+    # The on-disk file diverges from what the original ``PageWriteEvent``
+    # journaled (the aggregator rewrote it in place); without the skip,
+    # ``check_page_drift`` would report ``page-drift``.
+    (vault / "AGENTS.md").write_text("rewritten by aggregator", encoding="utf-8")
+
+    page_event = PageWriteEvent(
+        timestamp=NOW, by="core", path="AGENTS.md", hash=_hash("seed bytes")
+    )
+    region_event = ManagedRegionWriteEvent(
+        timestamp=NOW,
+        by="wiki-init",
+        file="AGENTS.md",
+        region="content-types",
+        content_hash=_hash("body\n"),
+    )
+    state = VaultState(page_writes={"AGENTS.md": page_event})
+
+    assert check_page_drift(state, vault, [page_event, region_event]) == []
+
+
+def test_page_drift_resumes_after_later_page_write(tmp_path: Path) -> None:
+    """A later ``PageWriteEvent`` re-baselines and re-enables page-drift.
+
+    Sequence: ``PageWrite (seed)`` → ``ManagedRegionWrite`` (skip
+    kicks in) → ``PageWrite (resolve_proposal merge)`` → page-drift
+    coverage is restored against the new baseline. Pins the
+    ``_files_with_managed_region_write_after_page_write`` "latest
+    wins" contract — a third event in either direction flips the
+    decision.
+    """
+
+    vault = _vault(tmp_path)
+    (vault / "AGENTS.md").write_text("user edit", encoding="utf-8")
+
+    seed = PageWriteEvent(timestamp=NOW, by="core", path="AGENTS.md", hash=_hash("seed"))
+    region = ManagedRegionWriteEvent(
+        timestamp=NOW,
+        by="wiki-init",
+        file="AGENTS.md",
+        region="content-types",
+        content_hash=_hash("body\n"),
+    )
+    resolved = PageWriteEvent(
+        timestamp=NOW, by="wiki-conflict", path="AGENTS.md", hash=_hash("merged")
+    )
+    state = VaultState(page_writes={"AGENTS.md": resolved})
+
+    # On-disk content (``"user edit"``) diverges from the latest
+    # ``PageWriteEvent``'s hash (``_hash("merged")``); page-drift fires.
+    assert check_page_drift(state, vault, [seed, region, resolved]) == [
+        Issue("page-drift", "AGENTS.md")
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +222,9 @@ def test_managed_region_drift_clean_match(tmp_path: Path) -> None:
         by="wiki-init",
         file="frontmatter.schema.yaml",
         region="types",
-        content_hash=_hash("  - meeting"),  # parse strips the trailing newline
+        # Hash matches the canonical (trailing-newline-appended) form
+        # the write paths emit — see ``managed_regions.canonical_region_body``.
+        content_hash=_hash("  - meeting\n"),
     )
 
     assert check_managed_region_drift([event], vault, VaultState()) == []
@@ -208,7 +282,8 @@ def test_managed_region_drift_uses_latest_event_per_region(tmp_path: Path) -> No
         by="wiki-add",
         file="frontmatter.schema.yaml",
         region="types",
-        content_hash=_hash("  - meeting"),
+        # Canonical hash form, matching what the write paths emit.
+        content_hash=_hash("  - meeting\n"),
     )
 
     # The second event shadows the first — no drift.
