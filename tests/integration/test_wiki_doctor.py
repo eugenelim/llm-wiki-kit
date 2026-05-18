@@ -83,6 +83,57 @@ def test_doctor_clean_vault_exits_zero(
     assert captured.err == ""
 
 
+def test_doctor_clean_after_multi_provider_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``wiki doctor`` is clean after installing multiple research providers.
+
+    Regression test for the Task 18 / Task 19 boundary: the aggregator
+    rewrites ``research-providers.yaml`` in place via
+    ``safe_write_region`` after the seed primitive's ``safe_write``
+    landed the empty-region seed bytes. Without the canonical-hash
+    fix in ``write_helper`` and ``doctor``, this scenario produced
+    spurious ``page-drift`` + ``managed-region-drift`` issues. The
+    fix is migration-safe (Task 18 vaults stay clean) because the
+    canonical form matches the bytes the aggregator was already
+    emitting.
+    """
+
+    # Use the real kit (with the full templates/ catalog) so the
+    # install pipeline runs against the actual primitives.
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    shutil.copytree(REPO_ROOT / "core", kit / "core")
+    shutil.copytree(REPO_ROOT / "templates", kit / "templates")
+    recipes_dir = kit / "recipes"
+    recipes_dir.mkdir()
+    (recipes_dir / "minimal.yaml").write_text(
+        "name: minimal\n"
+        "version: 0.1.0\n"
+        "description: Core-only recipe for wiki doctor regression test.\n"
+        "primitives: []\n"
+        "variables:\n"
+        "  recipe_name: minimal\n",
+        encoding="utf-8",
+    )
+
+    vault = tmp_path / "v"
+    assert cli.main(["init", str(vault), "--recipe", "minimal"], kit_root=kit) == 0
+    monkeypatch.chdir(vault)
+
+    assert cli.main(["add", "infrastructure:research-perplexity"], kit_root=kit) == 0
+    assert cli.main(["add", "infrastructure:research-gemini"], kit_root=kit) == 0
+    assert cli.main(["add", "infrastructure:research-semantic-scholar"], kit_root=kit) == 0
+
+    capsys.readouterr()
+    assert cli.main(["doctor"], kit_root=kit) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 # ---------------------------------------------------------------------------
 # page-drift
 # ---------------------------------------------------------------------------

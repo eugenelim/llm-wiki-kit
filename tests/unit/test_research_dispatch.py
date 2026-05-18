@@ -23,8 +23,10 @@ from llm_wiki_kit.research.dispatch import (
     dispatch_query,
 )
 from llm_wiki_kit.research.http import ResearchHTTPError
-from llm_wiki_kit.research.providers import perplexity
+from llm_wiki_kit.research.providers import gemini, perplexity, semantic_scholar
+from llm_wiki_kit.research.providers.gemini import GeminiResult
 from llm_wiki_kit.research.providers.perplexity import PerplexityResult
+from llm_wiki_kit.research.providers.semantic_scholar import SemanticScholarResult
 
 NOW = datetime(2026, 5, 17, 8, 51, 0, tzinfo=UTC)
 
@@ -152,12 +154,14 @@ def test_dispatch_query_unknown_provider_raises(tmp_path: Path) -> None:
 def test_dispatch_query_slug_without_implementation_raises(tmp_path: Path) -> None:
     """A hand-edited config with an unsupported provider slug surfaces clearly.
 
-    Defends against Task 19's Gemini being hand-added before this kit
+    Defends against a future provider being hand-added before this kit
     version ships it. The user sees a config-shaped error, not an
-    uncaught ``KeyError`` traceback.
+    uncaught ``KeyError`` traceback. Pre-Task-19 this test used
+    ``gemini`` as the placeholder; Task 19 ships Gemini, so the
+    placeholder moved to a still-unregistered slug.
     """
 
-    _write_config(tmp_path, "gemini:\n  api_key_env: GEMINI_API_KEY\n")
+    _write_config(tmp_path, "future-provider:\n  api_key_env: SOMETHING\n")
 
     with pytest.raises(WikiError) as exc_info:
         dispatch_query("q", None, tmp_path, now=NOW)
@@ -328,3 +332,157 @@ def test_dispatch_query_naive_fetched_at_rejected(
 
     with pytest.raises(TypeError):
         dispatch_query("q", None, tmp_path, now=naive)
+
+
+# ---------------------------------------------------------------------------
+# Task 19: Gemini + Semantic Scholar registry integration
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_gemini(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str = "g-answer",
+    citations: list[str] | None = None,
+) -> None:
+    citations = citations if citations is not None else ["https://example/g"]
+
+    def _fake(config: ProviderConfig, query: str) -> GeminiResult:
+        return GeminiResult(
+            answer=answer,
+            citations=list(citations),
+            model=config.model or "gemini-2.5-pro",
+        )
+
+    monkeypatch.setattr(gemini, "dispatch", _fake)
+
+
+def _install_fake_semantic_scholar(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str = "ss-answer\n",
+    citations: list[str] | None = None,
+) -> None:
+    citations = citations if citations is not None else ["https://example/ss"]
+
+    def _fake(config: ProviderConfig, query: str) -> SemanticScholarResult:
+        return SemanticScholarResult(
+            answer=answer,
+            citations=list(citations),
+            model="graph-v1",
+        )
+
+    monkeypatch.setattr(semantic_scholar, "dispatch", _fake)
+
+
+def test_dispatch_query_routes_to_gemini_via_registry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_fake_gemini(monkeypatch)
+    _write_config(
+        tmp_path,
+        "gemini:\n  api_key_env: GEMINI_API_KEY\n  model: gemini-2.5-pro\n",
+    )
+
+    result = dispatch_query("q", "gemini", tmp_path, now=NOW)
+
+    assert isinstance(result, DispatchResult)
+    assert result.event.provider == "gemini"
+    assert result.event.model == "gemini-2.5-pro"
+    assert result.event.status == "ok"
+    fm = _parse_frontmatter(result.markdown)
+    assert fm["provider"] == "gemini"
+    assert fm["model"] == "gemini-2.5-pro"
+
+
+def test_dispatch_query_routes_to_semantic_scholar_via_registry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_fake_semantic_scholar(monkeypatch)
+    _write_config(
+        tmp_path,
+        "semantic-scholar:\n  api_key_env: SEMANTIC_SCHOLAR_API_KEY\n  model: graph-v1\n",
+    )
+
+    result = dispatch_query("q", "semantic-scholar", tmp_path, now=NOW)
+
+    assert result.event.provider == "semantic-scholar"
+    assert result.event.model == "graph-v1"
+    assert result.event.status == "ok"
+    fm = _parse_frontmatter(result.markdown)
+    assert fm["provider"] == "semantic-scholar"
+
+
+def test_dispatch_query_three_providers_no_flag_lists_all_three(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    body = (
+        "gemini:\n  api_key_env: GEMINI_API_KEY\n"
+        "perplexity:\n  api_key_env: PERPLEXITY_API_KEY\n"
+        "semantic-scholar:\n  api_key_env: SEMANTIC_SCHOLAR_API_KEY\n"
+    )
+    _write_config(tmp_path, body)
+
+    with pytest.raises(WikiError) as exc_info:
+        dispatch_query("q", None, tmp_path, now=NOW)
+
+    msg = str(exc_info.value)
+    assert "pass --provider" in msg
+    # Slugs surface in sorted order — config.slugs() returns sorted.
+    assert "gemini" in msg
+    assert "perplexity" in msg
+    assert "semantic-scholar" in msg
+
+
+def test_dispatch_query_unknown_implementation_after_registry_extension(
+    tmp_path: Path,
+) -> None:
+    """A config block naming an unregistered slug surfaces the existing error."""
+
+    _write_config(tmp_path, "future-provider:\n  api_key_env: SOMETHING\n")
+
+    with pytest.raises(WikiError) as exc_info:
+        dispatch_query("q", "future-provider", tmp_path, now=NOW)
+
+    assert "provider 'future-provider' has no implementation in this kit version" in str(
+        exc_info.value
+    )
+
+
+def test_dispatch_query_gemini_http_error_wraps_as_dispatch_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def _raise(config: ProviderConfig, query: str) -> GeminiResult:
+        raise ResearchHTTPError("gemini: HTTP 401", status=401)
+
+    monkeypatch.setattr(gemini, "dispatch", _raise)
+    _write_config(
+        tmp_path,
+        "gemini:\n  api_key_env: GEMINI_API_KEY\n  model: gemini-2.5-pro\n",
+    )
+
+    with pytest.raises(ResearchDispatchError) as exc_info:
+        dispatch_query("q", "gemini", tmp_path, now=NOW)
+
+    assert exc_info.value.event.status == "error"
+    assert exc_info.value.event.provider == "gemini"
+    assert exc_info.value.event.model == "gemini-2.5-pro"
+    assert "gemini: HTTP 401" in str(exc_info.value)
+
+
+def test_dispatch_query_semantic_scholar_http_error_wraps_as_dispatch_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def _raise(config: ProviderConfig, query: str) -> SemanticScholarResult:
+        raise ResearchHTTPError("semantic-scholar: HTTP 429 after 5 retries", status=429)
+
+    monkeypatch.setattr(semantic_scholar, "dispatch", _raise)
+    _write_config(
+        tmp_path,
+        "semantic-scholar:\n  api_key_env: SEMANTIC_SCHOLAR_API_KEY\n  model: graph-v1\n",
+    )
+
+    with pytest.raises(ResearchDispatchError) as exc_info:
+        dispatch_query("q", "semantic-scholar", tmp_path, now=NOW)
+
+    assert exc_info.value.event.status == "error"
+    assert exc_info.value.event.provider == "semantic-scholar"
+    assert exc_info.value.event.model == "graph-v1"

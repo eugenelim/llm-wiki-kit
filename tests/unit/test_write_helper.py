@@ -510,7 +510,9 @@ def test_safe_write_region_emits_managed_region_write_event(vault: Path, journal
     assert isinstance(event, ManagedRegionWriteEvent)
     assert event.file == "AGENTS.md"
     assert event.region == "content-types"
-    assert event.content_hash == _sha256("- meeting")
+    # Canonical region body adds a trailing newline before hashing —
+    # matches the form ``install._normalise_snippet`` writes.
+    assert event.content_hash == _sha256("- meeting\n")
     assert event.hash_algo == "sha256"
     assert event.by == "meeting"
 
@@ -651,7 +653,7 @@ def test_safe_write_region_drift_event_carries_correct_hashes(vault: Path, journ
     assert page_writes == []
     # Only the first (no-drift) write produced a region event.
     assert len(region_writes) == 1
-    assert region_writes[0].content_hash == _sha256("v1")
+    assert region_writes[0].content_hash == _sha256("v1\n")
 
 
 # ---------------------------------------------------------------------------
@@ -777,7 +779,7 @@ def test_safe_write_region_event_durable_when_disk_write_raises(
 
     region_writes = [e for e in read_events(journal) if isinstance(e, ManagedRegionWriteEvent)]
     assert len(region_writes) == 1
-    assert region_writes[0].content_hash == _sha256("kit v1")
+    assert region_writes[0].content_hash == _sha256("kit v1\n")
     assert target.read_text() == pre_text  # untouched
 
 
@@ -885,7 +887,7 @@ def test_safe_write_region_event_in_journal_at_moment_of_disk_write(
     assert len(snapshots) == 1
     region_writes = [e for e in snapshots[0] if isinstance(e, ManagedRegionWriteEvent)]
     assert len(region_writes) == 1
-    assert region_writes[0].content_hash == _sha256("kit v1")
+    assert region_writes[0].content_hash == _sha256("kit v1\n")
 
 
 def test_resolve_proposal_events_in_journal_at_moment_of_disk_write(
@@ -1452,7 +1454,7 @@ def test_safe_write_region_unjournaled_region_byte_identical_still_writes_direct
     assert result is WriteResult.WRITTEN
     region_writes = [e for e in read_events(journal) if isinstance(e, ManagedRegionWriteEvent)]
     assert len(region_writes) == 1
-    assert region_writes[0].content_hash == _sha256("kit v1")
+    assert region_writes[0].content_hash == _sha256("kit v1\n")
 
 
 # ---------------------------------------------------------------------------
