@@ -526,7 +526,10 @@ def test_semantic_scholar_module_imports_no_urllib_request() -> None:
     """Spec invariant 9 (Task 19): the provider does not import ``urllib.request``."""
 
     source_path = Path(semantic_scholar.__file__)
-    tree = ast.parse(source_path.read_text())
+    # Explicit ``encoding="utf-8"`` — the autouse locale fixture sets
+    # ``LC_ALL=C``, under which ``Path.read_text()``'s default encoding
+    # falls back to ASCII and chokes on the source's em-dashes.
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
     offenders: list[str] = []
     for node in ast.walk(tree):

@@ -485,7 +485,11 @@ def test_gemini_module_imports_no_urllib_request() -> None:
     """
 
     source_path = Path(gemini.__file__)
-    tree = ast.parse(source_path.read_text())
+    # Explicit ``encoding="utf-8"`` — defends against any future
+    # autouse fixture that forces ``LC_ALL=C``, under which
+    # ``Path.read_text()``'s default encoding falls back to ASCII
+    # and chokes on the source's em-dashes.
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
     offenders: list[str] = []
     for node in ast.walk(tree):
