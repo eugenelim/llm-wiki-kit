@@ -572,9 +572,12 @@ def test_wiki_research_recipes_do_not_include_primitives() -> None:
         path = REPO_ROOT / "recipes" / f"{name}.yaml"
         recipe = load_recipe(path)
         assert "research" not in recipe.primitives, f"{name}.yaml unexpectedly includes 'research'"
-        assert "research-perplexity" not in recipe.primitives, (
-            f"{name}.yaml unexpectedly includes 'research-perplexity'"
-        )
+        for opt_in in (
+            "research-perplexity",
+            "research-gemini",
+            "research-semantic-scholar",
+        ):
+            assert opt_in not in recipe.primitives, f"{name}.yaml unexpectedly includes '{opt_in}'"
 
 
 # ---------------------------------------------------------------------------
@@ -600,3 +603,324 @@ def test_wiki_add_research_perplexity_pulls_research_via_requires(
     assert "research" in installed_in_order
     assert "research-perplexity" in installed_in_order
     assert installed_in_order.index("research") < installed_in_order.index("research-perplexity")
+
+
+# ---------------------------------------------------------------------------
+# Task 19 — Gemini + Semantic Scholar end-to-end
+# ---------------------------------------------------------------------------
+
+from llm_wiki_kit.research.providers import gemini, semantic_scholar  # noqa: E402
+from llm_wiki_kit.research.providers.gemini import GeminiResult  # noqa: E402
+from llm_wiki_kit.research.providers.semantic_scholar import (  # noqa: E402
+    SemanticScholarResult,
+)
+
+
+@pytest.fixture
+def vault_with_gemini(fresh_vault: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A vault with research seed + Gemini provider installed."""
+
+    assert cli.main(["add", "infrastructure:research-gemini"], kit_root=kit_root) == 0
+    return fresh_vault
+
+
+@pytest.fixture
+def vault_with_semantic_scholar(
+    fresh_vault: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """A vault with research seed + Semantic Scholar provider installed."""
+
+    assert cli.main(["add", "infrastructure:research-semantic-scholar"], kit_root=kit_root) == 0
+    return fresh_vault
+
+
+def _install_fake_gemini(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str = "Gemini answer.",
+    citations: list[str] | None = None,
+) -> None:
+    citations = citations if citations is not None else ["https://g.example/a"]
+
+    def _fake(config: Any, query: str) -> GeminiResult:
+        return GeminiResult(
+            answer=answer,
+            citations=list(citations),
+            model=config.model or "gemini-2.5-pro",
+        )
+
+    monkeypatch.setattr(gemini, "dispatch", _fake)
+
+
+def _install_fake_semantic_scholar(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: str = "1. **T** (2024) — A. *V*. abs\n   https://s.example/a\n",
+    citations: list[str] | None = None,
+) -> None:
+    citations = citations if citations is not None else ["https://s.example/a"]
+
+    def _fake(config: Any, query: str) -> SemanticScholarResult:
+        return SemanticScholarResult(answer=answer, citations=list(citations), model="graph-v1")
+
+    monkeypatch.setattr(semantic_scholar, "dispatch", _fake)
+
+
+def test_wiki_research_gemini_happy_path_stdout(
+    vault_with_gemini: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``wiki research --provider gemini`` prints markdown + journals one event."""
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gk-DO-NOT-LOG")
+    _install_fake_gemini(monkeypatch)
+
+    assert cli.main(["research", "what is X", "--provider", "gemini"]) == 0
+
+    stdout = capsys.readouterr().out
+    assert "---" in stdout
+    assert "provider: gemini" in stdout
+    assert "model: gemini-2.5-pro" in stdout
+    assert "Gemini answer." in stdout
+
+    events = _research_events(vault_with_gemini)
+    assert len(events) == 1
+    assert events[0].provider == "gemini"
+    assert events[0].model == "gemini-2.5-pro"
+    assert events[0].status == "ok"
+    assert events[0].result_path is None
+
+
+def test_wiki_research_semantic_scholar_happy_path_stdout(
+    vault_with_semantic_scholar: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``wiki research --provider semantic-scholar`` works **without** an env var."""
+
+    monkeypatch.delenv("SEMANTIC_SCHOLAR_API_KEY", raising=False)
+    _install_fake_semantic_scholar(monkeypatch)
+
+    assert cli.main(["research", "q", "--provider", "semantic-scholar"]) == 0
+
+    stdout = capsys.readouterr().out
+    assert "provider: semantic-scholar" in stdout
+    assert "model: graph-v1" in stdout
+    assert "**T** (2024)" in stdout
+
+    events = _research_events(vault_with_semantic_scholar)
+    assert len(events) == 1
+    assert events[0].provider == "semantic-scholar"
+    assert events[0].model == "graph-v1"
+    assert events[0].status == "ok"
+
+
+def test_wiki_research_gemini_missing_env_var_exits_2_no_event(
+    vault_with_gemini: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Missing ``GEMINI_API_KEY`` is a config-shaped error — no journal entry."""
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    # No fake patched: the real ``gemini.dispatch`` runs and the env-var
+    # pre-condition fires.
+    events_before = _research_events(vault_with_gemini)
+
+    assert cli.main(["research", "q", "--provider", "gemini"]) == 2
+
+    stderr = capsys.readouterr().err
+    assert "set GEMINI_API_KEY in the environment" in stderr
+
+    events_after = _research_events(vault_with_gemini)
+    assert events_after == events_before  # no new research.query event
+
+
+def test_wiki_research_semantic_scholar_keyless_real_request_succeeds(
+    vault_with_semantic_scholar: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Keyless mode through the real ``request_json`` (with ``urlopen`` mocked).
+
+    Verifies the wire-level GET-with-no-body path doesn't break and
+    the keyless-tier code path runs end-to-end.
+    """
+
+    monkeypatch.delenv("SEMANTIC_SCHOLAR_API_KEY", raising=False)
+
+    def _fake_urlopen(request: Any, timeout: float = 0.0) -> Any:
+        assert request.get_method() == "GET"
+        assert request.data is None
+
+        class _Response:
+            def read(self) -> bytes:
+                return b'{"data": [{"title":"T","year":2024,"url":"https://s/a"}]}'
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_: Any) -> None:
+                return None
+
+        return _Response()
+
+    monkeypatch.setattr(http_module, "urlopen", _fake_urlopen)
+
+    assert cli.main(["research", "q", "--provider", "semantic-scholar"]) == 0
+
+    events = _research_events(vault_with_semantic_scholar)
+    assert len(events) == 1
+    assert events[0].status == "ok"
+    assert events[0].provider == "semantic-scholar"
+
+
+def test_wiki_research_three_providers_pass_provider_required(
+    fresh_vault: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Three providers installed and no ``--provider`` → exit 2, all slugs listed."""
+
+    assert cli.main(["add", "infrastructure:research-perplexity"], kit_root=kit_root) == 0
+    assert cli.main(["add", "infrastructure:research-gemini"], kit_root=kit_root) == 0
+    assert cli.main(["add", "infrastructure:research-semantic-scholar"], kit_root=kit_root) == 0
+
+    assert cli.main(["research", "q"]) == 2
+
+    stderr = capsys.readouterr().err
+    assert "pass --provider" in stderr
+    # Sorted: gemini, perplexity, semantic-scholar.
+    g_idx = stderr.index("gemini")
+    p_idx = stderr.index("perplexity")
+    s_idx = stderr.index("semantic-scholar")
+    assert g_idx < p_idx < s_idx
+
+
+def test_wiki_research_apikey_never_in_journal_or_stdout_gemini(
+    vault_with_gemini: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Spec invariant 2: ``GEMINI_API_KEY`` value never reaches journal or stderr.
+
+    Fixture injects the key string into the *answer body bytes* — the
+    real Gemini API doesn't echo headers, but this defends against a
+    future variant that might. The body lands in stdout (it is the
+    answer, after all), so the assertions check **journal + stderr
+    cleanliness only**, not stdout.
+    """
+
+    key = "gk-DO-NOT-LOG"
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+
+    def _fake_urlopen(request: Any, timeout: float = 0.0) -> Any:
+        # Header check: the key is in ``x-goog-api-key``, not the URL.
+        assert key not in request.full_url
+
+        class _Response:
+            def read(self) -> bytes:
+                # Inject the key into the response body to simulate a
+                # future server-side echo bug.
+                text = f"{key} present in answer"
+                body = f'{{"candidates":[{{"content":{{"parts":[{{"text":"{text}"}}]}}}}]}}'
+                return body.encode("utf-8")
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_: Any) -> None:
+                return None
+
+        return _Response()
+
+    monkeypatch.setattr(http_module, "urlopen", _fake_urlopen)
+
+    assert cli.main(["research", "q", "--provider", "gemini"]) == 0
+
+    captured = capsys.readouterr()
+    # Stdout WILL contain the key (it's in the answer body) — that is
+    # the fixture's whole point. Other surfaces must not.
+    assert key not in captured.err
+    assert key not in _journal_path(vault_with_gemini).read_text(encoding="utf-8")
+
+
+def test_wiki_research_http_error_journals_error_event_gemini(
+    vault_with_gemini: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Gemini HTTP error → one ``research.query`` event with ``status='error'``."""
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gk-DO-NOT-LOG")
+
+    from llm_wiki_kit.research.http import ResearchHTTPError
+
+    def _fail(config: Any, query: str) -> Any:
+        raise ResearchHTTPError("gemini: HTTP 401", status=401)
+
+    monkeypatch.setattr(gemini, "dispatch", _fail)
+
+    assert cli.main(["research", "q", "--provider", "gemini"]) == 2
+
+    events = _research_events(vault_with_gemini)
+    assert len(events) == 1
+    assert events[0].status == "error"
+    assert events[0].provider == "gemini"
+    assert events[0].model == "gemini-2.5-pro"
+    assert events[0].result_path is None
+
+
+def test_wiki_add_research_gemini_pulls_research_via_requires(
+    fresh_vault: Path, kit_root: Path
+) -> None:
+    """``wiki add research-gemini`` installs both primitives atomically."""
+
+    assert cli.main(["add", "infrastructure:research-gemini"], kit_root=kit_root) == 0
+
+    events = read_events(_journal_path(fresh_vault))
+    installs = [e for e in events if isinstance(e, PrimitiveInstallEvent)]
+    installed = [e.primitive for e in installs if e.by == "wiki-add"]
+    assert "research" in installed
+    assert "research-gemini" in installed
+    assert installed.index("research") < installed.index("research-gemini")
+
+
+def test_wiki_add_research_semantic_scholar_pulls_research_via_requires(
+    fresh_vault: Path, kit_root: Path
+) -> None:
+    assert cli.main(["add", "infrastructure:research-semantic-scholar"], kit_root=kit_root) == 0
+
+    events = read_events(_journal_path(fresh_vault))
+    installs = [e for e in events if isinstance(e, PrimitiveInstallEvent)]
+    installed = [e.primitive for e in installs if e.by == "wiki-add"]
+    assert "research" in installed
+    assert "research-semantic-scholar" in installed
+    assert installed.index("research") < installed.index("research-semantic-scholar")
+
+
+def test_wiki_add_both_task19_providers_aggregates_blocks(
+    fresh_vault: Path, kit_root: Path
+) -> None:
+    """Installing both Gemini and Semantic Scholar produces a two-key region."""
+
+    import yaml
+
+    from llm_wiki_kit import managed_regions
+    from llm_wiki_kit.models import ResearchProvidersConfig
+
+    assert cli.main(["add", "infrastructure:research-gemini"], kit_root=kit_root) == 0
+    assert cli.main(["add", "infrastructure:research-semantic-scholar"], kit_root=kit_root) == 0
+
+    content = (fresh_vault / "research-providers.yaml").read_text(encoding="utf-8")
+    region_body = managed_regions.parse(content)["providers"]
+    loaded = yaml.safe_load(region_body)
+    config = ResearchProvidersConfig.model_validate(loaded)
+
+    assert sorted(config.root.keys()) == ["gemini", "semantic-scholar"]
+    assert config.root["gemini"].api_key_env == "GEMINI_API_KEY"
+    assert config.root["gemini"].model == "gemini-2.5-pro"
+    assert config.root["gemini"].cost_signal == "medium"
+    assert config.root["semantic-scholar"].api_key_env == "SEMANTIC_SCHOLAR_API_KEY"
+    assert config.root["semantic-scholar"].model == "graph-v1"
+    assert config.root["semantic-scholar"].cost_signal == "free"

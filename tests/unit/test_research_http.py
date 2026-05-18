@@ -91,6 +91,49 @@ def _make_fake_urlopen(
     return _fake, calls
 
 
+def _make_fake_urlopen_recording(
+    responses: list[Any],
+) -> tuple[Any, list[int], list[Any]]:
+    """Variant of ``_make_fake_urlopen`` that also records the ``Request`` instances.
+
+    Step 1 (Task 19) needs to inspect the underlying ``Request.data`` and
+    ``Request.get_method()`` to prove the ``json_body=None`` path
+    omits the request body. Existing tests use ``_make_fake_urlopen``
+    and don't care; this variant adds a third return value with the
+    captured request objects.
+    """
+
+    calls = [0]
+    requests: list[Any] = []
+
+    def _fake(request: Any, timeout: float = 0.0) -> Any:
+        idx = calls[0]
+        calls[0] += 1
+        requests.append(request)
+        if idx >= len(responses):
+            raise AssertionError(f"unexpected extra urlopen call #{idx + 1}")
+        item = responses[idx]
+        if isinstance(item, BaseException):
+            raise item
+
+        class _Response:
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+
+            def read(self) -> bytes:
+                return self._body
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *_: Any) -> None:
+                return None
+
+        return _Response(item)
+
+    return _fake, calls, requests
+
+
 def test_request_json_200_returns_parsed_dict(
     monkeypatch: pytest.MonkeyPatch, fake_sleep: list[float]
 ) -> None:
@@ -107,6 +150,83 @@ def test_request_json_200_returns_parsed_dict(
     assert out == {"k": 1}
     assert calls == [1]
     assert fake_sleep == []
+
+
+def test_request_json_none_body_omits_data_arg(
+    monkeypatch: pytest.MonkeyPatch, fake_sleep: list[float]
+) -> None:
+    """``json_body=None`` builds the ``Request`` without ``data=``.
+
+    The wire request is then an honest GET with no body — Semantic
+    Scholar's GET path depends on this. Spec invariant added in
+    Task 19.
+    """
+
+    fake, _, requests = _make_fake_urlopen_recording([b'{"ok": true}'])
+    monkeypatch.setattr(http, "urlopen", fake)
+
+    out = request_json(
+        method="GET",
+        url="https://api.example/x",
+        headers={},
+        json_body=None,
+    )
+
+    assert out == {"ok": True}
+    assert len(requests) == 1
+    assert requests[0].data is None
+    assert requests[0].get_method() == "GET"
+
+
+def test_request_json_dict_body_unchanged(
+    monkeypatch: pytest.MonkeyPatch, fake_sleep: list[float]
+) -> None:
+    """Pre-Task-19 callers continue to send JSON bytes verbatim."""
+
+    fake, _, requests = _make_fake_urlopen_recording([b'{"ok": true}'])
+    monkeypatch.setattr(http, "urlopen", fake)
+
+    request_json(
+        method="POST",
+        url="https://api.example/x",
+        headers={},
+        json_body={"k": 1},
+    )
+
+    assert requests[0].data == b'{"k": 1}'
+    assert requests[0].get_method() == "POST"
+
+
+def test_request_json_empty_dict_body_still_sends_data(
+    monkeypatch: pytest.MonkeyPatch, fake_sleep: list[float]
+) -> None:
+    """``json_body={}`` distinguishes from ``json_body=None`` by sending ``b'{}'``."""
+
+    fake, _, requests = _make_fake_urlopen_recording([b'{"ok": true}'])
+    monkeypatch.setattr(http, "urlopen", fake)
+
+    request_json(method="POST", url="https://api.example/x", headers={}, json_body={})
+
+    assert requests[0].data == b"{}"
+
+
+def test_request_json_default_json_body_is_none(
+    monkeypatch: pytest.MonkeyPatch, fake_sleep: list[float]
+) -> None:
+    """Omitting ``json_body=`` entirely defaults to ``None`` — no body sent.
+
+    Pins the signature change includes a default value, not just a
+    wider type annotation. A future regression where the parameter
+    becomes required would surface here.
+    """
+
+    fake, _, requests = _make_fake_urlopen_recording([b'{"ok": true}'])
+    monkeypatch.setattr(http, "urlopen", fake)
+
+    request_json(method="GET", url="https://api.example/x", headers={})
+
+    assert requests[0].data is None
+    assert requests[0].get_method() == "GET"
 
 
 def test_request_json_429_then_200_retries_with_backoff(

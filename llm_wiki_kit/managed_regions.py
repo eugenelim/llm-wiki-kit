@@ -135,6 +135,38 @@ def _scan(content: str) -> list[_Region]:
     return regions
 
 
+def canonical_region_body(body: str) -> bytes:
+    """Return the byte form a managed-region hash is computed over.
+
+    Bridges the asymmetry between two halves of the install pipeline:
+
+    * The aggregator (``install._normalise_snippet``) writes each
+      contributor's snippet with a trailing newline so concatenation
+      across multiple contributors stays well-formed.
+    * :func:`parse` returns the between-markers body with no trailing
+      newline — the body is "lines joined by ``\\n``", terminator
+      excluded.
+
+    Ensures exactly one trailing newline when the body is non-empty;
+    preserves interior whitespace verbatim. An empty body stays
+    empty so the seed-file "no contributors yet" case hashes to
+    ``hash(b"")``. The function is not a general whitespace-
+    normaliser: ``"foo\\n\\n\\n"`` is left alone (intentional — it
+    matches whatever the snippet author wrote), so a future
+    contributor must not add a stronger normalisation rule without
+    bumping the canonicalization version.
+
+    Single source of truth so :func:`write_helper.safe_write_region`
+    (write side) and :func:`doctor.check_managed_region_drift`
+    (read side) cannot drift on subtle canonicalization rules —
+    every future tweak lands here once.
+    """
+
+    if body and not body.endswith("\n"):
+        body = body + "\n"
+    return body.encode("utf-8")
+
+
 def parse(content: str) -> dict[str, str]:
     """Return ``{region_id: body}`` for every managed region in ``content``.
 

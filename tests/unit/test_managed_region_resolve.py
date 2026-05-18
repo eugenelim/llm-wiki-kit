@@ -94,7 +94,8 @@ def test_resolve_proposal_with_managed_region_history_emits_region_write(
     assert len(region_writes) == 2
     assert region_writes[-1].file == "AGENTS.md"
     assert region_writes[-1].region == "content-types"
-    assert region_writes[-1].content_hash == _sha256("merged region body")
+    # Canonical region body adds a trailing newline before hashing.
+    assert region_writes[-1].content_hash == _sha256("merged region body\n")
     assert region_writes[-1].by == "wiki-conflict"
 
 
@@ -179,6 +180,6 @@ def test_resolve_proposal_with_multiple_regions_emits_one_event_per_region(
     # + 2 fresh resolves
     by_region = {(e.region, e.content_hash) for e in region_writes if e.by == "wiki-conflict"}
     assert by_region == {
-        ("content-types", _sha256("merged-c")),
-        ("ontologies", _sha256("merged-o")),
+        ("content-types", _sha256("merged-c\n")),
+        ("ontologies", _sha256("merged-o\n")),
     }

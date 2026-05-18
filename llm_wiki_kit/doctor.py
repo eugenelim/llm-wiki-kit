@@ -36,7 +36,7 @@ from pathlib import Path
 from llm_wiki_kit import managed_regions
 from llm_wiki_kit.errors import ManagedRegionError
 from llm_wiki_kit.journal import read_events_lenient, replay_state
-from llm_wiki_kit.models import Event, ManagedRegionWriteEvent, VaultState
+from llm_wiki_kit.models import Event, ManagedRegionWriteEvent, PageWriteEvent, VaultState
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
 
 # Issue kinds (also serve as the line prefix in the CLI output).
@@ -104,17 +104,31 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def check_page_drift(state: VaultState, vault_root: Path) -> list[Issue]:
+def check_page_drift(state: VaultState, vault_root: Path, events: list[Event]) -> list[Issue]:
     """Pages whose on-disk hash diverges from the latest ``page.write``.
 
     A path with an outstanding ``page.proposal`` is reported as
     ``pending-proposal``, not ``page-drift`` — the user already knows
     the kit wanted to write something there.
+
+    A path whose latest event for that file is a
+    ``ManagedRegionWriteEvent`` (post-Task-19) is also skipped — the
+    install pipeline's aggregator rewrites managed-region files in
+    place via :func:`write_helper.safe_write_region` *after* the seed
+    primitive's ``safe_write`` lands the empty-region seed bytes, so
+    the original ``PageWriteEvent`` baseline goes stale by design.
+    Region-level drift is what :func:`check_managed_region_drift`
+    exists to catch; double-reporting at the page level would surface
+    every managed-region file as drifted after every install.
     """
+
+    files_with_later_region_writes = _files_with_managed_region_write_after_page_write(events)
 
     issues: list[Issue] = []
     for relative, event in state.page_writes.items():
         if relative in state.pending_proposals:
+            continue
+        if relative in files_with_later_region_writes:
             continue
         abs_path = vault_root / relative
         if not abs_path.exists():
@@ -122,6 +136,25 @@ def check_page_drift(state: VaultState, vault_root: Path) -> list[Issue]:
         if _hash(abs_path.read_bytes()) != event.hash:
             issues.append(Issue(PAGE_DRIFT, relative))
     return issues
+
+
+def _files_with_managed_region_write_after_page_write(events: list[Event]) -> set[str]:
+    """Return paths whose latest write event is a region write, not a page write.
+
+    Used by :func:`check_page_drift` to skip files the install
+    pipeline has rewritten via the managed-region path after the
+    initial seed. The order matters — a future page write would
+    re-baseline and bring the file back under page-level drift
+    detection.
+    """
+
+    latest_write_kind: dict[str, str] = {}
+    for event in events:
+        if isinstance(event, PageWriteEvent):
+            latest_write_kind[event.path] = "page"
+        elif isinstance(event, ManagedRegionWriteEvent):
+            latest_write_kind[event.file] = "region"
+    return {path for path, kind in latest_write_kind.items() if kind == "region"}
 
 
 def check_managed_region_drift(
@@ -168,7 +201,7 @@ def check_managed_region_drift(
         if body is None:
             issues.append(Issue(MANAGED_REGION_DRIFT, target, "region missing"))
             continue
-        if _hash(body.encode("utf-8")) != event.content_hash:
+        if _hash(managed_regions.canonical_region_body(body)) != event.content_hash:
             issues.append(Issue(MANAGED_REGION_DRIFT, target))
     return issues
 
@@ -386,7 +419,7 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     issues: list[Issue] = []
     if corruption is not None:
         issues.append(Issue(JOURNAL_CORRUPT, str(corruption.line), corruption.reason))
-    issues.extend(check_page_drift(state, vault_root))
+    issues.extend(check_page_drift(state, vault_root, events))
     issues.extend(check_managed_region_drift(events, vault_root, state))
     issues.extend(check_pending_proposals(state))
     issues.extend(check_orphans(state, vault_root))

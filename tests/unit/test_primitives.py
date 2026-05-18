@@ -450,3 +450,96 @@ def test_research_primitives_resolve_in_dependency_order() -> None:
     ordered = resolve_dependencies([perplexity_primitive, research])
     names = [p.name for p in ordered]
     assert names.index("research") < names.index("research-perplexity")
+
+
+# ---------------------------------------------------------------------------
+# Task 19 — infrastructure:research-gemini and :research-semantic-scholar
+# ---------------------------------------------------------------------------
+
+
+def test_research_gemini_primitive_loads() -> None:
+    """Provider primitive: kind ``infrastructure``, requires ``research``,
+    contributes one block to ``research-providers.yaml:providers``."""
+
+    from llm_wiki_kit.install import validate_contributions
+
+    root = REPO_ROOT / "templates" / "infrastructure" / "research-gemini"
+    primitive = load_primitive(root)
+    assert primitive.name == "research-gemini"
+    assert primitive.kind is PrimitiveKind.INFRASTRUCTURE
+    assert primitive.requires == ["research"]
+    assert primitive.contributes_to == [
+        Contribution(file="research-providers.yaml", region="providers")
+    ]
+    snippet = root / "regions" / "research-providers.yaml.providers"
+    assert snippet.is_file()
+    snippet_body = snippet.read_text(encoding="utf-8")
+    assert "gemini:" in snippet_body
+    assert "api_key_env: GEMINI_API_KEY" in snippet_body
+    assert "model: gemini-2.5-pro" in snippet_body
+    validate_contributions(primitive, root)
+
+
+def test_research_semantic_scholar_primitive_loads() -> None:
+    """Provider primitive: kind ``infrastructure``, requires ``research``,
+    contributes one block. The api_key_env is declared but optional at
+    dispatch time (keyless tier supported)."""
+
+    from llm_wiki_kit.install import validate_contributions
+
+    root = REPO_ROOT / "templates" / "infrastructure" / "research-semantic-scholar"
+    primitive = load_primitive(root)
+    assert primitive.name == "research-semantic-scholar"
+    assert primitive.kind is PrimitiveKind.INFRASTRUCTURE
+    assert primitive.requires == ["research"]
+    assert primitive.contributes_to == [
+        Contribution(file="research-providers.yaml", region="providers")
+    ]
+    snippet = root / "regions" / "research-providers.yaml.providers"
+    assert snippet.is_file()
+    snippet_body = snippet.read_text(encoding="utf-8")
+    assert "semantic-scholar:" in snippet_body
+    assert "api_key_env: SEMANTIC_SCHOLAR_API_KEY" in snippet_body
+    assert "model: graph-v1" in snippet_body
+    validate_contributions(primitive, root)
+
+
+def test_recipes_do_not_include_research_gemini_or_semantic_scholar() -> None:
+    """Static guard: the new Task 19 primitives are opt-in.
+
+    Spec invariant 5: neither ``infrastructure:research-gemini`` nor
+    ``infrastructure:research-semantic-scholar`` may appear in any
+    shipped recipe's ``primitives:`` list. The integration suite has
+    its own end-to-end version of this assertion; this is the unit-
+    level static guard that catches the regression at the cheapest
+    layer.
+    """
+
+    import yaml
+
+    for name in ("family", "work-os", "personal"):
+        path = REPO_ROOT / "recipes" / f"{name}.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        primitives = data.get("primitives", [])
+        assert "research-gemini" not in primitives, (
+            f"{name}.yaml unexpectedly auto-installs 'research-gemini'"
+        )
+        assert "research-semantic-scholar" not in primitives, (
+            f"{name}.yaml unexpectedly auto-installs 'research-semantic-scholar'"
+        )
+
+
+def test_research_task19_primitives_resolve_in_dependency_order() -> None:
+    """Both new providers depend on ``research`` — topological order respected."""
+
+    research = load_primitive(REPO_ROOT / "templates" / "infrastructure" / "research")
+    gemini_primitive = load_primitive(
+        REPO_ROOT / "templates" / "infrastructure" / "research-gemini"
+    )
+    ss_primitive = load_primitive(
+        REPO_ROOT / "templates" / "infrastructure" / "research-semantic-scholar"
+    )
+    ordered = resolve_dependencies([gemini_primitive, ss_primitive, research])
+    names = [p.name for p in ordered]
+    assert names.index("research") < names.index("research-gemini")
+    assert names.index("research") < names.index("research-semantic-scholar")
