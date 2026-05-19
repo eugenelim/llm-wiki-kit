@@ -1,0 +1,79 @@
+name: Evals
+
+# Runs the `@pytest.mark.eval` suite that drives Claude Code via
+# subprocess against fixture vaults. See
+# docs/specs/task-20-eval-harness/spec.md for the contract and
+# `docs/specs/task-20-eval-harness/plan.md` Step 6 for the workflow
+# design.
+#
+# Triggered on push to main and on pull_request from primary-repo
+# branches. No nightly cron — every run costs Anthropic API budget,
+# and PR + main-merge cadence is the right pressure for now.
+#
+# Fork PRs do not receive repo secrets, so the keyed scenarios will
+# report SKIPPED-with-reason. That is by design; see Spec §Non-goals.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual trigger so a maintainer can re-run the suite after fixing
+  # a flake without amending or force-pushing — same shape every other
+  # workflow in this repo uses for that purpose.
+  workflow_dispatch:
+
+concurrency:
+  # Cancel in-progress runs on force-push so stale commits don't burn
+  # Anthropic API budget. The trade-off: a flake mid-PR-triage doesn't
+  # auto-retry — push an empty commit (or use `workflow_dispatch`)
+  # to force a fresh run.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Set up Node (for the Claude Code CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install the Claude Code CLI
+        # Pin to a specific version; bump in its own PR so a `claude`
+        # behavior change lands as a deliberate, reviewable diff. The
+        # `evalkit` transcript parser is the canary for stream-json
+        # format drift.
+        run: npm install -g @anthropic-ai/claude-code@2.0.27
+
+      - name: Install package and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run evals (pytest tests/evals -m eval)
+        # `--junitxml` so per-scenario skip reasons (HTTP status,
+        # missing-key var, etc.) survive into the uploaded artifact
+        # and are inspectable from the run UI.
+        run: pytest tests/evals -m eval -ra --junitxml=evals-junit.xml
+
+      - name: Upload junit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evals-junit
+          path: evals-junit.xml

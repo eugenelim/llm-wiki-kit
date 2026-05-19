@@ -42,4 +42,7 @@ jobs:
         run: mypy llm_wiki_kit tests
 
       - name: Run tests (pytest)
-        run: pytest -m 'not slow'
+        # `not eval` excludes tests under tests/evals/ — those run in
+        # the separate evals.yml workflow because they invoke the
+        # `claude` CLI and consume Anthropic API budget.
+        run: pytest -m 'not slow and not eval'

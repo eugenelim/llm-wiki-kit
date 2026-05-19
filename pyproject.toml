@@ -82,7 +82,12 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+# The `-m` filter applies to path-based selection too: explicit
+# `pytest tests/evals/x.py` will report "0 collected, N deselected"
+# until you add `-m eval`. Authoring guide documents the workaround;
+# every eval file carries a top-level pytestmark for visibility.
+addopts = "-ra --strict-markers -m 'not slow and not eval'"
 markers = [
     "slow: marks tests that build/install a wheel (run via `pytest -m slow` or the wheel-acceptance CI job)",
+    "eval: marks tests under tests/evals/ that drive Claude Code via subprocess (run via the evals CI workflow or `pytest tests/evals -m eval`)",
 ]
