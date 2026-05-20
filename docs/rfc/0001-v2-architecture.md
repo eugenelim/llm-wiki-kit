@@ -161,15 +161,17 @@ detail.
 
 **Progress to date (2026-05-20):** Phases A, B, C, and Phase D
 Tasks 16–19 have shipped (19 of 22 tasks complete), plus Task 20
-(eval harness) in Phase E. Phase E Tasks 21–22 remain, plus
-**Phase F** (Tasks 23–27) — a set of v2.0.0 contract-completion
-bugs identified during the pre-tag audit (RFC's CLI surface
-promises that Tasks 1–22 didn't deliver: `wiki upgrade`,
-`wiki search`, `wiki journal {tail,grep,explain}`, the vault-side
-`wiki-research` SKILL.md, and `CHANGELOG.md` referenced by the
-CHARTER). These are bugs against this RFC's contract per AGENTS.md
-§"When this file is wrong" — not deferrals — and must ship before
-the v2.0.0 tag. Side artifacts that landed alongside: ADR-0006
+(eval harness) in Phase E and Phase F Task 24 (`wiki search`
+ripgrep tier). Phase E Tasks 21–22 remain, plus the remaining
+**Phase F** items (Tasks 23, 25–27) — a set of v2.0.0
+contract-completion bugs identified during the pre-tag audit
+(RFC's CLI surface promises that Tasks 1–22 didn't deliver:
+`wiki upgrade`, `wiki journal {tail,grep,explain}`, the
+vault-side `wiki-research` SKILL.md, and `CHANGELOG.md`
+referenced by the CHARTER). These are bugs against this RFC's
+contract per AGENTS.md §"When this file is wrong" — not
+deferrals — and must ship before the v2.0.0 tag. Side artifacts
+that landed alongside: ADR-0006
 (additive managed-region contributions, Task 11), ADR-0007 (shared
 infra config files at vault root, Task 18), and several living
 specs under `docs/specs/` for cross-cutting concerns surfaced
@@ -303,11 +305,12 @@ running it solo is recommended.
     possibly a new event type in `models.py`. If a new event type
     or install-pipeline contract change is needed, a new ADR
     lands in the same PR.
-1. **Task 24 — `wiki search <query>`.** RFC §"CLI surface (target)"
-    line 139 (`ripgrep/FTS5 over the vault`). Currently `_stub()`
-    at `cli.py:1140`. Vault-side `core/files/skills/wiki-search/`
-    SKILL already exists and expects this dispatcher; ripgrep is a
-    system binary invoked via subprocess (no new Python dep).
+1. **Task 24 — `wiki search <query>`.** ✅ Ripgrep tier shipped per
+    `docs/specs/wiki-search/`. Literal-substring scan over
+    `<vault_root>/wiki/` with `--type` / `--tag` / `--status` /
+    `--top` frontmatter filters; read-only (no journal events);
+    `WikiError` on missing `rg`. FTS5 auto-upgrade tier remains
+    future work (vault-side SKILL.md flags it as deferred).
 1. **Task 25 — `wiki journal {tail,grep,explain}`.** RFC §"CLI
     surface (target)" line 140. Three `_stub()` handlers at
     `cli.py:1144–1152`. Pure wrappers over `journal.py`'s existing

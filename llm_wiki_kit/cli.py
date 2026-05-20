@@ -1137,7 +1137,49 @@ def _resolve_out_path(raw: str, vault_root: Path) -> tuple[str, Path]:
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
-    return _stub("search")
+    """Search the vault's ``wiki/`` tree for a literal substring.
+
+    Read-only — no journal events, no writes. Boundary check (vault
+    root, non-empty query, ``--top`` ≥ 1) before any ripgrep subprocess
+    fires. See ``docs/specs/wiki-search/spec.md``.
+    """
+
+    from llm_wiki_kit.search import SearchFilters, format_results, run_search
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
+
+    query: str = args.query
+    if not query:
+        raise WikiError("search query must not be empty")
+
+    if args.top < 1:
+        raise WikiError("--top must be ≥ 1")
+
+    # Empty-string filter values would degenerate to "only pages whose
+    # frontmatter field is missing or empty" — almost certainly not what
+    # the caller meant; reject rather than ship the surprise.
+    for flag, value in (
+        ("--type", args.search_type),
+        ("--tag", args.tag),
+        ("--status", args.status),
+    ):
+        if value is not None and value == "":
+            raise WikiError(f"{flag} must not be empty")
+
+    filters = SearchFilters(
+        type=args.search_type,
+        tag=args.tag,
+        status=args.status,
+    )
+    hits = run_search(vault_root, query, filters, args.top)
+    print(format_results(hits), end="")
+    return 0
 
 
 def _cmd_journal_tail(args: argparse.Namespace) -> int:
@@ -1361,9 +1403,38 @@ def build_parser() -> argparse.ArgumentParser:
     search = subparsers.add_parser(
         "search",
         parents=[verbose_parent],
-        help="Search the vault (ripgrep / FTS5 backend).",
+        help="Search the vault (ripgrep tier; FTS5 tier is future work).",
     )
-    search.add_argument("query", help="The search query.")
+    search.add_argument("query", help="Literal substring to search for in the vault.")
+    # ``--type`` lands on the namespace as ``search_type`` so it doesn't
+    # collide with Python's built-in ``type``; user-facing flag stays
+    # ``--type`` per the SKILL.md.
+    search.add_argument(
+        "--type",
+        dest="search_type",
+        default=None,
+        metavar="<name>",
+        help="Restrict to pages whose frontmatter type equals this value.",
+    )
+    search.add_argument(
+        "--tag",
+        default=None,
+        metavar="<name>",
+        help="Restrict to pages whose frontmatter tags list contains this value.",
+    )
+    search.add_argument(
+        "--status",
+        default=None,
+        metavar="<name>",
+        help="Restrict to pages whose frontmatter status equals this value.",
+    )
+    search.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        metavar="<N>",
+        help="Maximum number of ranked results to print (default: 10).",
+    )
     search.set_defaults(func=_cmd_search)
 
     journal = subparsers.add_parser("journal", help="Read the vault journal.")

@@ -27,6 +27,14 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      - name: Install ripgrep
+        # `wiki search` shells out to ripgrep; the tests under
+        # `tests/unit/test_search.py` and `tests/integration/test_wiki_search.py`
+        # skip when `rg` is absent (per `shutil.which("rg")` guards).
+        # Installing it here keeps the full search suite on the CI
+        # critical path rather than silently skipped.
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Install package and dev dependencies
         run: |
           python -m pip install --upgrade pip

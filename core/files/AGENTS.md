@@ -147,9 +147,9 @@ the right invocation in chat.
   Read the operation's `SKILL.md` header before suggesting it. Tracked
   under retro-review concern C7 (issue #23).*
 - `wiki search <query>` — search the vault (or load the `wiki-search`
-  skill directly to compose richer filters). *Phase D — not yet
-  shipped in v2.0.0.dev; the CLI exits `not yet implemented`. Fall
-  back to the IDE's Grep over `wiki/`. (C7 / issue #23.)*
+  skill directly to compose richer filters). Tier 1 (ripgrep, literal
+  substring with `--type` / `--tag` / `--status` / `--top` flags)
+  ships in v2.0.0; the FTS5 auto-upgrade tier remains future work.
 - `wiki research <query>` — dispatch to a configured research provider
   if one is installed. *Phase E — not yet shipped in v2.0.0.dev;
   exits `not yet implemented`. (C7 / issue #23.)*

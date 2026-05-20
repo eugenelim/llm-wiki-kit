@@ -17,11 +17,11 @@ SUBCOMMANDS_WITH_ARGS: list[list[str]] = [
     # ``init`` graduated from stub to real handler in Task 10; ``add``
     # and ``doctor`` graduated in Task 12; ``ingest`` graduated in
     # Task 16; ``run`` graduated in Task 17; ``research`` graduated in
-    # Task 18. Each has its own integration suite under
-    # ``tests/integration/``.
+    # Task 18; ``search`` graduated in Phase F Task 24
+    # (``docs/specs/wiki-search/``). Each has its own integration suite
+    # under ``tests/integration/``.
     ["upgrade"],
     ["upgrade", "--primitive", "people"],
-    ["search", "stakeholder"],
     ["journal", "tail"],
     ["journal", "tail", "-n", "20"],
     ["journal", "grep", "ingest"],
