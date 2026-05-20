@@ -17,8 +17,6 @@ dependencies:
   - .claude/agents/quality-engineer.md
   - .claude/agents/implementer.md
   - .claude/skills/new-spec/SKILL.md
-  - tools/ralph.sh
-  - tools/RALPH.md
 ---
 
 # Skill: work-loop
@@ -524,6 +522,12 @@ conditions are met. See [`tools/RALPH.md`](../../../tools/RALPH.md) for
 operating instructions, hard limits, and the cost/safety rules. **Read it
 before running Ralph.** AFK doesn't mean *unconsidered* — it means
 *pre-considered*.
+
+The harness is **not** part of this skill's install closure — adopters
+who only want the in-session loop shouldn't have to take the AFK
+machinery along. To pull it in deliberately, copy `tools/ralph.sh` and
+`tools/RALPH.md` out of the `llm-wiki-kit` source repo into your own
+`tools/` directory.
 
 ## Anti-patterns to refuse
 
