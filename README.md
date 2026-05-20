@@ -1,6 +1,6 @@
 # LLM Wiki Kit
 
-An Obsidian vault template wired for Claude Code. Drop it in your synced folder, point Claude at it, and it ingests meeting transcripts, PDFs, URLs, and notes into structured pages — then runs operations (sprint plans, weekly reviews, meal plans, status decks) that read the wiki and write back into it. Three variants ship: **work** (engineering teams), **family** (household), **personal** (one person). Pick one and follow its README.
+A Python package and template catalog for building LLM-maintained markdown wikis — Karpathy's LLM Wiki pattern, adapted. The kit ships a common core plus a catalog of droppable primitives, composed by recipes, so a non-engineer can `pip install llm-wiki-kit`, run one command, and get an Obsidian-compatible vault wired up for Claude (or any agent that reads `AGENTS.md`) to ingest into and operate on.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Agent Skills Spec](https://img.shields.io/badge/skills-agentskills.io-blue.svg)](https://agentskills.io/specification)
@@ -8,23 +8,32 @@ An Obsidian vault template wired for Claude Code. Drop it in your synced folder,
 
 ---
 
-## Table of Contents
+## Install
 
-- [Why this exists](#why-this-exists)
-- [Pick a variant](#pick-a-variant)
-- [Quick Start](#quick-start)
-- [How it works](#how-it-works)
-- [Adding new content (cheatsheet)](#adding-new-content-cheatsheet)
-- [Foundation: Obsidian Skills](#foundation-obsidian-skills)
-- [Architecture in one minute](#architecture-in-one-minute)
-- [Scaling notes](#scaling-notes)
-- [Agent flexibility](#agent-flexibility)
-- [Documentation](#documentation)
-- [License](#license)
+```bash
+pip install llm-wiki-kit
+# or, for an isolated CLI:
+pipx install llm-wiki-kit
+```
 
----
+Requires Python 3.11+. Runtime deps are `pyyaml` and `pydantic>=2`; everything else is stdlib. `pipx install` works out of the box — the wheel bundles the recipe catalog and template assets so no source checkout is needed (see [`docs/specs/wheel-bundled-assets/spec.md`](docs/specs/wheel-bundled-assets/spec.md)).
 
-## Why this exists
+## Quick start
+
+```bash
+# Pick a recipe: family, work-os, or personal.
+wiki init --recipe family my-vault
+
+# Sanity check.
+cd my-vault
+wiki doctor
+```
+
+Then point Claude Code (or any agent that reads `AGENTS.md`) at `my-vault/`. The kit lays down the journal, the skills, the schema, and the seed pages; the agent reads the vault-side `AGENTS.md` to learn what to do next.
+
+A 20-minute walkthrough lives in [`docs/guides/tutorials/tutorial-1-first-vault.md`](docs/guides/tutorials/tutorial-1-first-vault.md), with a deeper `work-os` tour in [`tutorial-2-work-os-walkthrough.md`](docs/guides/tutorials/tutorial-2-work-os-walkthrough.md). Browse `examples/family-mini/` and `examples/work-os-mini/` to see what a rendered vault looks like before installing.
+
+## The two loops
 
 A wiki without operations is a filing cabinet. The capture loop runs at first, then dies because nobody sees a visible weekly payoff.
 
@@ -35,271 +44,46 @@ This kit is designed around **two reinforcing loops**:
 
 Every feature — progressive loading, synopses, structured ingestion, the operations layer — exists to make both loops fast and useful.
 
-**Human curation is non-negotiable.** Research on LLM-maintained documentation shows that fully unsupervised LLM management degrades quality over time. The kit enforces curation through provenance tracking, contradiction detection, interactive review, and lint checks that surface quality issues for human resolution. The LLM proposes; you review.
+**Human curation is non-negotiable.** Research on LLM-maintained documentation shows that fully unsupervised LLM management degrades quality over time. The kit enforces curation through provenance tracking, contradiction detection, an append-only journal, and drift detection (any change to a file you have edited goes through a proposal sidecar rather than a silent overwrite). The LLM proposes; you review.
 
----
+## Composition model
 
-## Pick a variant
+Three layers compose into one vault:
 
-Each variant is a complete vault skeleton with its own ontology, page types, templates, operations, and a fully-self-contained README. Pick one and read its README — that's all the documentation you need to set it up.
+1. **Common core** (`core/`) — always installed. The vault-side `AGENTS.md` contract, the journal, the frontmatter-schema baseline, and the cross-cutting skills (`wiki-search`, `wiki-conflict`, `wiki-lock`, `wiki-lint`, `wiki-doctor`, `ingest`, `wiki-research`).
+2. **Primitives** (`templates/`) — independently versioned, droppable building blocks. Four kinds: *ontology* (folder shapes — `people/`, `food/`, `projects/`), *content-type* (an ingester + page template + frontmatter contribution — `meeting`, `recipe`, `medical-record`), *operation* (contract + skill + eval fixture — `weekly-digest`, `meal-planning`, `stakeholder-map-refresh`), and *infrastructure* (cross-cutting — `research`, `research-perplexity`, `research-gemini`, `research-semantic-scholar`).
+3. **Recipes** ([`recipes/`](recipes/)) — named YAML files that compose primitives for one audience. v2.0 ships three: [`family`](recipes/family.yaml), [`work-os`](recipes/work-os.yaml), [`personal`](recipes/personal.yaml).
 
-| Variant | For | Canonical operation | README |
-|---|---|---|---|
-| **Work** | Architecture & engineering teams. Spec-driven build sessions, ADRs, meeting syntheses, sprint planning, weekly digests, team-status decks, cross-project synthesis, PM-tool sync. | `sprint-planning` (Mon) | [`vault-templates/work/README.md`](vault-templates/work/README.md) |
-| **Family** | A household. Person-first ontology with structured ingest of recipes, medical records, school documents, trips, receipts, tax forms. Operations: meal-planning, follow-up tracker, trip prep, weekly digest, medical summary, recipe recommender. | `meal-planning` (Sun) | [`vault-templates/family/README.md`](vault-templates/family/README.md) |
-| **Personal** | One person's mind + career. Atomic notes + topic syntheses, books, decisions, weekly/quarterly/annual reviews, hobby + fitness logs, accomplishment ledger, applications, network rolodex. | `weekly-review` (Sun) | [`vault-templates/personal/README.md`](vault-templates/personal/README.md) |
+The deep dive — module map, journal events, write-safety layers — lives in [`docs/architecture/overview.md`](docs/architecture/overview.md). Foundational decisions (stdlib rendering, journal-as-truth, managed regions, drift detection, Pydantic schemas, additive contributions, vault-root config files) are captured as ADRs under [`docs/adr/`](docs/adr/).
 
-Side-by-side comparison: [`docs/comparison.md`](docs/comparison.md).
-
-Don't see your shape? Build a custom variant: [`docs/guides/customizing.md`](docs/guides/customizing.md).
-
----
-
-## What Claude can and can't do to your vault
-
-- Claude **never deletes files** without confirmation — moves to `archive/` instead.
-- Claude **never renames files** — updates `title:` and `aliases:` in frontmatter; Obsidian handles renames.
-- Claude **never silently overwrites** contradicting content — inserts a `> [!danger] Contradiction` callout for human review.
-- Claude **proposes before writing** operations; you confirm before anything is saved.
-- `raw/` is immutable — source documents are never modified after ingest.
-- Git not required but strongly recommended. Your vault is a folder of text files — `git init` takes 5 seconds.
-
----
-
-## Quick Start
-
-Three steps. Picks the work variant for the example — swap the path for `family` or `personal` as needed.
-
-### 1. Clone the kit and copy a variant template
-
-```bash
-git clone https://github.com/eugenelim/llm-wiki-kit.git
-cd llm-wiki-kit
-WIKI_KIT=$(pwd)   # save this — referenced in step 2
-
-# Copy your chosen variant to a synced folder (OneDrive / iCloud / Dropbox / Git)
-cp -r vault-templates/work ~/OneDrive/my-team-wiki
-```
-
-### 2. Install agent skills
-
-From inside the new vault folder:
-
-```bash
-cd ~/OneDrive/my-team-wiki
-
-# Foundation: kepano/obsidian-skills (wikilinks, Bases, Canvas, defuddle)
-# Pin to a specific commit for stability: git clone ... && git -C /tmp/obsidian-skills checkout fa1e131a014576ff8f8919f191a7ca8d8fded39b
-git clone --depth 1 https://github.com/kepano/obsidian-skills.git /tmp/obsidian-skills
-mkdir -p .claude
-cp -r /tmp/obsidian-skills/.claude/* .claude/
-rm -rf /tmp/obsidian-skills
-
-# This kit's skills (shared + your variant)
-cp -r "$WIKI_KIT/skills/shared/"* .claude/skills/
-cp -r "$WIKI_KIT/skills/work/"*   .claude/skills/   # or family / personal
-```
-
-### 3. Set up your `purpose.md` — pick one path
-
-You have **two ways** to fill in your vault's scope. Both end with the same result.
-
-#### Path A — Edit `purpose.md` directly (5 minutes, no agent)
-
-Open `purpose.md` in your editor and replace the placeholder with your real scope (3-7 sentences, in-scope and out-of-scope bullets). Then optionally tweak the identity sections of `_variant/CLAUDE.variant.md` (team/family name, tone). The rest works as-is.
-
-#### Path B — Let Claude walk you through setup (10 minutes, conversational)
-
-Start Claude in the vault directory and paste the variant-specific reference prompt. Claude reads the schema, asks you one question at a time, and writes `purpose.md` plus relevant stub pages at the end.
-
-```bash
-cd ~/OneDrive/my-team-wiki
-claude
-```
-
-The full reference prompt is in your variant's README:
-
-- [Work setup prompt](vault-templates/work/README.md#path-b--let-claude-walk-you-through-setup-10-minutes-conversational)
-- [Family setup prompt](vault-templates/family/README.md#path-b--let-claude-walk-you-through-setup-10-minutes-conversational)
-- [Personal setup prompt](vault-templates/personal/README.md#path-b--let-claude-walk-you-through-setup-10-minutes-conversational)
-
-### 4. Open in Obsidian and run your canonical operation
-
-Open the vault in Obsidian. `wiki/index.md` is your dashboard.
-
-Then run your variant's **canonical operation** — the gateway that establishes the rhythm that keeps the vault alive. Your README has the exact prompt:
-
-| Variant | Canonical operation | Cadence |
-|---|---|---|
-| Work | `sprint-planning` | Sprint kickoff (Mon) |
-| Family | `meal-planning` | Sun afternoon |
-| Personal | `weekly-review` | Sun evening / Mon morning |
-
-The canonical operation produces a derived artifact you'll consume the next week. **Without it, the capture loop dies; with it, the vault stays operational.** Resist the temptation to capture lots of content first — the canonical operation is what gives captures a purpose.
-
----
-
-## How it works
-
-The kit runs two flows over the same vault:
+## CLI surface
 
 ```
-  CAPTURE                                              OPERATE
-
-  raw sources   →   specialized   →   structured  ↔   operations    →   derived
-  (URLs, PDFs,      ingesters         wiki pages       (planning,        pages
-   pastes,          (orchestrator     (typed,           reminding,       (sprint plans,
-   photos,          routes by         cross-linked      synthesizing,    meal plans,
-   transcripts,     source-type +     markdown)         recommending,    digests,
-   recipes, …)      content-type)                       crisis-          schedules,
-                                                         responding)     packing lists)
+wiki init --recipe <name> <path>     Create a new vault from a recipe.
+wiki add <kind>:<name>               Install a primitive into the current vault.
+wiki upgrade [--primitive <name>]    Upgrade installed primitives to latest.
+wiki doctor                          Validate vault state against the journal.
+wiki ingest <source>                 Route source material to the right ingester.
+wiki run <operation>                 Run a named operation.
+wiki research <query>                Dispatch to a configured research provider.
+wiki search <query>                  Ripgrep over the vault.
+wiki journal {tail,grep,explain}     Read the vault journal.
 ```
 
-**Capture.** Raw sources flow through specialized ingesters that produce *structured* wiki pages. A recipe URL becomes a recipe page in `food/`. A meeting transcript becomes a synthesis in `projects/{slug}/meetings/` with decisions and action items. A PDF becomes markdown via Docling and lands in the right wiki location. The orchestrator (`skills/shared/ingest/SKILL.md`) routes by *source-type* (URL, PDF, paste) and *content-type* (recipe, meeting, EOB, receipt).
+`wiki resolve` and `wiki lock` round out the surface for proposal merges and multi-event sessions. Run `wiki <command> --help` for argument detail; the canonical contract is RFC-0001 §"CLI surface (target)".
 
-**Operate.** Operations are skills that read structured wiki pages, compose, and write derived pages back. Five classes: planning, reminding, synthesizing, recommending, crisis-responding. The output of an operation is itself a wiki page that subsequent operations can read.
+## How to fix a `.proposed` sidecar
 
-Humans guide the agent, review its output, and browse the wiki in Obsidian. Over time, the vault becomes institutional memory — for a team, a family, or you personally — searchable, navigable, always current, and *operational*.
+The kit never silently overwrites a file you have edited. If your edits drift from the kit's last known state, the next write lands as `<path>.proposed` next to the original, and `wiki doctor` flags it. The walkthrough — including a worked example against the committed `examples/conflict-pending/` vault — is in [`docs/guides/how-to/resolve-a-conflict.md`](docs/guides/how-to/resolve-a-conflict.md).
 
----
+## Where the docs live
 
-## Adding new content (cheatsheet)
-
-Each variant's README has the full content-authoring guide with copy-paste prompts. Quick lookup:
-
-| You want to add… | Variant | Prompt pattern |
-|---|---|---|
-| **A design or architecture doc** | work | `Write a design doc for {topic} in {project-slug}. Approach: {sketch}.` |
-| **An ADR** | work | `Capture an ADR for {project-slug}: we decided {choice} over {alternative}. Context: {why}.` |
-| **A feature spec with implementation plan** | work | `Start a new spec in {project-slug} for {feature}. Goal: {outcome}.` |
-| **A meeting synthesis** | work / family / personal | `Ingest this meeting: {paste or path}. Surface decisions and action items.` |
-| **A task** | work | `Add to {project-slug} tasks: {task}. Owner: {name}. Due: {date}.` |
-| **A research project** (multi-source) | any | `Start a research project: {question}. Artifact shape: matrix \| shortlist \| blueprint.` |
-| **A discovery / research note** (single source) | any | `Save a research brief: {topic}. Source: {URL or paste}.` |
-| **A status deck** (PowerPoint) | work | `Convert today's team-status page into a status deck.` |
-| **A recipe** | family | `Save this recipe: {URL or paste}. Family adjustments: {tweaks}.` |
-| **A medical record** | family | `Ingest this medical document for {name}: {file path}. Surface follow-ups.` |
-| **A trip plan** | family | `Start trip planning: {destination}, {dates}, traveling with {who}.` |
-| **An atomic note** | personal | `Save an atomic note: {one idea}. Link to: {related notes/topics}.` |
-| **A book record + standout-idea notes** | personal | `Save a book: {title} by {author}. Standout ideas: {bullets}.` |
-| **A decision** | personal / work | `Log a decision: {what}. Context: {why}. Options: {bullets}. Why this one: {reasoning}.` |
-| **An accomplishment** | personal | `Log an accomplishment: {what}. Dimension: {career\|craft\|learning\|...}.` |
-| **A hobby session** | personal | `Log a hobby session: {hobby}, {duration}. What worked: {bullets}. Next time: {breadcrumb}.` |
-| **A fitness session** | personal | `Log a workout: {sets×reps×weight or distance/pace}. Auto-detect PRs.` |
-| **A weekly review** | personal | `Run my weekly review for the week ending {YYYY-MM-DD}.` |
-| **A meal plan** | family | `Plan meals for next week. Constraints: {who's around, dietary, what's in fridge}.` |
-| **A sprint plan** | work | `Plan the next sprint for {project-slug}. Capacity: {N} days.` |
-| **A weekly digest** | work / family | `Produce this week's digest.` |
-| **An onboarding pack** | work | `Produce an onboarding pack for {name}, joining {project-slug}.` |
-| **A target-tailored resume** | personal | `Tailor a resume for {company} {role}. Use the application page at {path}.` |
-| **A bookmark** | any | `Bookmark {URL} with note: {why useful}.` |
-| **A new person in the rolodex** | any | `Add this person: {LinkedIn URL or details}. Context: {how we met}.` |
-| **A document (PDF/.docx/.xlsx)** | any | `Ingest this document: raw/{path}.` |
-
-For the full set with location, template, and what auto-updates downstream, jump into your variant's README.
-
----
-
-## Foundation: Obsidian Skills
-
-This kit is designed to work with [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills), the official agent skills for Obsidian created by Steph Ango (Obsidian's CEO). These skills teach Claude the correct syntax for every Obsidian file type:
-
-| Skill | What It Does |
-|---|---|
-| **obsidian-markdown** | Correct Obsidian Flavored Markdown — wikilinks, embeds, callouts, properties, frontmatter, block IDs, tags |
-| **obsidian-bases** | Obsidian Bases (`.base` files) — database-like views over wiki pages with filters, formulas, and summaries |
-| **json-canvas** | JSON Canvas (`.canvas` files) — spatial maps, flowcharts, project boards |
-| **obsidian-cli** | Obsidian CLI — read, create, search, manage notes, tasks, and properties from the command line |
-| **defuddle** | Web clipping — strips pages to clean markdown, removes ads/nav/chrome, saves tokens |
-
-Without these skills, Claude may produce invalid wikilink syntax, broken `.base` files, or malformed `.canvas` output. **Install them in every vault where you use Claude Code** (the per-variant READMEs include the install commands).
-
----
-
-## Architecture in one minute
-
-### CLAUDE.md — Two-Layer Schema
-
-```
-vault-root/
-├── CLAUDE.md                     # Shared: conventions, progressive loading,
-│                                 #   provenance, operations, asset management
-└── _variant/
-    └── CLAUDE.variant.md         # Variant-specific: identity, ontology,
-                                  #   page types, tone, domain operations
-```
-
-### Key patterns
-
-- **Progressive loading** — Every page has a `## Synopsis` section (2-3 sentences). Claude reads in three stages: index scan → synopsis scan → full read. ~100-300x token reduction.
-- **Provenance tracking** — Every page declares `provenance: extracted | synthesized | mixed`. Synthesized claims need source footnotes back to `raw/`.
-- **Companion pages** — Non-text files (PDFs, images, .docx, .xlsx) get a markdown companion page with metadata, making them visible in Obsidian's graph and search.
-- **Structured ingestion** — Specialized ingesters with two axes: source-type (URL, PDF, paste, image) and content-type (recipe, meeting, EOB, receipt). The orchestrator routes by both.
-- **Operations layer** — Skills that read structured wiki pages, compose, and write derived pages back. Five classes: planning, reminding, synthesizing, recommending, crisis-responding.
-- **Research projects** — Multi-source investigations toward a verdict. Each lives at `research/{date}-{slug}/` with the **4-pillar ontology** (Entities, Attributes, Mental Model, Verdict) and **4-phase workflow** (Capture, Sieve, Synthesize, Feedback). The artifact shape (`matrix`, `shortlist`, or `blueprint`) is declared upfront. Verdicts require ≥2 corroborating sources.
-- **Lint with scripts** — Python scripts handle deterministic checks (tag synonyms, convergence debt, missing fields). Claude handles semantic checks (contradictions, orphan analysis).
-
-For the full design narratives: [`docs/design/work.md`](docs/design/work.md), [`docs/design/family.md`](docs/design/family.md), [`docs/design/personal.md`](docs/design/personal.md), [`docs/design/research-layer.md`](docs/design/research-layer.md).
-
----
-
-## Scaling notes
-
-The kit scales in stages — but the `wiki-search` skill auto-adapts so you usually don't have to do anything. Day-1 vaults work with zero setup; the skill upgrades its own backend once it's worth doing.
-
-| Vault size | Retrieval method | What to do |
-|---|---|---|
-| **<100 pages** | Progressive loading + ripgrep | Nothing — `wiki-search` ships ripgrep as the default backend (zero install if you already have `rg`). |
-| **100-1,000 pages** | Progressive loading + ripgrep | Nothing. Keep synopses concise; keep `index.md` well-maintained. |
-| **1,000-5,000 pages** | **SQLite FTS5** (auto-enabled) | Nothing — `wiki-search` flips to FTS5 automatically on the first call after the vault crosses ~1000 pages or 50 MB. Stdlib `sqlite3` with FTS5 ships with standard Python; no `pip install`. The first call after the flip does a one-time index bootstrap and logs a single advisory line. |
-| **5,000-50,000 pages** | FTS5 (auto-enabled) | Stays the same. Consider sharding by major folder if a single index gets large. |
-| **50,000+ pages** | FTS5 + sharding, or external | Beyond what file-based FTS5 handles well. Move to Typesense or Meilisearch as an external index — the wiki stays markdown. |
-
-**Why ripgrep + FTS5, not vectors?** Both backends are lexical; keyword search with stemming handles retrieval well at wiki scale. Vectors add embedding infrastructure, chunking tuning, and a database — none of which are justified until you're well past 50,000 pages or need cross-language semantic similarity.
-
-**Forcing a backend.** Set `kit.search.backend: ripgrep` or `: fts5` in `wiki/.wiki-search/config.yaml`, or run `python .claude/skills/wiki-search/scripts/wiki-search.py backend wiki/ --set <choice>`. See [`skills/shared/wiki-search/SKILL.md`](skills/shared/wiki-search/SKILL.md) for the full operations reference.
-
-**Deployment + security.** The shared-drive approach (OneDrive / iCloud / Dropbox / Git) inherits your existing access controls, encryption, and compliance posture. The vault runs entirely on your machines; nothing leaves unless you opt into research integrations per query.
-
----
-
-## Agent flexibility
-
-The kit is designed for Claude Code and Claude Cowork today, but the architecture is **agent-agnostic by design**:
-
-- **CLAUDE.md is just a markdown file.** Rename it to `AGENTS.md` for OpenAI Codex, or `INSTRUCTIONS.md` for any other agent framework. The content applies to any LLM that reads files and follows instructions.
-- **Skills follow the open [Agent Skills spec](https://agentskills.io/specification).** The format is portable across Claude Code, Codex, Cursor, OpenHands, Goose, Gemini CLI, and any other agentskills.io-compatible client.
-- **Scripts are standard Python.** They don't call Claude APIs — any agent or human can run them.
-- **Obsidian is the UI, not the agent.** The vault is just a folder of markdown files.
-
-**Multi-agent setups:** The safety rules (slug stability, contradiction detection at ingest, append-only fact log) are designed to prevent conflicts when multiple writers operate on the same knowledge base. The `purpose.md` scope check helps prevent agents from writing outside their domain.
-
----
-
-## Documentation
-
-- **Per-variant READMEs** (the primary entry point, fully self-contained):
-  - [`vault-templates/work/README.md`](vault-templates/work/README.md)
-  - [`vault-templates/family/README.md`](vault-templates/family/README.md)
-  - [`vault-templates/personal/README.md`](vault-templates/personal/README.md)
-- **Design narratives** (the rationale behind every choice):
-  - [`docs/design/work.md`](docs/design/work.md)
-  - [`docs/design/family.md`](docs/design/family.md)
-  - [`docs/design/personal.md`](docs/design/personal.md)
-  - [`docs/design/research-layer.md`](docs/design/research-layer.md)
-- **Operational guides**:
-  - [`docs/guides/setup.md`](docs/guides/setup.md) — the full setup walkthrough (per-variant READMEs are the recommended path)
-  - [`docs/guides/sync-options.md`](docs/guides/sync-options.md) — shared drive vs. Git tradeoffs
-  - [`docs/guides/file-formats.md`](docs/guides/file-formats.md) — companion-page rules for non-text files
-  - [`docs/guides/web-clipper.md`](docs/guides/web-clipper.md) — Obsidian Web Clipper template
-  - [`docs/guides/customizing.md`](docs/guides/customizing.md) — building a custom variant
-  - [`docs/guides/inventories.md`](docs/guides/inventories.md) — the bookmarks-style inventory pattern (subscriptions, holdings, restaurants, …)
-- **Reference**:
-  - [`docs/comparison.md`](docs/comparison.md) — variants side-by-side
-  - [`docs/repo-structure.md`](docs/repo-structure.md) — full directory tree
-  - [`docs/research-providers/`](docs/research-providers/) — per-provider docs (Perplexity, Gemini, Semantic Scholar)
-
----
+- **Mission and scope** — [`docs/CHARTER.md`](docs/CHARTER.md).
+- **Tutorials and how-tos** — [`docs/guides/tutorials/`](docs/guides/tutorials/) and [`docs/guides/how-to/`](docs/guides/how-to/).
+- **Architecture map** — [`docs/architecture/overview.md`](docs/architecture/overview.md).
+- **Decisions** — [`docs/adr/`](docs/adr/).
+- **Roadmap** — [`docs/ROADMAP.md`](docs/ROADMAP.md).
+- **Shipped work** — [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
@@ -307,6 +91,6 @@ The kit is designed for Claude Code and Claude Cowork today, but the architectur
 
 ## Acknowledgments
 
-- **Andrej Karpathy** — for the LLM Wiki concept that inspired this system
-- **Steph Ango (kepano)** — for [obsidian-skills](https://github.com/kepano/obsidian-skills) and Obsidian itself
-- **Anthropic** — for Claude Code and Cowork, which make the LLM Wiki pattern practical
+- **Andrej Karpathy** — for the LLM Wiki concept that inspired this system.
+- **Steph Ango (kepano)** — for [obsidian-skills](https://github.com/kepano/obsidian-skills) and Obsidian itself.
+- **Anthropic** — for Claude Code, which makes the LLM Wiki pattern practical.

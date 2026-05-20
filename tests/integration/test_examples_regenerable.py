@@ -61,11 +61,12 @@ FAMILY_MINI = EXAMPLES_DIR / "family-mini"
 WORK_OS_MINI = EXAMPLES_DIR / "work-os-mini"
 CONFLICT_PENDING = EXAMPLES_DIR / "conflict-pending"
 
-# Pre-task top-level directory set captured at plan time. This is the
+# Pre-task top-level directory set, refreshed after Task 22 deleted
+# the v1 `vault-templates/` and `shared/` trees. This is the
 # load-bearing literal for test #10 — change it only when a new
 # top-level directory is intentionally introduced (and the spec /
 # AGENTS.md authorize it). Mirrors `git ls-tree --name-only HEAD`
-# (dirs only) at plan-time HEAD.
+# (dirs only) at the v2.0.0 release-cut HEAD.
 PRE_TASK_TOP_LEVEL_DIRS = frozenset(
     {
         ".claude",
@@ -74,12 +75,10 @@ PRE_TASK_TOP_LEVEL_DIRS = frozenset(
         "docs",
         "llm_wiki_kit",
         "recipes",
-        "shared",
         "skills",
         "templates",
         "tests",
         "tools",
-        "vault-templates",
     }
 )
 

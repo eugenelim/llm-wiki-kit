@@ -1,3 +1,3 @@
 """llm-wiki-kit: a kit for building LLM-maintained markdown wikis."""
 
-__version__ = "2.0.0.dev0"
+__version__ = "2.0.0"

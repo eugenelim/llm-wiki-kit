@@ -20,21 +20,35 @@ file is the shipped-work record. Decisions behind shipped work live in
 
 ## [Unreleased]
 
-The v2.0.0 line, in flight on the working branch. v2 replaces v1's three
-hand-edited template variants (`vault-templates/{family,work,personal}/`)
-with a common core, a catalog of droppable primitives, and recipes that
-compose primitives for an audience. See
+_Nothing yet._
+
+## [2.0.0] — 2026-05-20
+
+The v2.0.0 release. v2 replaces v1's three hand-edited template
+variants (`vault-templates/{family,work,personal}/`) with a common
+core, a catalog of droppable primitives, and recipes that compose
+primitives for an audience. See
 [RFC-0001](docs/rfc/0001-v2-architecture.md) for the full plan and
 task-by-task progress; phase headings below match its
 §"Migration sequence".
 
-Tasks 1–20 plus Phase F Tasks 26–27 have shipped (alongside the four
-cross-cutting specs below). Task 21 (example vaults and tutorials)
-remains in Phase E, and Phase F's remaining Tasks 23–25 — a sweep
-of v2.0.0 contract-completion bugs added during the pre-tag audit —
-also remain. Task 22 (README, ROADMAP, tag) blocks on Phase F
-completing. The release-cut at Task 22 promotes this `[Unreleased]`
-section to `## [2.0.0] — <date>`.
+All 22 migration tasks plus Phase F's five contract-completion tasks
+have shipped, alongside the four cross-cutting specs that surfaced
+mid-flight. The kit is `pip install`-able and `pipx install`-able;
+`wiki init --recipe {family,work-os,personal}` produces a working
+vault out of the box.
+
+> **Why Phase F items ship as `v2: implement …` rather than `v2: task …`.**
+> The pre-tag audit on 2026-05-20 found five gaps between the surface
+> RFC-0001 promised and what Tasks 1–22 delivered: `wiki upgrade`,
+> `wiki search`, `wiki journal {tail,grep,explain}`, the vault-side
+> `wiki-research` SKILL.md, and the `CHANGELOG.md` referenced by the
+> CHARTER. Those are **contract-completion bugs against the RFC**, not
+> deferred scope — the RFC §"What changes vs. v1" and §"CLI surface
+> (target)" sections promised them, so each one shipped before the
+> v2.0.0 tag with a commit message of `v2: implement <subject>` rather
+> than `v2: task N - <subject>`. Future readers grepping the git log
+> for the difference can use this entry as the index.
 
 ### Added — Phase A: Foundation (Tasks 1–5)
 
@@ -106,18 +120,54 @@ section to `## [2.0.0] — <date>`.
 - Gemini Deep Research and Semantic Scholar providers, completing
   the research-provider trio. All three are opt-in (Task 19).
 
-### Added — Phase E: Quality and ship — Task 20 (Tasks 21–22 remain)
+### Added — Phase E: Quality and ship (Tasks 20–22)
 
 - Eval harness — `trigger/`, `outcome/`, `provenance/`, `conflict/`,
   `research/` suites driving Claude Code via subprocess against
   fixture vaults; runs in its own CI workflow (Task 20).
+- Three committed, regenerable example vaults under `examples/`
+  (`family-mini`, `work-os-mini`, `conflict-pending`) plus an
+  idempotent `examples/regenerate.py` rebuilder
+  (`--check` / `--apply`); two tutorials
+  (`docs/guides/tutorials/tutorial-1-first-vault.md`,
+  `tutorial-2-work-os-walkthrough.md`) and a conflict-resolution
+  how-to (`docs/guides/how-to/resolve-a-conflict.md`) (Task 21).
+- v2.0.0 release cut — README rewrite for the package + recipe model,
+  `docs/ROADMAP.md` populated with the single deferred item
+  (`wiki init --adopt`), `CHANGELOG.md` `[Unreleased]` promoted to
+  `[2.0.0]`, version bump to `2.0.0` in `pyproject.toml` and the
+  `__version__` attribute in `llm_wiki_kit/__init__.py`, and deletion
+  of the v1 `vault-templates/` and `shared/` trees (Task 22).
 
-### Added — Phase F: Contract-completion bugs — Tasks 26–27 (Tasks 23–25 remain)
+### Added — Phase F: Contract-completion bugs (Tasks 23–27)
 
-The pre-tag audit (2026-05-20) added a sweep of v2.0.0
-contract-completion bugs as RFC-0001 Phase F. Tasks 26 and 27 have
-shipped; Tasks 23–25 are upcoming.
+The pre-tag audit on 2026-05-20 added a sweep of v2.0.0
+contract-completion bugs as RFC-0001 Phase F — gaps between the
+RFC's promised surface (§"CLI surface (target)" and §"What changes
+vs. v1") and what Tasks 1–22 actually delivered. All five shipped
+before the v2.0.0 tag with `v2: implement <subject>` commit messages
+(see the lead-paragraph callout above).
 
+- `wiki upgrade [--primitive <name>]` — the headline v1→v2 capability
+  from §"What changes vs. v1" (`Bash sync scripts → pip install
+  llm-wiki-kit; wiki upgrade`). New `llm_wiki_kit/upgrade.py` holds
+  pure `plan_upgrade` plus the `upgrade_primitives` runner — one
+  `PrimitiveUpgradeEvent` per upgraded primitive, `safe_write`-routed
+  `render_tree`, then a single `aggregate_region_contributions` pass.
+  ADR-0004 drift semantics preserved end-to-end. Spec at
+  `docs/specs/wiki-upgrade/` (Task 23).
+- `wiki search <query>` — ripgrep tier shipped per
+  `docs/specs/wiki-search/`. Literal-substring scan over
+  `<vault_root>/wiki/` with `--type` / `--tag` / `--status` /
+  `--top` frontmatter filters; read-only (no journal events);
+  `WikiError` on missing `rg`. FTS5 auto-upgrade tier remains future
+  work (Task 24).
+- `wiki journal {tail,grep,explain}` — three read-only handlers
+  replace the `_stub()` callsites in `cli.py`: `tail [-n N]` (default
+  10) emits tab-separated rows; `grep [--type T] PATTERN` does
+  case-sensitive substring match over canonical JSON; `explain N`
+  prints a human-readable block for the 1-based event line. Built on
+  a new public `journal.parse_event_line` helper (Task 25).
 - Vault-side `wiki-research` SKILL.md at
   `core/files/skills/wiki-research/SKILL.md` — closes the
   Tasks 18/19 deferral chain by giving the shipped `wiki research`
@@ -174,9 +224,15 @@ These surfaced during v2 task work and ship as living specs under
 
 ### Removed
 
+- The remaining v1 tree at the repo root: `vault-templates/`
+  (`work/`, `family/`, `personal/` hand-edited vault skeletons) and
+  `shared/` (the v1 canonical `CLAUDE.md`, per-variant
+  `CLAUDE.variant.*.md` extensions, and `purpose.md` template) (Task
+  22). v2 supersedes these with the package + recipe + primitive
+  model; v1 reference material remains reachable through `git log`.
 - v1 sync scripts (`scripts/sync-shared.sh`, `scripts/check-sync.sh`)
   and the `.github/workflows/check-sync.yml` workflow that ran them.
-  No v2 code path invokes them. (RFC-0001 §"Pre-flight" describes a
-  broader v1-tree removal; the rest — `vault-templates/`, `shared/` —
-  is unfinished cleanup tracked for Task 22's release-cut and is
-  intentionally not claimed here.)
+  No v2 code path invokes them.
+
+[Unreleased]: https://github.com/eugenelim/llm-wiki-kit/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/eugenelim/llm-wiki-kit/releases/tag/v2.0.0
