@@ -38,7 +38,8 @@ any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
 │   ├── managed_regions.py     # region parsing + merging
 │   ├── doctor.py              # vault state validation
 │   ├── ingest.py              # `wiki ingest` routing logic
-│   └── install.py             # region-contribution aggregator (used by init/add)
+│   ├── install.py             # region-contribution aggregator (used by init/add/upgrade)
+│   └── upgrade.py             # `wiki upgrade` planner + runner
 ├── core/                      # the common-core primitive (always installed)
 │   ├── primitive.yaml
 │   └── files/                 # rendered into every vault
@@ -114,9 +115,10 @@ inside `safe_write()`.
 |`recipes.py`        |`load_recipe(path) -> Recipe`, `resolve_recipe_primitives()`. Validates that every primitive a recipe references exists.                                                                                                                                      |
 |`doctor.py`         |Replays the journal, computes expected vault state, diffs against disk, reports drift in managed regions, orphan files, missing files.                                                                                                                        |
 |`ingest.py`         |`wiki ingest` routing: classifies a source via per-primitive `routing:` signals (extension, filename glob, URL host/path) and records the decision as an `IngestRoutedEvent`. Pure string parsing — no I/O, no LLM.                                            |
-|`install.py`        |Region-contribution aggregator used by `wiki init` and `wiki add`. Validates `contributes_to` against on-disk snippet files, groups by `(file, region)`, concatenates in install order, and writes each region once via `safe_write_region`.                  |
+|`install.py`        |Region-contribution aggregator used by `wiki init`, `wiki add`, and `wiki upgrade`. Validates `contributes_to` against on-disk snippet files, groups by `(file, region)`, concatenates in install order, and writes each region once via `safe_write_region`.                  |
+|`upgrade.py`        |`wiki upgrade [--primitive <name>]` pipeline. `plan_upgrade` (pure) names the version-changed primitives + the catalog-filtered installed set; `upgrade_primitives` emits one `PrimitiveUpgradeEvent` per upgraded primitive, re-renders its `files/` tree via `safe_write`, then re-runs the region aggregator over the full installed set.|
 |`research/`         |Dispatch + per-provider HTTP for `wiki research <query>`. `research/dispatch.py` orchestrates config-load → provider-pick → markdown-render; `research/http.py` is a stdlib retry helper; `research/providers/perplexity.py` is the first provider. Module-private registry; Task 19 adds Gemini + Semantic Scholar by editing `dispatch.py`.                                                          |
-|`cli.py`            |Argparse-based entry point. Thin wrappers around `init`, `add`, `upgrade`, `doctor`, `ingest`, `run`, `research`, `search`, `journal`. (`upgrade` and the `journal` subcommands remain stubs in v2.0.0.dev; the rest are live.)                              |
+|`cli.py`            |Argparse-based entry point. Thin wrappers around `init`, `add`, `upgrade`, `doctor`, `ingest`, `run`, `research`, `search`, `journal`. All subcommands are live in v2.0.0.dev.                              |
 |`search.py`         |Read-only vault search shelling out to ripgrep (`rg --json --fixed-strings`) over `<vault_root>/wiki/`. Frontmatter filters (`--type`, `--tag`, `--status`) and a ranked markdown result-list. No journal interaction. FTS5 tier is future work.                  |
 
 ## The template catalog

@@ -161,16 +161,14 @@ detail.
 
 **Progress to date (2026-05-20):** Phases A, B, C, and Phase D
 Tasks 16–19 have shipped (19 of 22 tasks complete), plus Task 20
-(eval harness) in Phase E and Phase F Task 24 (`wiki search`
-ripgrep tier). Phase E Tasks 21–22 remain, plus the remaining
-**Phase F** items (Tasks 23, 25–27) — a set of v2.0.0
-contract-completion bugs identified during the pre-tag audit
-(RFC's CLI surface promises that Tasks 1–22 didn't deliver:
-`wiki upgrade`, `wiki journal {tail,grep,explain}`, the
-vault-side `wiki-research` SKILL.md, and `CHANGELOG.md`
-referenced by the CHARTER). These are bugs against this RFC's
-contract per AGENTS.md §"When this file is wrong" — not
-deferrals — and must ship before the v2.0.0 tag. Side artifacts
+(eval harness) and Task 21 (example vaults + tutorials) in Phase E,
+and every Phase F item except Task 22 itself — Task 23
+(`wiki upgrade`), Task 24 (`wiki search`), Task 25
+(`wiki journal {tail,grep,explain}`), Task 26 (vault-side
+`wiki-research` SKILL.md), and Task 27 (`CHANGELOG.md`) have all
+shipped as `v2: implement <subject>` bug-fixes against this RFC's
+contract per AGENTS.md §"When this file is wrong". Only **Task 22**
+(README/ROADMAP/v2.0.0 tag) remains. Side artifacts
 that landed alongside: ADR-0006
 (additive managed-region contributions, Task 11), ADR-0007 (shared
 infra config files at vault root, Task 18), and several living
@@ -292,19 +290,25 @@ Tasks 23–25 + 27 can run as parallel sessions (worktree fan-out);
 the only mechanical conflicts are in `cli.py`'s `build_parser`
 and disjoint `_cmd_*` handler regions. Task 26 (SKILL.md authoring)
 is fully independent. Task 23 (`wiki upgrade`) is heaviest and
-should land last so the lighter PRs can merge cleanly first;
-running it solo is recommended.
+landed last (after Tasks 24–27 shipped), running solo.
 
-23. **Task 23 — `wiki upgrade [--primitive <name>]`.** The headline
-    v1→v2 capability from §"What changes vs. v1" (line 151:
-    `Bash sync scripts → pip install llm-wiki-kit; wiki upgrade`).
-    Currently `_stub()` at `cli.py:471`. Must respect ADR-0004
-    §"Primitive install / upgrade" drift semantics — sidecar
-    proposals on hash drift, no silent overwrites of user-edited
-    files. Likely surface area: new `llm_wiki_kit/upgrade.py`,
-    possibly a new event type in `models.py`. If a new event type
-    or install-pipeline contract change is needed, a new ADR
-    lands in the same PR.
+23. **Task 23 — `wiki upgrade [--primitive <name>]`.** ✅ The
+    headline v1→v2 capability from §"What changes vs. v1" (line
+    151: `Bash sync scripts → pip install llm-wiki-kit; wiki
+    upgrade`) shipped per `docs/specs/wiki-upgrade/`. New
+    `llm_wiki_kit/upgrade.py` holds the pure `plan_upgrade` (which
+    names version-changed primitives) plus `upgrade_primitives`
+    (the runner: one `PrimitiveUpgradeEvent` per upgraded primitive,
+    `safe_write`-routed `render_tree`, then a single
+    `aggregate_region_contributions` pass over the full installed
+    set). No new event type — `PrimitiveUpgradeEvent` already
+    carried `from_version` + `to_version`. No install-pipeline
+    contract change. ADR-0004 drift semantics preserved end-to-end
+    (sidecar proposals on hash drift, no silent overwrites of
+    user-edited files; `Wrote <path>.proposed` drift lines surface
+    from BOTH per-primitive renders AND aggregator-emitted region
+    drifts). Idempotency is a CLI concern (short-circuit on
+    `plan.to_upgrade == []`), not a runner concern.
 1. **Task 24 — `wiki search <query>`.** ✅ Ripgrep tier shipped per
     `docs/specs/wiki-search/`. Literal-substring scan over
     `<vault_root>/wiki/` with `--type` / `--tag` / `--status` /
