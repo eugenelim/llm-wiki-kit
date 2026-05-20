@@ -37,23 +37,39 @@ from pathlib import Path
 
 from llm_wiki_kit import __version__, journal
 from llm_wiki_kit.doctor import format_issue, run_doctor
-from llm_wiki_kit.errors import WikiError
+from llm_wiki_kit.errors import JournalCorruptError, WikiError
 from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
 from llm_wiki_kit.install import install_primitives, validate_contributions
 from llm_wiki_kit.journal import (
     LockUnavailableError,
     _release_persisted_fd,
     append_event,
+    dump_event_json,
+    parse_event_line,
     read_events,
     replay_state,
     transaction,
 )
 from llm_wiki_kit.models import (
+    ConfigSetEvent,
+    Event,
     IngestRoutedEvent,
+    LintRunEvent,
+    LockAcquiredEvent,
     LockReleasedEvent,
+    ManagedRegionWriteEvent,
+    OperationRunEvent,
+    PageConflictResolvedEvent,
+    PageProposalEvent,
+    PageWriteEvent,
     Primitive,
+    PrimitiveInstallEvent,
     PrimitiveKind,
+    PrimitiveRemoveEvent,
+    PrimitiveUpgradeEvent,
     Recipe,
+    ResearchQueryEvent,
+    SourceIngestEvent,
     VaultInitEvent,
 )
 from llm_wiki_kit.primitives import (
@@ -1182,16 +1198,254 @@ def _cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+# Per-event-type ``<summary>`` field ordering for ``tail``/``grep``. Pinned by
+# ``docs/specs/wiki-journal-readers/spec.md`` §Outputs. Each entry is a
+# tuple of ``(field_name, label, omit_when_none)``:
+#
+# - ``field_name`` — the Pydantic field on the event class to read.
+# - ``label`` — the text rendered before ``=``. Differs from the field
+#   name where the spec picks a shorter or friendlier word
+#   (``vault=`` for ``vault_name``, ``from=`` / ``to=`` for the
+#   ``primitive.upgrade`` version pair, ``proposed=`` for the
+#   proposal path).
+# - ``omit_when_none`` — when ``True`` and the value is ``None``, the
+#   pair is skipped entirely instead of rendered as ``label=(none)``.
+#   Used for fields that are documented as "plus ... when set" in the
+#   spec (currently only ``page.conflict_resolved.region``).
+#
+# Adding a new event class without a row here is a spec change:
+# ``_format_event_line`` raises ``KeyError`` on lookup so a missing
+# mapping fails loudly at the first call.
+_SummaryField = tuple[str, str, bool]
+_EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
+    VaultInitEvent: (
+        ("vault_name", "vault", False),
+        ("recipe", "recipe", False),
+    ),
+    PrimitiveInstallEvent: (
+        ("primitive", "primitive", False),
+        ("version", "version", False),
+    ),
+    PrimitiveRemoveEvent: (("primitive", "primitive", False),),
+    PrimitiveUpgradeEvent: (
+        ("primitive", "primitive", False),
+        ("from_version", "from", False),
+        ("to_version", "to", False),
+    ),
+    ManagedRegionWriteEvent: (
+        ("file", "file", False),
+        ("region", "region", False),
+    ),
+    IngestRoutedEvent: (
+        ("source", "source", False),
+        ("content_type", "content_type", False),
+        ("via", "via", False),
+    ),
+    SourceIngestEvent: (
+        ("source", "source", False),
+        ("content_type", "content_type", False),
+    ),
+    PageWriteEvent: (("path", "path", False),),
+    PageProposalEvent: (
+        ("path", "path", False),
+        ("proposed_path", "proposed", False),
+    ),
+    PageConflictResolvedEvent: (
+        ("path", "path", False),
+        # Spec §Outputs: "(plus ` region=<region>` when set)" — omit
+        # the pair entirely when no region is recorded.
+        ("region", "region", True),
+    ),
+    OperationRunEvent: (
+        ("operation", "operation", False),
+        ("status", "status", False),
+    ),
+    ResearchQueryEvent: (
+        ("provider", "provider", False),
+        ("status", "status", False),
+    ),
+    LintRunEvent: (
+        ("status", "status", False),
+        ("issues", "issues", False),
+    ),
+    ConfigSetEvent: (("key", "key", False),),
+    LockAcquiredEvent: (("reason", "reason", False),),
+    LockReleasedEvent: (("reason", "reason", False),),
+}
+
+
+def _sanitize_value(value: object) -> str:
+    """Render ``value`` as a single-line, tab-free string.
+
+    Per spec §Outputs: tabs and newlines in any rendered value are
+    replaced with a single space so the TSV format stays splittable and
+    ``explain``'s "one field per line" block keeps its shape. ``None``
+    becomes the literal ``(none)``; lists join with ``, ``.
+    """
+
+    if value is None:
+        text = "(none)"
+    elif isinstance(value, list):
+        text = ", ".join(_sanitize_value(item) for item in value)
+    else:
+        text = str(value)
+    return text.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+
+def _format_event_line(line_no: int, event: Event) -> str:
+    """Format one event as the tab-separated ``tail``/``grep`` row.
+
+    Layout pinned by spec §Outputs:
+    ``<line>\\t<timestamp>\\t<by>\\t<type>\\t<summary>``. Raises
+    ``KeyError`` if ``type(event)`` has no row in
+    ``_EVENT_SUMMARY_FIELDS`` — silent fallthrough would defeat the
+    "missing summary mapping is loud" invariant.
+    """
+
+    fields = _EVENT_SUMMARY_FIELDS[type(event)]
+    pairs: list[str] = []
+    for field_name, label, omit_when_none in fields:
+        value = getattr(event, field_name)
+        if value is None and omit_when_none:
+            continue
+        pairs.append(f"{label}={_sanitize_value(value)}")
+    summary = " ".join(pairs)
+    return "\t".join(
+        [
+            str(line_no),
+            _sanitize_value(event.timestamp.isoformat()),
+            _sanitize_value(event.by),
+            event.type,
+            summary,
+        ]
+    )
+
+
+def _format_event_block(line_no: int, total: int, event: Event) -> str:
+    """Format one event as ``explain``'s multi-line block.
+
+    Header is always the literal ``.wiki.journal/journal.jsonl`` path
+    regardless of cwd within the vault, so the AC is string-comparable
+    and the output reads consistently from any subdirectory.
+    """
+
+    # Skip the three fields the header already shows when iterating
+    # ``model_fields``. Pinned to the ``_EventBase`` shape: ``timestamp``
+    # + ``by`` come from the base class; ``type`` is the discriminator
+    # every concrete event redeclares as ``Literal[...]``. A future
+    # subclass that shadowed one of these names would need a spec edit
+    # anyway (the header reading would no longer reflect the field).
+    already_printed = {"timestamp", "by", "type"}
+    lines = [
+        f"Event {line_no} of {total} in .wiki.journal/journal.jsonl",
+        f"Type:      {event.type}",
+        f"Timestamp: {_sanitize_value(event.timestamp.isoformat())}",
+        f"By:        {_sanitize_value(event.by)}",
+        "",
+    ]
+    for name in type(event).model_fields:
+        if name in already_printed:
+            continue
+        lines.append(f"{name}: {_sanitize_value(getattr(event, name))}")
+    return "\n".join(lines)
+
+
+def _load_journal_events_with_lines(vault_root: Path) -> tuple[Path, list[tuple[int, Event]]]:
+    """Pre-flight the vault, load events, and recover absolute line numbers.
+
+    Returns ``(journal_path, [(line_no, event), ...])`` where ``line_no``
+    is the 1-based absolute file line number of each event.
+
+    Streams the file once, parsing each non-blank line via
+    :func:`journal.parse_event_line`. A separate ``read_events`` call
+    followed by a re-walk would risk a desync under a concurrent
+    writer (the writer's exclusive ``flock`` makes the window narrow
+    but real); single-pass parsing rules out the race by
+    construction. The blank-line decision matches
+    ``journal._parse_line`` exactly (``raw.strip() == ""``) so the
+    line numbers ``tail`` prints address the same lines ``explain``
+    accepts.
+
+    A malformed JSON or schema-invalid line surfaces as ``WikiError``
+    with the offending line number; the lenient reader is reserved
+    for ``wiki doctor`` per ADR-0002 §Negative. ``OSError`` from the
+    open/read is wrapped into ``WikiError`` so the CLI's one-line
+    error contract holds.
+    """
+
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
+
+    pairs: list[tuple[int, Event]] = []
+    try:
+        with journal_path.open("r", encoding="utf-8") as fh:
+            for line_no, raw in enumerate(fh, start=1):
+                try:
+                    event = parse_event_line(raw, line_no)
+                except JournalCorruptError as exc:
+                    raise WikiError(f"journal corruption at line {exc.line}: {exc.reason}") from exc
+                if event is None:
+                    continue
+                pairs.append((line_no, event))
+    except OSError as exc:
+        raise WikiError(f"cannot read journal at {journal_path}: {exc}") from exc
+    return journal_path, pairs
+
+
+def _parse_positive_int(raw: str, flag: str) -> int:
+    """Parse a CLI argument expected to be a positive integer.
+
+    The journal-reader handlers take ``--lines`` and ``event`` as
+    strings so the user sees one ``WikiError`` shape for "invalid
+    integer" and "≤ 0" instead of argparse's stderr usage line. Spec
+    §Error cases pins the exact message text.
+    """
+
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise WikiError(f"{flag} must be a positive integer") from exc
+    if value <= 0:
+        raise WikiError(f"{flag} must be a positive integer")
+    return value
+
+
 def _cmd_journal_tail(args: argparse.Namespace) -> int:
-    return _stub("journal tail")
+    n = _parse_positive_int(args.lines, "--lines")
+    vault_root = Path.cwd().resolve()
+    _, pairs = _load_journal_events_with_lines(vault_root)
+    for line_no, event in pairs[-n:]:
+        print(_format_event_line(line_no, event))
+    return 0
 
 
 def _cmd_journal_grep(args: argparse.Namespace) -> int:
-    return _stub("journal grep")
+    if args.pattern == "":
+        raise WikiError("grep pattern must be non-empty")
+    vault_root = Path.cwd().resolve()
+    _, pairs = _load_journal_events_with_lines(vault_root)
+    type_filter: str | None = args.event_type
+    for line_no, event in pairs:
+        if type_filter is not None and event.type != type_filter:
+            continue
+        if args.pattern in dump_event_json(event):
+            print(_format_event_line(line_no, event))
+    return 0
 
 
 def _cmd_journal_explain(args: argparse.Namespace) -> int:
-    return _stub("journal explain")
+    n = _parse_positive_int(args.event, "event")
+    vault_root = Path.cwd().resolve()
+    _, pairs = _load_journal_events_with_lines(vault_root)
+    by_line = {line_no: event for line_no, event in pairs}
+    if n not in by_line:
+        raise WikiError(f"no event at line {n} (journal has {len(pairs)} events)")
+    print(_format_event_block(n, len(pairs), by_line[n]))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1446,8 +1700,15 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[verbose_parent],
         help="Show the most recent events.",
     )
+    # ``--lines`` stays a string so the handler can emit the
+    # spec-mandated ``WikiError`` for invalid values (non-integer, ≤0).
+    # Argparse's ``type=int`` would intercept "abc" with its own usage
+    # line and split the error shape across two channels.
     journal_tail.add_argument(
-        "-n", "--lines", type=int, default=10, help="Number of events to show."
+        "-n",
+        "--lines",
+        default="10",
+        help="Number of events to show (positive integer, default 10).",
     )
     journal_tail.set_defaults(func=_cmd_journal_tail)
 
@@ -1456,7 +1717,22 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[verbose_parent],
         help="Filter journal events by pattern.",
     )
-    journal_grep.add_argument("pattern", help="Pattern to match against event payloads.")
+    journal_grep.add_argument(
+        "--type",
+        dest="event_type",
+        default=None,
+        help=(
+            "Restrict matches to events of the given type "
+            "(e.g. page.write, ingest.routed). Unknown types yield no matches."
+        ),
+    )
+    journal_grep.add_argument(
+        "pattern",
+        help=(
+            "Substring matched against the event's canonical JSON "
+            "(case-sensitive); empty pattern is rejected."
+        ),
+    )
     journal_grep.set_defaults(func=_cmd_journal_grep)
 
     journal_explain = journal_sub.add_parser(
@@ -1464,7 +1740,16 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[verbose_parent],
         help="Explain a specific journal event in plain language.",
     )
-    journal_explain.add_argument("event_id", help="Event ID to explain.")
+    # ``event`` stays a string for the same reason ``--lines`` does:
+    # one error shape ("event must be a positive integer") for invalid
+    # input, emitted by the handler.
+    journal_explain.add_argument(
+        "event",
+        help=(
+            "1-based line number in journal.jsonl of the event to explain "
+            "(the same number `wiki journal tail` prints in column 1)."
+        ),
+    )
     journal_explain.set_defaults(func=_cmd_journal_explain)
 
     return parser

@@ -64,6 +64,37 @@ from llm_wiki_kit.models import (
 
 _EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Event)
 
+
+def dump_event_json(event: Event) -> str:
+    """Return the canonical JSON encoding of one event.
+
+    Wraps the module-private ``_EVENT_ADAPTER`` so ``cli.py``'s
+    ``journal grep`` handler (and any future caller) doesn't have to
+    reach into private state. The bytes match what
+    :func:`append_event` writes to disk exactly — less the trailing
+    newline ``append_event`` appends. See
+    ``docs/specs/wiki-journal-readers/spec.md`` §Constraints.
+    """
+
+    return _EVENT_ADAPTER.dump_json(event).decode()
+
+
+def parse_event_line(raw: str, line_number: int) -> Event | None:
+    """Parse one journal line into an :class:`Event` (or ``None`` for blank).
+
+    Public wrapper around the module's internal ``_parse_line`` so
+    callers outside this module (``cli.py``'s ``wiki journal``
+    readers, today) can walk the journal in a single pass without
+    reaching into ``_EVENT_ADAPTER`` private state. Returns ``None``
+    for a blank line; raises :class:`JournalCorruptError` with the
+    1-based ``line_number`` on malformed JSON or a payload that
+    fails the discriminated-union validator. Same contract as
+    :func:`read_events` — the strict reader, not the lenient one.
+    """
+
+    return _parse_line(line_number, raw)
+
+
 _logger = logging.getLogger(__name__)
 
 # Errno set that signals "this filesystem doesn't support advisory locking" —
