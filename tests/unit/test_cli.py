@@ -18,14 +18,12 @@ SUBCOMMANDS_WITH_ARGS: list[list[str]] = [
     # and ``doctor`` graduated in Task 12; ``ingest`` graduated in
     # Task 16; ``run`` graduated in Task 17; ``research`` graduated in
     # Task 18; ``search`` graduated in Phase F Task 24
-    # (``docs/specs/wiki-search/``). Each has its own integration suite
-    # under ``tests/integration/``.
+    # (``docs/specs/wiki-search/``); ``journal {tail,grep,explain}``
+    # graduated alongside ``docs/specs/wiki-journal-readers/``. Each
+    # has its own integration or unit suite
+    # (``tests/unit/test_journal_readers.py`` for the journal readers).
     ["upgrade"],
     ["upgrade", "--primitive", "people"],
-    ["journal", "tail"],
-    ["journal", "tail", "-n", "20"],
-    ["journal", "grep", "ingest"],
-    ["journal", "explain", "abc123"],
 ]
 
 
