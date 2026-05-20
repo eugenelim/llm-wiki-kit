@@ -174,8 +174,9 @@ Tasks 1–22 didn't deliver: `wiki upgrade`, `wiki journal
 {tail,grep,explain}`, the vault-side `wiki-research` SKILL.md, and
 `CHANGELOG.md` referenced by the CHARTER). They were bugs against
 this RFC's contract — not deferrals — and shipped before the v2.0.0
-tag. Side artifacts
-that landed alongside: ADR-0006
+tag.
+
+Side artifacts that landed alongside: ADR-0006
 (additive managed-region contributions, Task 11), ADR-0007 (shared
 infra config files at vault root, Task 18), and several living
 specs under `docs/specs/` for cross-cutting concerns surfaced

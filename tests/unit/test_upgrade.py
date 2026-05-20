@@ -277,14 +277,11 @@ def _make_plan_for_kit(kit_root: Path, vault: Path) -> UpgradePlan:
 
 
 def _sources_for_plan(plan: UpgradePlan, kit_root: Path) -> dict[str, Path]:
-    sources: dict[str, Path] = {}
-    for p in plan.all_installed:
-        sources[p.name] = (
-            kit_root / "core"
-            if p.name == "core"
-            else kit_root / "templates" / cli._KIND_DIRS[p.kind] / p.name
-        )
-    return sources
+    core_dir = kit_root / "core"
+    templates_dir = kit_root / "templates"
+    return {
+        p.name: cli._primitive_source_dir(p, core_dir, templates_dir) for p in plan.all_installed
+    }
 
 
 def test_upgrade_primitives_emits_one_event_per_to_upgrade(tmp_path: Path, kit_root: Path) -> None:

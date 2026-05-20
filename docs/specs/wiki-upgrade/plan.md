@@ -170,11 +170,15 @@ integration suite.
      1. Calls `install._warn_if_install_pipeline_uncached(
         journal_path)` first so the cache-discipline warning fires
         on uncached invocations.
-     2. Snapshots `length_before = sum(1 for _ in
-        journal_path.open("r"))` (cheap one-pass count; no parse).
-        Production-level event counts are sub-thousand so a stat()
-        + readlines is not worth fishing out a journal-internal
-        line-count helper.
+     2. Snapshots `length_before = len(read_events(journal_path))`
+        — a parsed-event count, not a raw line count. The slice in
+        step 5 indexes the parsed events list; using a raw line
+        count would desync if any blank line snuck into the journal
+        (the strict reader skips blanks but `len()` over file lines
+        would not). The cost is one full journal walk before the
+        renders + aggregator; the active cache scope absorbs it for
+        downstream consumers and the wall-clock cost on a
+        production-sized vault is sub-millisecond.
      3. For each primitive `p` in `plan.to_upgrade`: appends
         `PrimitiveUpgradeEvent(timestamp=now, by="wiki-upgrade",
         primitive=p.name, from_version=<state>, to_version=p.version)`
@@ -195,9 +199,13 @@ integration suite.
         would risk corrupting it. The redundant disk read happens
         exactly once per `wiki upgrade`, after every write, and is
         the load-bearing source of the drift surface — its cost is
-        negligible. Filters for `PageProposalEvent` and returns the
-        `proposed_path`s in journal order, INCLUDING aggregator-
-        emitted proposals on shared region-host files.
+        negligible. Filters for `PageProposalEvent` and returns
+        `(event.path, event.proposed_path)` tuples in journal
+        order, INCLUDING aggregator-emitted proposals on shared
+        region-host files. Returning both fields (rather than just
+        `proposed_path`) decouples the CLI's `Wrote <sidecar>
+        (drift detected on <path>)` rendering from the structural
+        assumption that sidecars are always named `<path>.proposed`.
    - **Verify:** `pytest tests/unit/test_upgrade.py` green.
 1. **`_cmd_upgrade` CLI handler integration tests are red.**
    - **Tests** (new file `tests/integration/test_wiki_upgrade.py`,

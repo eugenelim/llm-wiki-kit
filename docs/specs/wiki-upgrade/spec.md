@@ -346,8 +346,14 @@ no-op because the user explicitly asked.
     installed or not in the catalog.
   - `upgrade_primitives(*, plan: UpgradePlan, sources: Mapping[str,
     Path], journal_path: Path, context: Mapping[str, str],
-    state_versions: Mapping[str, str], now: datetime) -> list[str]`
-    — the runner. `state_versions` carries
+    state_versions: Mapping[str, str], now: datetime) ->
+    list[tuple[str, str]]` — the runner. The return type is the list
+    of `(path, proposed_path)` tuples pulled directly from each
+    `PageProposalEvent` appended during the run; returning both
+    fields (rather than just `proposed_path`) decouples the CLI's
+    `Wrote <sidecar> (drift detected on <path>)` rendering from the
+    structural assumption that sidecars are always named
+    `<path>.proposed`. `state_versions` carries
     `dict(state.installed_primitives)` so the runner can build
     `PrimitiveUpgradeEvent.from_version` without re-replaying state
     or importing `VaultState` (avoids a circular-import shape; keeps

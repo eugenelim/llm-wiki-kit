@@ -21,7 +21,6 @@ import yaml
 from llm_wiki_kit import cli
 from llm_wiki_kit.journal import append_event, read_events, replay_state
 from llm_wiki_kit.models import (
-    LintRunEvent,
     ManagedRegionWriteEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -639,10 +638,3 @@ def test_upgrade_validates_unchanged_primitive_contributions(
     # would otherwise have upgraded).
     new_events = read_events(_journal_path(vault))[len(events_before) :]
     assert not any(isinstance(e, PrimitiveUpgradeEvent) for e in new_events)
-
-
-# ---------------------------------------------------------------------------
-# Pad helpers to silence unused-import warnings on the fixture surface.
-# ---------------------------------------------------------------------------
-
-_ = LintRunEvent
