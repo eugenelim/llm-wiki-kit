@@ -116,7 +116,8 @@ inside `safe_write()`.
 |`ingest.py`         |`wiki ingest` routing: classifies a source via per-primitive `routing:` signals (extension, filename glob, URL host/path) and records the decision as an `IngestRoutedEvent`. Pure string parsing — no I/O, no LLM.                                            |
 |`install.py`        |Region-contribution aggregator used by `wiki init` and `wiki add`. Validates `contributes_to` against on-disk snippet files, groups by `(file, region)`, concatenates in install order, and writes each region once via `safe_write_region`.                  |
 |`research/`         |Dispatch + per-provider HTTP for `wiki research <query>`. `research/dispatch.py` orchestrates config-load → provider-pick → markdown-render; `research/http.py` is a stdlib retry helper; `research/providers/perplexity.py` is the first provider. Module-private registry; Task 19 adds Gemini + Semantic Scholar by editing `dispatch.py`.                                                          |
-|`cli.py`            |Argparse-based entry point. Thin wrappers around `init`, `add`, `upgrade`, `doctor`, `ingest`, `run`, `research`, `search`, `journal`. (Phase D/E subcommands are stubs in v2.0.0.dev.)                                                                       |
+|`cli.py`            |Argparse-based entry point. Thin wrappers around `init`, `add`, `upgrade`, `doctor`, `ingest`, `run`, `research`, `search`, `journal`. (`upgrade` and the `journal` subcommands remain stubs in v2.0.0.dev; the rest are live.)                              |
+|`search.py`         |Read-only vault search shelling out to ripgrep (`rg --json --fixed-strings`) over `<vault_root>/wiki/`. Frontmatter filters (`--type`, `--tag`, `--status`) and a ranked markdown result-list. No journal interaction. FTS5 tier is future work.                  |
 
 ## The template catalog
 
