@@ -28,9 +28,9 @@ compose primitives for an audience. See
 task-by-task progress; phase headings below match its
 §"Migration sequence".
 
-Tasks 1–20 plus Phase F Task 27 have shipped (alongside the four
+Tasks 1–20 plus Phase F Tasks 26–27 have shipped (alongside the four
 cross-cutting specs below). Task 21 (example vaults and tutorials)
-remains in Phase E, and Phase F's remaining Tasks 23–26 — a sweep
+remains in Phase E, and Phase F's remaining Tasks 23–25 — a sweep
 of v2.0.0 contract-completion bugs added during the pre-tag audit —
 also remain. Task 22 (README, ROADMAP, tag) blocks on Phase F
 completing. The release-cut at Task 22 promotes this `[Unreleased]`
@@ -112,14 +112,27 @@ section to `## [2.0.0] — <date>`.
   `research/` suites driving Claude Code via subprocess against
   fixture vaults; runs in its own CI workflow (Task 20).
 
-### Added — Phase F: Contract-completion bugs — Task 27 (Tasks 23–26 remain)
+### Added — Phase F: Contract-completion bugs — Tasks 26–27 (Tasks 23–25 remain)
 
 The pre-tag audit (2026-05-20) added a sweep of v2.0.0
-contract-completion bugs as RFC-0001 Phase F. Task 27 ships in
-this entry; Tasks 23–26 are upcoming.
+contract-completion bugs as RFC-0001 Phase F. Tasks 26 and 27 have
+shipped; Tasks 23–25 are upcoming.
 
+- Vault-side `wiki-research` SKILL.md at
+  `core/files/skills/wiki-research/SKILL.md` — closes the
+  Tasks 18/19 deferral chain by giving the shipped `wiki research`
+  CLI a behavioral spec inside user vaults. The SKILL teaches the
+  provider picker (Perplexity / Gemini Deep Research / Semantic
+  Scholar) by question shape, the graceful-degradation rules over
+  `research-providers.yaml`, and the Two-Source Rule for
+  load-bearing claims. Trigger eval at
+  `tests/evals/trigger/test_wiki_research_trigger.py`; invariant
+  suite pinning the SKILL against the CLI surface and the
+  dispatcher's frontmatter fields at
+  `tests/unit/test_wiki_research_skill.py`. Spec at
+  `docs/specs/wiki-research-skill/` (Task 26).
 - `CHANGELOG.md` at repo root — fills the `docs/CHARTER.md:113`
-  reference to "current project state" sources (Task 27, this PR).
+  reference to "current project state" sources (Task 27).
 
 ### Added — Cross-cutting specs landed mid-flight
 

@@ -187,6 +187,30 @@ def test_dispatch_query_renders_yaml_safe_query_field(
     assert parsed["query"] == tricky
 
 
+def test_dispatch_query_frontmatter_key_set_is_exactly_five(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The dispatcher emits exactly the five contract-frozen frontmatter keys.
+
+    This is the dispatch side of the two-sided fence with
+    ``tests/unit/test_wiki_research_skill.py::EXPECTED_FRONTMATTER_KEYS``.
+    Adding a new key here (e.g. ``source_kind``) requires updating
+    both the SKILL and the SKILL-side constant in the same commit;
+    silently extending the dict breaks the contract.
+    """
+
+    _install_fake_perplexity(monkeypatch, answer="ok")
+    _write_config(tmp_path, "perplexity:\n  api_key_env: PERPLEXITY_API_KEY\n")
+
+    result = dispatch_query("q", None, tmp_path, now=NOW)
+    parsed = _parse_frontmatter(result.markdown)
+    assert set(parsed.keys()) == {"provider", "model", "query", "fetched_at", "citations"}, (
+        "dispatcher frontmatter key set drifted. If the change is intentional, "
+        "update tests/unit/test_wiki_research_skill.py::EXPECTED_FRONTMATTER_KEYS, "
+        "the SKILL.md §Reading results table, and this assertion in the same PR."
+    )
+
+
 def test_dispatch_query_body_with_dashes_preserves_boundary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

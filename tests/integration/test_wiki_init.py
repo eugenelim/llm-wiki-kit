@@ -77,7 +77,7 @@ def test_init_renders_core_only_vault(tmp_path: Path, core_only_kit: Path) -> No
     assert exit_code == 0
 
     # (a) Expected file tree: AGENTS.md, CORE.md, frontmatter.schema.yaml,
-    # .gitignore at the root; six baseline skills under skills/.
+    # .gitignore at the root; seven baseline skills under skills/.
     expected_top_level = {
         "AGENTS.md",
         "CORE.md",
@@ -94,6 +94,7 @@ def test_init_renders_core_only_vault(tmp_path: Path, core_only_kit: Path) -> No
         "wiki-lint",
         "wiki-conflict",
         "wiki-doctor",
+        "wiki-research",
     }
     skills_dir = vault / "skills"
     assert skills_dir.is_dir()
