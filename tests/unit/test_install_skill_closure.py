@@ -94,6 +94,8 @@ def test_bugfix_closure_keeps_workloop_non_ralph_deps() -> None:
         "tools/hooks/session-start.sh",
         "tools/hooks/pre-pr.sh",
         "docs/_templates/state.json",
+        "docs/_templates/spec.md",
+        "docs/_templates/plan.md",
         "docs/knowledge/README.md",
         "docs/knowledge/patterns.jsonl",
     }
