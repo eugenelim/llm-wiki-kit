@@ -77,6 +77,7 @@ done < <(find . -name AGENTS.md \
   -not -path './.git/*' \
   -not -path './core/files/*' \
   -not -path './templates/*/files/*' \
+  -not -path './examples/*' \
   2>/dev/null)
 
 # 5. Internal markdown links resolve

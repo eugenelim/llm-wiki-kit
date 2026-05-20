@@ -39,3 +39,6 @@ htmlcov/
 docs/specs/*/state.json
 docs/specs/*/notes/
 .worktrees/
+
+# Regenerator staging dirs (cleaned up on success; ignored if a crash leaks one)
+examples/.staging-*
