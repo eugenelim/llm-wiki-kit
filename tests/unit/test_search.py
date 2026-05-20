@@ -195,9 +195,17 @@ def test_run_search_rg_missing_raises_wiki_error(
 def test_run_search_timeout_raises_wiki_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A wedged ``rg`` subprocess surfaces as a ``WikiError``, not a hang."""
+    """A wedged ``rg`` subprocess surfaces as a ``WikiError``, not a hang.
+
+    Runs everywhere — including CI hosts without ``rg`` installed — by
+    patching ``shutil.which`` to a fake path before the subprocess hook
+    intercepts the call. The PATH probe and the subprocess.run call
+    are independent boundaries; this test exercises the latter.
+    """
 
     (tmp_path / "wiki").mkdir()
+
+    monkeypatch.setattr("llm_wiki_kit.search.shutil.which", lambda _name: "/fake/rg")
 
     def _boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(cmd="rg", timeout=60)

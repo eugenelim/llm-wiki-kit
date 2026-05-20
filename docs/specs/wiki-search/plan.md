@@ -142,12 +142,13 @@ in particular.
 
 ## Risks
 
-- **CI lacks `rg`.** Unlikely (the kit's own tooling and several
-  primitives assume it), but the integration test guards with a
-  `skipif` so a missing binary skips rather than fails. If CI then
-  reports a green run that didn't actually exercise the rg path, we
-  surface that as a follow-up by adding `ripgrep` to the workflow's
-  `apt install` step in a separate PR — out of scope here.
+- **CI lacks `rg`.** `.github/workflows/ci.yml` installs ripgrep via
+  `sudo apt-get install -y ripgrep` before pytest runs, so the full
+  search suite stays on the critical path rather than silently
+  skipping. The `shutil.which("rg")` guards in both the unit
+  (`@rg_required`) and integration (`pytestmark = skipif`) suites
+  remain as graceful-degradation for developer hosts that don't
+  have ripgrep installed locally.
 - **ripgrep JSON-output schema drift.** ripgrep 13+ has stable
   per-file `end` records; we depend only on `type == "end"`,
   `data.path.text`, and `data.stats.matches`. Older `rg < 11` may
@@ -168,6 +169,5 @@ in particular.
 - FTS5 / SQLite tier (spec §Non-goals; future spec).
 - Snippet rendering with term highlights (FTS5-tier).
 - Regex queries, case-insensitive flag, multi-tag filters.
-- Adding `ripgrep` to the CI image (separate operational PR).
 - Wiring `wiki doctor` to flag a missing `rg` (search reports it on
   demand; doctor flagging is duplicative).
