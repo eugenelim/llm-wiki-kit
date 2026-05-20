@@ -159,15 +159,22 @@ acceptance are in the migration plan artifact retained at
 `.context/attachments/pasted_text_2026-05-15_22-00-26.txt` for the full
 detail.
 
-**Progress to date (2026-05-17):** Phases A, B, C, and Phase D
-Tasks 16–18 have shipped (18 of 22 tasks complete). Phase D Task 19
-(Gemini + Semantic Scholar) and all of Phase E (Tasks 20–22) remain.
-Side artifacts that landed alongside: ADR-0006 (additive managed-
-region contributions, Task 11), ADR-0007 (shared infra config files
-at vault root, Task 18), and several living specs under
-`docs/specs/` for cross-cutting concerns surfaced mid-flight
-(`journal-locking/`, `journal-reader-cache/`, `safe-write-ordering/`,
-`wheel-bundled-assets/`).
+**Progress to date (2026-05-20):** Phases A, B, C, and Phase D
+Tasks 16–19 have shipped (19 of 22 tasks complete), plus Task 20
+(eval harness) in Phase E. Phase E Tasks 21–22 remain, plus
+**Phase F** (Tasks 23–27) — a set of v2.0.0 contract-completion
+bugs identified during the pre-tag audit (RFC's CLI surface
+promises that Tasks 1–22 didn't deliver: `wiki upgrade`,
+`wiki search`, `wiki journal {tail,grep,explain}`, the vault-side
+`wiki-research` SKILL.md, and `CHANGELOG.md` referenced by the
+CHARTER). These are bugs against this RFC's contract per AGENTS.md
+§"When this file is wrong" — not deferrals — and must ship before
+the v2.0.0 tag. Side artifacts that landed alongside: ADR-0006
+(additive managed-region contributions, Task 11), ADR-0007 (shared
+infra config files at vault root, Task 18), and several living
+specs under `docs/specs/` for cross-cutting concerns surfaced
+mid-flight (`journal-locking/`, `journal-reader-cache/`,
+`safe-write-ordering/`, `wheel-bundled-assets/`).
 
 #### Phase A — Foundation (sequential) — ✅ shipped
 
@@ -250,7 +257,79 @@ at vault root, Task 18), and several living specs under
     `work-os-mini/`, the first two tutorials, conflict-resolution
     how-to.
 1. **Task 22 — README, ROADMAP, v2.0.0.** Final pass, merge to main,
-    tag the release.
+    tag the release. Depends on Phase F (Tasks 23–27) being complete —
+    Task 22 cannot land while the RFC's CLI surface and the shipped
+    CLI disagree. The ROADMAP pass documents only items the RFC
+    explicitly defers, currently a single entry:
+    - `wiki init --adopt` — explicit "Unresolved question" in this
+      RFC; deferred at Task 10. Needs its own spec before any task
+      picks it up. `cli.py:240` carries an inline comment pointing
+      at a future task.
+
+    Acceptance: `docs/ROADMAP.md` lists `--adopt` under "Deferred
+    from v2.0" with the one-line intent above; `CHANGELOG.md`
+    (created by Task 27) has its `## [Unreleased]` content promoted
+    to `## [2.0.0] — <date>`; the v2.0.0 release notes call out the
+    Phase F bug-fix sweep so future readers understand why the
+    final five tasks ship as `v2: implement …` rather than
+    `v2: task …`.
+
+#### Phase F — Contract-completion bugs (parallelizable, blocks Task 22)
+
+Identified during the pre-tag audit (2026-05-20). Each item is a
+RFC contract violation: the surface this RFC promised (either in
+§"CLI surface (target)" or in §"What changes vs. v1") that
+Tasks 1–22 did not deliver, OR (Task 26) a load-bearing functional
+gap that breaks the value proposition of an already-shipped
+surface. Commit messages use `v2: implement <subject>` rather
+than `v2: task N` because these are bug fixes against the RFC,
+not new task scope. PRs strike the corresponding bug from
+Phase F's status in this RFC in the same commit.
+
+Tasks 23–25 + 27 can run as parallel sessions (worktree fan-out);
+the only mechanical conflicts are in `cli.py`'s `build_parser`
+and disjoint `_cmd_*` handler regions. Task 26 (SKILL.md authoring)
+is fully independent. Task 23 (`wiki upgrade`) is heaviest and
+should land last so the lighter PRs can merge cleanly first;
+running it solo is recommended.
+
+23. **Task 23 — `wiki upgrade [--primitive <name>]`.** The headline
+    v1→v2 capability from §"What changes vs. v1" (line 151:
+    `Bash sync scripts → pip install llm-wiki-kit; wiki upgrade`).
+    Currently `_stub()` at `cli.py:471`. Must respect ADR-0004
+    §"Primitive install / upgrade" drift semantics — sidecar
+    proposals on hash drift, no silent overwrites of user-edited
+    files. Likely surface area: new `llm_wiki_kit/upgrade.py`,
+    possibly a new event type in `models.py`. If a new event type
+    or install-pipeline contract change is needed, a new ADR
+    lands in the same PR.
+1. **Task 24 — `wiki search <query>`.** RFC §"CLI surface (target)"
+    line 139 (`ripgrep/FTS5 over the vault`). Currently `_stub()`
+    at `cli.py:1140`. Vault-side `core/files/skills/wiki-search/`
+    SKILL already exists and expects this dispatcher; ripgrep is a
+    system binary invoked via subprocess (no new Python dep).
+1. **Task 25 — `wiki journal {tail,grep,explain}`.** RFC §"CLI
+    surface (target)" line 140. Three `_stub()` handlers at
+    `cli.py:1144–1152`. Pure wrappers over `journal.py`'s existing
+    read/replay primitives; stdlib `json` + plain `print` output,
+    no rich-library dep.
+1. **Task 26 — Vault-side `wiki-research` SKILL.md.** The kit
+    ships the `wiki research` CLI (Tasks 18–19) but no SKILL.md
+    telling Claude when and how to invoke it — so the working CLI
+    has no behavioral spec in the vault. Asymmetric with the
+    existing `core/files/skills/wiki-search/` SKILL whose CLI is
+    a stub. Task 18 plan:493 and Task 19 plan:733 both deferred
+    this forward to "a follow-up"; the deferral chain ends here.
+    Authored to match the shape of the four shipped peer skills
+    (`ingest/`, `wiki-conflict/`, `wiki-doctor/`, `wiki-search/`)
+    under `core/files/skills/`.
+1. **Task 27 — `CHANGELOG.md`.** `docs/CHARTER.md:113` refers to
+    `ROADMAP.md` and `CHANGELOG.md` as the canonical "current
+    project state" sources; the latter does not exist. Created at
+    repo root in Keep-a-Changelog 1.1.0 format. First entry is
+    `## [Unreleased]` grouped by RFC phase, summarizing Tasks
+    1–22 + the four cross-cutting living specs. Task 22's
+    release-cut promotes `[Unreleased]` to `[2.0.0]`.
 
 ### Pre-flight (what actually happened)
 
@@ -341,8 +420,13 @@ doesn't need `stakeholder-map-refresh`, a CX lead doesn't need
 - **What's the exact CLI library?** Migration plan suggests Click; ADR
   not yet written. Decided at Task 2.
 - **Does `wiki init` over a non-empty folder refuse, or offer an
-  `--adopt` path?** Likely refuse by default with an explicit
-  `--adopt` flag that journals every existing file. Decided at Task 10.
+  `--adopt` path?** Partly decided at Task 10: `wiki init` refuses by
+  default over a non-empty folder. The `--adopt` flag itself was
+  deferred — the inline comment in `cli.py` notes that a future task
+  must pin its semantics (which files get journaled at adopt time,
+  how baseline hashes are seeded, what happens to files the kit
+  wouldn't otherwise own). Captured in Task 22's deferred-to-post-2.0
+  list above; needs its own spec before any task picks it up.
 - **Recipe inheritance (`extends:`)?** Out of scope for v2.0. Tier 3
   roadmap item.
 
@@ -351,8 +435,9 @@ doesn't need `stakeholder-map-refresh`, a CX lead doesn't need
 On acceptance, this RFC produced:
 
 - Five ADRs (0001–0005) capturing the load-bearing decisions.
-- The 22-task migration sequence, with Task 1 (this set of docs)
-  shipped first.
+- The 27-task migration sequence (22 original tasks plus the five
+  Phase F contract-completion bugs surfaced during the pre-tag
+  audit), with Task 1 (this set of docs) shipped first.
 - A path to `v2.0.0` over ~3 months of incremental PRs.
 
 Tracking PR: opened against `main`.
