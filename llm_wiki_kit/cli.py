@@ -78,9 +78,13 @@ from llm_wiki_kit.primitives import (
     resolve_dependencies,
 )
 from llm_wiki_kit.recipes import CORE_PRIMITIVE_NAME, load_recipe, resolve_recipe_primitives
+from llm_wiki_kit.upgrade import plan_upgrade, upgrade_primitives
 
 INSTALL_VEHICLE_INIT = "wiki-init"
 INSTALL_VEHICLE_ADD = "wiki-add"
+# ``wiki upgrade``'s vehicle string lives in ``upgrade.UPGRADE_VEHICLE`` —
+# single source of truth alongside the runner that uses it. Same shape
+# applies to ``INGEST_VEHICLE`` (consumed only by ``_cmd_ingest`` here).
 INGEST_VEHICLE = "wiki-ingest"
 
 NOT_IMPLEMENTED_EXIT = 1
@@ -484,7 +488,111 @@ def _cmd_add(args: argparse.Namespace) -> int:
 
 
 def _cmd_upgrade(args: argparse.Namespace) -> int:
-    return _stub("upgrade")
+    """Re-apply installed primitives against the running kit's catalog.
+
+    Mirrors ``_cmd_add``'s boundary-then-pipeline shape (`docs/specs/
+    wiki-upgrade/spec.md`). Every installed primitive whose journaled
+    version differs from the catalog version is re-rendered through
+    ``render_tree`` (every file via ``safe_write``) and journaled as
+    a :class:`PrimitiveUpgradeEvent`. The managed-region aggregator
+    then runs over every installed primitive — exactly the pass
+    ``wiki add`` uses — so contributions from version-unchanged
+    primitives survive.
+
+    Idempotency is a CLI concern, not a runner concern: when
+    ``plan.to_upgrade`` is empty, this handler short-circuits before
+    entering the runner so the no-op invocation is journal-clean.
+    """
+
+    primitive_arg: str | None = args.primitive
+    if primitive_arg is not None and ":" in primitive_arg:
+        raise WikiError("--primitive must be a bare primitive name, not <kind>:<name>")
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
+
+    state = replay_state(read_events(journal_path))
+    if state.recipe is None or state.vault_name is None:
+        raise WikiError(
+            f"vault at {vault_root} has no vault.init event; "
+            "the journal is incomplete and cannot be upgraded"
+        )
+
+    recipes_dir, core_dir, templates_dir = _kit_paths(args.kit_root)
+    catalog: list[Primitive] = [load_primitive(core_dir)]
+    catalog.extend(discover_primitives(templates_dir))
+
+    plan = plan_upgrade(state, catalog, only=primitive_arg)
+
+    def _print_not_in_catalog_hint() -> None:
+        if not plan.not_in_catalog:
+            return
+        count = len(plan.not_in_catalog)
+        word = "primitive" if count == 1 else "primitives"
+        print(
+            f"note: {count} installed {word} no longer in the kit catalog; "
+            f"run `wiki doctor` for details.",
+            file=sys.stderr,
+        )
+
+    if not plan.to_upgrade:
+        if plan.no_op_target is not None:
+            name, version = plan.no_op_target
+            print(f"wiki upgrade: primitive '{name}' is already at version {version}.")
+        else:
+            print("wiki upgrade: nothing to upgrade.")
+        _print_not_in_catalog_hint()
+        return 0
+
+    sources: dict[str, Path] = {
+        primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
+        for primitive in plan.all_installed
+    }
+    # Widened pre-flight per spec §Invariants 8: validate every
+    # contributing primitive's snippet shape (not just the version-
+    # bumped ones), because the aggregator reads every installed
+    # primitive's ``regions/`` snippets.
+    for primitive in plan.all_installed:
+        validate_contributions(primitive, sources[primitive.name])
+
+    recipe = load_recipe(recipes_dir / f"{state.recipe}.yaml")
+    context = _build_context(recipe, state.vault_name)
+    now = datetime.now(UTC)
+
+    # Snapshot the upgrade pairs before the runner walks ``to_upgrade``
+    # so the per-primitive summary lines can be printed in journal order
+    # without re-replaying state afterwards.
+    upgrade_pairs: list[tuple[str, str, str]] = [
+        (p.name, state.installed_primitives[p.name], p.version) for p in plan.to_upgrade
+    ]
+
+    with journal.use_journal_cache(journal_path):
+        proposals = upgrade_primitives(
+            plan=plan,
+            sources=sources,
+            journal_path=journal_path,
+            context=context,
+            state_versions=dict(state.installed_primitives),
+            now=now,
+        )
+
+    for name, from_v, to_v in upgrade_pairs:
+        print(f"upgraded {name} {from_v} → {to_v}")
+    for original, proposed in proposals:
+        print(
+            f"Wrote {proposed} (drift detected on {original}); "
+            f"run the wiki-conflict skill to merge."
+        )
+    count = len(upgrade_pairs)
+    word = "primitive" if count == 1 else "primitives"
+    print(f"wiki upgrade: upgraded {count} {word}.")
+    _print_not_in_catalog_hint()
+    return 0
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:

@@ -162,19 +162,21 @@ detail.
 **Progress to date (2026-05-20):** Phases A, B, C, and D have
 shipped (all 19 original Phase A–D tasks complete), plus Phase E
 Tasks 20 (eval harness) and 21 (example vaults + tutorials), and
-Phase F Tasks 24 (`wiki search` ripgrep tier), 25 (`wiki journal
-{tail,grep,explain}`), 26 (vault-side `wiki-research` SKILL.md),
-and 27 (`CHANGELOG.md`). Phase E Task 22 (README/ROADMAP, v2.0.0
-release cut) remains, blocked on the final outstanding **Phase F**
-item — Task 23 (`wiki upgrade`). These were a set of v2.0.0
-contract-completion bugs identified during the pre-tag audit:
-RFC CLI-surface promises that Tasks 1–22 didn't deliver
-(`wiki upgrade`, `wiki journal {tail,grep,explain}`, the
-vault-side `wiki-research` SKILL.md, and `CHANGELOG.md`
-referenced by the CHARTER). They are bugs against this RFC's
-contract per AGENTS.md §"When this file is wrong" — not
-deferrals — and must ship before the v2.0.0 tag. Side artifacts
-that landed alongside: ADR-0006
+every Phase F item — Task 23 (`wiki upgrade`), Task 24 (`wiki
+search` ripgrep tier), Task 25 (`wiki journal {tail,grep,explain}`),
+Task 26 (vault-side `wiki-research` SKILL.md), and Task 27
+(`CHANGELOG.md`). Only **Phase E Task 22** (README/ROADMAP, v2.0.0
+release cut) remains. The Phase F items shipped as `v2: implement
+<subject>` bug-fixes against this RFC's contract per AGENTS.md
+§"When this file is wrong" — a set of v2.0.0 contract-completion
+bugs identified during the pre-tag audit (CLI-surface promises that
+Tasks 1–22 didn't deliver: `wiki upgrade`, `wiki journal
+{tail,grep,explain}`, the vault-side `wiki-research` SKILL.md, and
+`CHANGELOG.md` referenced by the CHARTER). They were bugs against
+this RFC's contract — not deferrals — and shipped before the v2.0.0
+tag.
+
+Side artifacts that landed alongside: ADR-0006
 (additive managed-region contributions, Task 11), ADR-0007 (shared
 infra config files at vault root, Task 18), and several living
 specs under `docs/specs/` for cross-cutting concerns surfaced
@@ -298,20 +300,30 @@ than `v2: task N` because these are bug fixes against the RFC,
 not new task scope. PRs strike the corresponding bug from
 Phase F's status in this RFC in the same commit.
 
-Tasks 24, 25, 26, and 27 have all shipped; Task 23 (`wiki
-upgrade`) is the lone Phase F item remaining. It is the heaviest
-of the five and the only one Task 22 still blocks on. Run it solo.
+All five Phase F items have shipped. Task 23 (`wiki upgrade`) was
+the heaviest and landed last, running solo — after Tasks 24
+(`wiki search`), 25 (`wiki journal {tail,grep,explain}`), 26
+(vault-side `wiki-research` SKILL.md), and 27 (`CHANGELOG.md`)
+had merged. Task 22 (README/ROADMAP, v2.0.0 release cut) is no
+longer blocked.
 
-23. **Task 23 — `wiki upgrade [--primitive <name>]`.** The headline
-    v1→v2 capability from §"What changes vs. v1" (line 151:
-    `Bash sync scripts → pip install llm-wiki-kit; wiki upgrade`).
-    Currently `_stub()` at `cli.py:471`. Must respect ADR-0004
-    §"Primitive install / upgrade" drift semantics — sidecar
-    proposals on hash drift, no silent overwrites of user-edited
-    files. Likely surface area: new `llm_wiki_kit/upgrade.py`,
-    possibly a new event type in `models.py`. If a new event type
-    or install-pipeline contract change is needed, a new ADR
-    lands in the same PR.
+23. **Task 23 — `wiki upgrade [--primitive <name>]`.** ✅ The
+    headline v1→v2 capability from §"What changes vs. v1" (line
+    151: `Bash sync scripts → pip install llm-wiki-kit; wiki
+    upgrade`) shipped per `docs/specs/wiki-upgrade/`. New
+    `llm_wiki_kit/upgrade.py` holds the pure `plan_upgrade` (which
+    names version-changed primitives) plus `upgrade_primitives`
+    (the runner: one `PrimitiveUpgradeEvent` per upgraded primitive,
+    `safe_write`-routed `render_tree`, then a single
+    `aggregate_region_contributions` pass over the full installed
+    set). No new event type — `PrimitiveUpgradeEvent` already
+    carried `from_version` + `to_version`. No install-pipeline
+    contract change. ADR-0004 drift semantics preserved end-to-end
+    (sidecar proposals on hash drift, no silent overwrites of
+    user-edited files; `Wrote <path>.proposed` drift lines surface
+    from BOTH per-primitive renders AND aggregator-emitted region
+    drifts). Idempotency is a CLI concern (short-circuit on
+    `plan.to_upgrade == []`), not a runner concern.
 1. **Task 24 — `wiki search <query>`.** ✅ Ripgrep tier shipped per
     `docs/specs/wiki-search/`. Literal-substring scan over
     `<vault_root>/wiki/` with `--type` / `--tag` / `--status` /

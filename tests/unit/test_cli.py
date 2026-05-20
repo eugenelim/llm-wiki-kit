@@ -19,11 +19,14 @@ SUBCOMMANDS_WITH_ARGS: list[list[str]] = [
     # Task 16; ``run`` graduated in Task 17; ``research`` graduated in
     # Task 18; ``search`` graduated in Phase F Task 24
     # (``docs/specs/wiki-search/``); ``journal {tail,grep,explain}``
-    # graduated alongside ``docs/specs/wiki-journal-readers/``. Each
-    # has its own integration or unit suite
-    # (``tests/unit/test_journal_readers.py`` for the journal readers).
-    ["upgrade"],
-    ["upgrade", "--primitive", "people"],
+    # graduated alongside ``docs/specs/wiki-journal-readers/``;
+    # ``upgrade`` graduated in Phase F Task 23
+    # (``docs/specs/wiki-upgrade/``). Each has its own integration or
+    # unit suite (``tests/unit/test_journal_readers.py`` for the
+    # journal readers; ``tests/integration/test_wiki_upgrade.py`` for
+    # ``wiki upgrade``).
+    #
+    # No subcommand stubs remain after Phase F.
 ]
 
 
