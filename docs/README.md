@@ -1,28 +1,32 @@
 # Documentation
 
-Reference docs for the LLM Wiki Kit. Start with the [README](../README.md) at the repo root for the high-level overview; come here for deeper material.
+Reference docs for `llm-wiki-kit`. Start with the [project README](../README.md) at the repo root for the high-level overview; come here for deeper material.
 
-## Design
+## Mission, decisions, and direction
 
-Architecture narratives — what each variant is, why it's shaped this way, where it scales and where it doesn't.
+- [Charter](CHARTER.md) — mission, scope, principles. The "why" of the project.
+- [Conventions](CONVENTIONS.md) — how we work in this repo (workflow, gates, templates).
+- [Roadmap](ROADMAP.md) — what's next.
+- [Changelog](../CHANGELOG.md) — what's shipped.
+- [ADRs](adr/) — load-bearing decisions, frozen once accepted.
+- [RFCs](rfc/) — substantive proposals and the v2 migration plan ([RFC-0001](rfc/0001-v2-architecture.md)).
+- [Specs](specs/) — per-feature contracts (one directory per feature, each with `spec.md` and `plan.md`).
 
-- [Work variant](design/work.md) — architecture & engineering team knowledge base. Spec-driven development, ADRs, PM sync, multi-project ontology.
-- [Family variant](design/family.md) — household knowledge base + active operating system. Person-first ontology, structured ingestion (recipes, medical records, receipts), and an operations layer (meal planning, follow-up tracking, trip prep).
-- [Personal variant](design/personal.md) — solo knowledge & career OS. Zettelkasten-style atomic notes, structured career artifacts (portfolio, applications, resume, narrative), planning rhythm (weekly / quarterly / annual reviews), career-progression operations (narrative refresh, job-search prep, knowledge consolidation).
-- [Research layer](design/research-layer.md) — cross-variant pattern for multi-source investigations. 4-pillar ontology (Entities, Attributes, Mental Model, Verdict), 4-phase workflow (Capture, Sieve, Synthesize, Feedback), Two-Source Rule verification, declared verdict shape (matrix / shortlist / blueprint).
+## Architecture
 
-## Guides
+- [Overview](architecture/overview.md) — the map of the repo: modules, primitive catalog, journal, write-safety layers, the kit-vs-vault distinction. Read this first when exploring the code.
 
-Operational walkthroughs.
+## Guides (Diátaxis)
 
-- [Setup](guides/setup.md) — installation, dependencies, customization, the test loop
-- [Sync options](guides/sync-options.md) — shared drive vs. Git tradeoffs, when to switch, project isolation
-- [File formats](guides/file-formats.md) — format support matrix, companion-page convention, when to use markdown vs. Office
-- [Customizing](guides/customizing.md) — building a custom variant beyond `work`, `family`, and `personal`
-- [Inventories](guides/inventories.md) — tracking typed entity collections (restaurants, subscriptions, cloud tooling, advisors, etc.) with small-item files + Obsidian Bases for live filtered views
-- [Web Clipper](guides/web-clipper.md) — Obsidian Web Clipper setup: recommended `raw/web-clips/` template, fallback `Clippings/` inbox flow, and how the orchestrator handles relocation after processing
+User-facing documentation, organized by [Diátaxis](https://diataxis.fr/):
 
-## Reference
+- [Tutorials](guides/tutorials/) — step-by-step walkthroughs. Start with [Tutorial 1 — first vault](guides/tutorials/tutorial-1-first-vault.md), then [Tutorial 2 — work-os walkthrough](guides/tutorials/tutorial-2-work-os-walkthrough.md).
+- [How-to](guides/how-to/) — task recipes. Currently: [Resolve a conflict](guides/how-to/resolve-a-conflict.md).
+- [Reference](guides/reference/) — schemas and contracts.
+- [Explanation](guides/explanation/) — conceptual background.
 
-- [Repo structure](repo-structure.md) — directory layout (top-level + per-vault-template) and naming conventions
-- [Variants comparison](comparison.md) — side-by-side of work / family / personal across organizing unit, page types, operations, tone, inventories
+Some older user-facing notes still live flat at `guides/*.md` and migrate gradually as their contents are folded into the four Diátaxis directories.
+
+## Templates
+
+- [`_templates/`](_templates/) — boilerplate for new ADRs, RFCs, specs, and plans. Used by the `new-adr`, `new-rfc`, and `new-spec` skills.

@@ -7,17 +7,28 @@
 The kit's near-term direction. For decisions already made, see
 [`docs/adr/`](adr/). For proposed changes, see
 [`docs/rfc/`](rfc/). For the kit's mission and out-of-scope guarantees,
-see [`CHARTER.md`](CHARTER.md).
+see [`CHARTER.md`](CHARTER.md). For shipped work, see
+[`../CHANGELOG.md`](../CHANGELOG.md).
 
 ## Status
 
-The kit is in v2 development (`2.0.0.dev0`). The v2 migration is
-tracked task-by-task in
-[`docs/rfc/0001-v2-architecture.md`](rfc/0001-v2-architecture.md).
+`v2.0.0` is tagged. All 22 migration tasks from
+[`docs/rfc/0001-v2-architecture.md`](rfc/0001-v2-architecture.md) plus
+the Phase F contract-completion sweep have shipped.
 
-A full roadmap document will be populated as v2 stabilizes; until
-then this file exists as the stable address that tooling, contributor
-docs, and onboarding flows can point at.
+## Deferred from v2.0
+
+The RFC explicitly defers a single item out of v2.0; it needs its own
+spec before any task picks it up.
+
+- **`wiki init --adopt`** — adopt an existing folder as a vault rather
+  than refusing on a non-empty target. Flagged as an "Unresolved
+  question" in RFC-0001 and deferred at Task 10. The semantics are
+  non-trivial — every pre-existing file needs to be journaled before
+  any kit-owned write can land safely, baseline hashes have to be
+  seeded, and the policy for files the kit wouldn't otherwise own has
+  to be pinned. The inline comment in `llm_wiki_kit/cli.py:_cmd_init`
+  carries the same pointer for future readers.
 
 ## Pointers
 

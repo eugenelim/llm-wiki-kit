@@ -159,22 +159,19 @@ acceptance are in the migration plan artifact retained at
 `.context/attachments/pasted_text_2026-05-15_22-00-26.txt` for the full
 detail.
 
-**Progress to date (2026-05-20):** Phases A, B, C, and D have
-shipped (all 19 original Phase A–D tasks complete), plus Phase E
-Tasks 20 (eval harness) and 21 (example vaults + tutorials), and
-every Phase F item — Task 23 (`wiki upgrade`), Task 24 (`wiki
-search` ripgrep tier), Task 25 (`wiki journal {tail,grep,explain}`),
-Task 26 (vault-side `wiki-research` SKILL.md), and Task 27
-(`CHANGELOG.md`). Only **Phase E Task 22** (README/ROADMAP, v2.0.0
-release cut) remains. The Phase F items shipped as `v2: implement
-<subject>` bug-fixes against this RFC's contract per AGENTS.md
-§"When this file is wrong" — a set of v2.0.0 contract-completion
-bugs identified during the pre-tag audit (CLI-surface promises that
-Tasks 1–22 didn't deliver: `wiki upgrade`, `wiki journal
-{tail,grep,explain}`, the vault-side `wiki-research` SKILL.md, and
-`CHANGELOG.md` referenced by the CHARTER). They were bugs against
-this RFC's contract — not deferrals — and shipped before the v2.0.0
-tag.
+**Progress to date (2026-05-20):** All 22 migration tasks plus the
+five Phase F contract-completion items have shipped; `v2.0.0` is
+tagged. Phases A, B, C, and D delivered the 19 foundation, render,
+primitive, and runtime tasks. Phase E added Task 20 (eval harness),
+Task 21 (example vaults + tutorials), and Task 22 (README/ROADMAP +
+v2.0.0 release cut). Phase F closed the gap between this RFC's
+promised surface and what Tasks 1–22 actually delivered — Task 23
+(`wiki upgrade`), Task 24 (`wiki search` ripgrep tier), Task 25
+(`wiki journal {tail,grep,explain}`), Task 26 (vault-side
+`wiki-research` SKILL.md), and Task 27 (`CHANGELOG.md`). Phase F
+items shipped as `v2: implement <subject>` bug-fixes against this
+RFC's contract per AGENTS.md §"When this file is wrong" — bugs, not
+deferrals — and merged before the v2.0.0 tag.
 
 Side artifacts that landed alongside: ADR-0006
 (additive managed-region contributions, Task 11), ADR-0007 (shared
@@ -258,7 +255,7 @@ mid-flight (`journal-locking/`, `journal-reader-cache/`,
     Semantic Scholar's GET path; ResearchHTTPError vs WikiError
     boundary preserved per Task 18's spec.
 
-#### Phase E — Quality and ship (sequential)
+#### Phase E — Quality and ship (sequential) — ✅ shipped
 
 20. **Task 20 — Eval harness.** ✅ `trigger/`, `outcome/`,
     `provenance/`, `conflict/`, `research/` evals. Drives Claude Code
@@ -270,15 +267,15 @@ mid-flight (`journal-locking/`, `journal-reader-cache/`,
     (first vault) and 2 (work-os walkthrough); resolve-a-conflict
     how-to; integration suite covers AC1–AC10 + AC13 and a
     no-new-top-level-dirs guardrail.
-1. **Task 22 — README, ROADMAP, v2.0.0.** Final pass, merge to main,
-    tag the release. Depends on Phase F (Tasks 23–27) being complete —
-    Task 22 cannot land while the RFC's CLI surface and the shipped
-    CLI disagree. The ROADMAP pass documents only items the RFC
-    explicitly defers, currently a single entry:
+1. **Task 22 — README, ROADMAP, v2.0.0.** ✅ Final pass, merge to
+    main, tag the release. Phase F completed before this task landed,
+    so the RFC's CLI surface and the shipped CLI agreed at tag time.
+    The ROADMAP pass documents only items the RFC explicitly defers,
+    currently a single entry:
     - `wiki init --adopt` — explicit "Unresolved question" in this
       RFC; deferred at Task 10. Needs its own spec before any task
-      picks it up. `cli.py:240` carries an inline comment pointing
-      at a future task.
+      picks it up. `cli.py:_cmd_init` carries an inline-docstring
+      pointer for future readers.
 
     Acceptance: `docs/ROADMAP.md` lists `--adopt` under "Deferred
     from v2.0" with the one-line intent above; `CHANGELOG.md`
@@ -288,7 +285,7 @@ mid-flight (`journal-locking/`, `journal-reader-cache/`,
     final five tasks ship as `v2: implement …` rather than
     `v2: task …`.
 
-#### Phase F — Contract-completion bugs (parallelizable, blocks Task 22)
+#### Phase F — Contract-completion bugs (parallelizable) — ✅ shipped
 
 Identified during the pre-tag audit (2026-05-20). Each item is a
 RFC contract violation: the surface this RFC promised (either in
