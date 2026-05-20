@@ -313,16 +313,18 @@ running it solo is recommended.
     `cli.py:1144–1152`. Pure wrappers over `journal.py`'s existing
     read/replay primitives; stdlib `json` + plain `print` output,
     no rich-library dep.
-1. **Task 26 — Vault-side `wiki-research` SKILL.md.** The kit
-    ships the `wiki research` CLI (Tasks 18–19) but no SKILL.md
-    telling Claude when and how to invoke it — so the working CLI
-    has no behavioral spec in the vault. Asymmetric with the
-    existing `core/files/skills/wiki-search/` SKILL whose CLI is
-    a stub. Task 18 plan:493 and Task 19 plan:733 both deferred
-    this forward to "a follow-up"; the deferral chain ends here.
-    Authored to match the shape of the four shipped peer skills
-    (`ingest/`, `wiki-conflict/`, `wiki-doctor/`, `wiki-search/`)
-    under `core/files/skills/`.
+1. **Task 26 — Vault-side `wiki-research` SKILL.md.** ✅ Vault-side
+    SKILL.md at `core/files/skills/wiki-research/SKILL.md`
+    (`name: wiki-research`) closing the Tasks 18/19 deferral chain
+    — teaches Claude when to invoke `wiki research`, picks among
+    the three providers by question shape against an installed
+    `research-providers.yaml`, and propagates citations into
+    downstream pages under the Two-Source Rule. Trigger eval at
+    `tests/evals/trigger/test_wiki_research_trigger.py`; invariant
+    suite pinning the SKILL against the CLI surface, the
+    dispatcher's frontmatter dict, and each provider's
+    `DEFAULT_MODEL` at `tests/unit/test_wiki_research_skill.py`;
+    spec at `docs/specs/wiki-research-skill/`.
 1. **Task 27 — `CHANGELOG.md`.** `docs/CHARTER.md:113` refers to
     `ROADMAP.md` and `CHANGELOG.md` as the canonical "current
     project state" sources; the latter does not exist. Created at

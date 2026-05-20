@@ -37,7 +37,7 @@ the merge.
 
 ## Available skills
 
-This vault ships with six baseline skills. Load the SKILL.md and follow
+This vault ships with seven baseline skills. Load the SKILL.md and follow
 it — don't reinvent the workflow. Each lives under `skills/<name>/`.
 
 - **`ingest`** — unified entry point for any source. Detects source-type
@@ -62,6 +62,13 @@ it — don't reinvent the workflow. Each lives under `skills/<name>/`.
 - **`wiki-doctor`** — validate vault state against the journal. Reports
   drift, orphan files (on disk but not in the journal), missing files
   (in the journal but not on disk), and managed-region damage.
+- **`wiki-research`** — dispatch a research query to a configured HTTP
+  provider (Perplexity, Gemini Deep Research, or Semantic Scholar) via
+  `wiki research`. Load whenever the user asks for external information
+  the vault doesn't already contain, and before invoking the CLI — the
+  skill teaches the provider picker and the Two-Source Rule for
+  load-bearing claims. Providers are opt-in; install with
+  `wiki add infrastructure:research-<name>`.
 
 Additional skills (per-content-type ingesters, operation skills) are
 installed by the primitives this recipe brings in. They live alongside
@@ -151,8 +158,9 @@ the right invocation in chat.
   shipped in v2.0.0.dev; the CLI exits `not yet implemented`. Fall
   back to the IDE's Grep over `wiki/`. (C7 / issue #23.)*
 - `wiki research <query>` — dispatch to a configured research provider
-  if one is installed. *Phase E — not yet shipped in v2.0.0.dev;
-  exits `not yet implemented`. (C7 / issue #23.)*
+  if one is installed. Load the `wiki-research` skill for picker
+  logic, provenance handling, and the Two-Source Rule before
+  invoking.
 - `wiki doctor` — validate state; load the `wiki-doctor` skill for the
   reasoning workflow. *(The `--strict` flag mentioned in older notes
   is not yet accepted by argparse; the base command works.)*
