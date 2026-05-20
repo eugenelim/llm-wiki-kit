@@ -159,16 +159,22 @@ acceptance are in the migration plan artifact retained at
 `.context/attachments/pasted_text_2026-05-15_22-00-26.txt` for the full
 detail.
 
-**Progress to date (2026-05-20):** Phases A, B, C, and Phase D
-Tasks 16–19 have shipped (19 of 22 tasks complete), plus Task 20
-(eval harness) and Task 21 (example vaults + tutorials) in Phase E,
-and every Phase F item except Task 22 itself — Task 23
-(`wiki upgrade`), Task 24 (`wiki search`), Task 25
-(`wiki journal {tail,grep,explain}`), Task 26 (vault-side
-`wiki-research` SKILL.md), and Task 27 (`CHANGELOG.md`) have all
-shipped as `v2: implement <subject>` bug-fixes against this RFC's
-contract per AGENTS.md §"When this file is wrong". Only **Task 22**
-(README/ROADMAP/v2.0.0 tag) remains. Side artifacts
+**Progress to date (2026-05-20):** Phases A, B, C, and D have
+shipped (all 19 original Phase A–D tasks complete), plus Phase E
+Tasks 20 (eval harness) and 21 (example vaults + tutorials), and
+every Phase F item — Task 23 (`wiki upgrade`), Task 24 (`wiki
+search` ripgrep tier), Task 25 (`wiki journal {tail,grep,explain}`),
+Task 26 (vault-side `wiki-research` SKILL.md), and Task 27
+(`CHANGELOG.md`). Only **Phase E Task 22** (README/ROADMAP, v2.0.0
+release cut) remains. The Phase F items shipped as `v2: implement
+<subject>` bug-fixes against this RFC's contract per AGENTS.md
+§"When this file is wrong" — a set of v2.0.0 contract-completion
+bugs identified during the pre-tag audit (CLI-surface promises that
+Tasks 1–22 didn't deliver: `wiki upgrade`, `wiki journal
+{tail,grep,explain}`, the vault-side `wiki-research` SKILL.md, and
+`CHANGELOG.md` referenced by the CHARTER). They were bugs against
+this RFC's contract — not deferrals — and shipped before the v2.0.0
+tag. Side artifacts
 that landed alongside: ADR-0006
 (additive managed-region contributions, Task 11), ADR-0007 (shared
 infra config files at vault root, Task 18), and several living
@@ -229,7 +235,7 @@ mid-flight (`journal-locking/`, `journal-reader-cache/`,
 1. **Task 15 — Personal recipe.** ✅ Recipe file plus identity stubs;
     reuses primitives from the other two.
 
-#### Phase D — Runtime (sequential)
+#### Phase D — Runtime (sequential) — ✅ shipped
 
 16. **Task 16 — `wiki ingest` + orchestrator.** ✅ Content-type
     routing, detection signals (filename glob, file extension, URL
@@ -244,18 +250,25 @@ mid-flight (`journal-locking/`, `journal-reader-cache/`,
     wrap on `--out`; ADR-0007 codifies vault-root placement for the
     shared config file.
 1. **Task 19 — Gemini Deep Research + Semantic Scholar providers.**
-    Complete the research-provider trio. All three are opt-in. The
-    `_PROVIDER_REGISTRY` extension point + the
-    "ResearchHTTPError vs WikiError" provider-author rule from
-    Task 18's spec are the contract Task 19 plugs into.
+    ✅ Two new infrastructure primitives (`research-gemini`,
+    `research-semantic-scholar`) plug into Task 18's
+    `_PROVIDER_REGISTRY` extension point; all three providers are
+    opt-in. Additive `json_body` argument on `research/http.py` for
+    Semantic Scholar's GET path; ResearchHTTPError vs WikiError
+    boundary preserved per Task 18's spec.
 
 #### Phase E — Quality and ship (sequential)
 
-20. **Task 20 — Eval harness.** `trigger/`, `outcome/`, `provenance/`,
-    `conflict/`, `research/` evals. Drives Claude Code via subprocess.
-1. **Task 21 — Example vaults and tutorials.** `family-mini/`,
-    `work-os-mini/`, the first two tutorials, conflict-resolution
-    how-to.
+20. **Task 20 — Eval harness.** ✅ `trigger/`, `outcome/`,
+    `provenance/`, `conflict/`, `research/` evals. Drives Claude Code
+    via subprocess.
+1. **Task 21 — Example vaults and tutorials.** ✅ Three committed,
+    regenerable example vaults under `examples/` (`family-mini`,
+    `work-os-mini`, `conflict-pending`); `examples/regenerate.py`
+    idempotent rebuilder with `--check` / `--apply`; tutorials 1
+    (first vault) and 2 (work-os walkthrough); resolve-a-conflict
+    how-to; integration suite covers AC1–AC10 + AC13 and a
+    no-new-top-level-dirs guardrail.
 1. **Task 22 — README, ROADMAP, v2.0.0.** Final pass, merge to main,
     tag the release. Depends on Phase F (Tasks 23–27) being complete —
     Task 22 cannot land while the RFC's CLI surface and the shipped
@@ -286,11 +299,12 @@ than `v2: task N` because these are bug fixes against the RFC,
 not new task scope. PRs strike the corresponding bug from
 Phase F's status in this RFC in the same commit.
 
-Tasks 23–25 + 27 can run as parallel sessions (worktree fan-out);
-the only mechanical conflicts are in `cli.py`'s `build_parser`
-and disjoint `_cmd_*` handler regions. Task 26 (SKILL.md authoring)
-is fully independent. Task 23 (`wiki upgrade`) is heaviest and
-landed last (after Tasks 24–27 shipped), running solo.
+All five Phase F items have shipped. Task 23 (`wiki upgrade`) was
+the heaviest and landed last, running solo — after Tasks 24
+(`wiki search`), 25 (`wiki journal {tail,grep,explain}`), 26
+(vault-side `wiki-research` SKILL.md), and 27 (`CHANGELOG.md`)
+had merged. Task 22 (README/ROADMAP, v2.0.0 release cut) is no
+longer blocked.
 
 23. **Task 23 — `wiki upgrade [--primitive <name>]`.** ✅ The
     headline v1→v2 capability from §"What changes vs. v1" (line
@@ -315,11 +329,14 @@ landed last (after Tasks 24–27 shipped), running solo.
     `--top` frontmatter filters; read-only (no journal events);
     `WikiError` on missing `rg`. FTS5 auto-upgrade tier remains
     future work (vault-side SKILL.md flags it as deferred).
-1. **Task 25 — `wiki journal {tail,grep,explain}`.** RFC §"CLI
-    surface (target)" line 140. Three `_stub()` handlers at
-    `cli.py:1144–1152`. Pure wrappers over `journal.py`'s existing
-    read/replay primitives; stdlib `json` + plain `print` output,
-    no rich-library dep.
+1. **Task 25 — `wiki journal {tail,grep,explain}`.** ✅ Three new
+    read-only handlers replace the `_stub()` callsites in `cli.py`:
+    `tail [-n N]` (default 10) emits tab-separated rows;
+    `grep [--type T] PATTERN` does case-sensitive substring match
+    over canonical JSON (no-match exits 0, grep convention);
+    `explain N` prints a human-readable block for the 1-based event
+    line. Single-pass walk built on a new public
+    `journal.parse_event_line` helper. Stdlib only.
 1. **Task 26 — Vault-side `wiki-research` SKILL.md.** ✅ Vault-side
     SKILL.md at `core/files/skills/wiki-research/SKILL.md`
     (`name: wiki-research`) closing the Tasks 18/19 deferral chain
@@ -332,13 +349,11 @@ landed last (after Tasks 24–27 shipped), running solo.
     dispatcher's frontmatter dict, and each provider's
     `DEFAULT_MODEL` at `tests/unit/test_wiki_research_skill.py`;
     spec at `docs/specs/wiki-research-skill/`.
-1. **Task 27 — `CHANGELOG.md`.** `docs/CHARTER.md:113` refers to
-    `ROADMAP.md` and `CHANGELOG.md` as the canonical "current
-    project state" sources; the latter does not exist. Created at
-    repo root in Keep-a-Changelog 1.1.0 format. First entry is
-    `## [Unreleased]` grouped by RFC phase, summarizing Tasks
-    1–22 + the four cross-cutting living specs. Task 22's
-    release-cut promotes `[Unreleased]` to `[2.0.0]`.
+1. **Task 27 — `CHANGELOG.md`.** ✅ Created at repo root in
+    Keep-a-Changelog 1.1.0 format. First entry is `## [Unreleased]`
+    grouped by RFC phase, summarizing Tasks 1–22 + the four
+    cross-cutting living specs. Task 22's release-cut promotes
+    `[Unreleased]` to `[2.0.0]`.
 
 ### Pre-flight (what actually happened)
 
