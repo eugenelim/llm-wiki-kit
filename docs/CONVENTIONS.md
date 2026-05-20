@@ -122,6 +122,15 @@ After v2: conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`,
 - **ADRs are their own PR or rolled into the PR that motivated them.**
   Whichever produces clearer history.
 
+### Tutorial-touching PRs
+
+When a PR touches `docs/guides/tutorials/`, the reviewer reads the
+PR's cold-walk paragraph first; missing paragraph or unaddressed
+thinks-required steps block merge. The cold-walk discipline lives in
+`docs/specs/task-21-examples-tutorials/spec.md` AC12 — it's a manual
+check that the literal commands in the tutorial walk end-to-end
+without requiring the reader to think past what the prose tells them.
+
 ## Tests as the bar for "done"
 
 A task is done when the acceptance criteria pass — not when the code
