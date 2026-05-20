@@ -9,31 +9,56 @@ along for the ride.
 The originating PR (#24) shipped the closure that did drag Ralph in,
 flagged as a known follow-up. This test exists so the trimmed closure
 stays trimmed.
+
+The installer is a stdlib Python script (``tools/install-skill.py``)
+guarded by ``if __name__ == "__main__":``; its ``build_plan`` and
+``Plan`` are ordinary callables. Loading it via ``importlib`` keeps
+this an in-process unit test — no subprocess, no tmp_path, no
+filesystem — and lets assertions land directly on the planned copy
+list so closure-walker regressions point at the right place.
 """
 
 from __future__ import annotations
 
-import subprocess
+import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-INSTALLER = REPO_ROOT / "tools" / "install-skill.py"
+INSTALLER_PATH = REPO_ROOT / "tools" / "install-skill.py"
 
 
-def _install(skill: str, dest: Path) -> set[Path]:
-    """Run install-skill.py for ``skill`` into ``dest`` and return the
-    set of dest-relative paths it produced."""
-    subprocess.run(
-        [sys.executable, str(INSTALLER), skill, str(dest)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return {p.relative_to(dest) for p in dest.rglob("*") if p.is_file()}
+def _load_installer() -> ModuleType:
+    """Import ``tools/install-skill.py`` as the module ``install_skill``.
+
+    The file name uses a hyphen (not a valid Python identifier), so
+    ``importlib.util.spec_from_file_location`` is the supported route.
+    """
+    spec = importlib.util.spec_from_file_location("install_skill", INSTALLER_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Register in sys.modules before exec — the installer defines a
+    # @dataclass, and dataclasses resolve forward refs via
+    # sys.modules[cls.__module__]. Without registration that lookup
+    # returns None and the first access blows up with AttributeError.
+    sys.modules["install_skill"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def test_bugfix_closure_excludes_ralph(tmp_path: Path) -> None:
+def _bugfix_copy_targets() -> set[str]:
+    """Build the install plan for ``bug-fix`` and return the dest-relative
+    paths the installer would write."""
+    install_skill = _load_installer()
+    plan = install_skill.Plan()
+    target = install_skill.resolve_target("bug-fix")
+    target_rel = target.relative_to(install_skill.REPO_ROOT).as_posix()
+    install_skill.build_plan(target_rel, owning_skill="bug-fix", plan=plan)
+    return {dest for (_src, dest) in plan.copies}
+
+
+def test_bugfix_closure_excludes_ralph() -> None:
     """The ``bug-fix`` install closure must not contain Ralph artefacts.
 
     Adopters who only want the bug-fix flow should not see the AFK
@@ -41,20 +66,38 @@ def test_bugfix_closure_excludes_ralph(tmp_path: Path) -> None:
     skill's prose; pulling it in is an opt-in act, not a transitive
     side effect.
     """
-    produced = _install("bug-fix", tmp_path)
-    ralph_paths = {Path("tools/ralph.sh"), Path("tools/RALPH.md")}
-    leaked = ralph_paths & produced
+    targets = _bugfix_copy_targets()
+    leaked = {"tools/ralph.sh", "tools/RALPH.md"} & targets
     assert not leaked, (
-        f"bug-fix install closure should not contain Ralph artefacts; "
-        f"found {sorted(str(p) for p in leaked)}"
+        f"bug-fix install closure should not contain Ralph artefacts; found {sorted(leaked)}"
     )
 
 
-def test_bugfix_closure_still_pulls_workloop(tmp_path: Path) -> None:
-    """Sanity check: trimming Ralph from ``work-loop``'s deps must not
-    accidentally trim ``work-loop`` itself out of the ``bug-fix``
-    closure. ``bug-fix`` declares a direct dependency on ``work-loop``,
-    so the SKILL file must still land at the destination."""
-    produced = _install("bug-fix", tmp_path)
-    assert Path(".claude/skills/work-loop/SKILL.md") in produced
-    assert Path(".claude/skills/bug-fix/SKILL.md") in produced
+def test_bugfix_closure_keeps_workloop_non_ralph_deps() -> None:
+    """Trimming Ralph from ``work-loop``'s manifest must not collateral-
+    damage the rest of the closure. Pin the non-Ralph dependency set so
+    an accidental over-trim shows up here, not in eval flakes."""
+    targets = _bugfix_copy_targets()
+    expected = {
+        # Entry skill and its direct dep.
+        ".claude/skills/bug-fix/SKILL.md",
+        ".claude/skills/work-loop/SKILL.md",
+        # Skills work-loop depends on.
+        ".claude/skills/new-spec/SKILL.md",
+        # Subagents work-loop drives.
+        ".claude/agents/adversarial-reviewer.md",
+        ".claude/agents/security-reviewer.md",
+        ".claude/agents/quality-engineer.md",
+        ".claude/agents/implementer.md",
+        # Loop machinery and knowledge base.
+        "tools/check-done.py",
+        "tools/hooks/session-start.sh",
+        "tools/hooks/pre-pr.sh",
+        "docs/_templates/state.json",
+        "docs/knowledge/README.md",
+        "docs/knowledge/patterns.jsonl",
+    }
+    missing = expected - targets
+    assert not missing, (
+        f"work-loop closure for bug-fix is missing expected entries: {sorted(missing)}"
+    )
