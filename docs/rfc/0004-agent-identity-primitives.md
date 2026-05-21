@@ -1,6 +1,6 @@
 # RFC-0004: agent identity primitives for autonomous operations
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Author:** maintainer
 - **Created:** 2026-05-20
 - **Discussion:** PR opened against `main`
@@ -357,13 +357,22 @@ schedule entry, the recipe's `agents:` block, and the operation's
 `preferred_agent:`. No schema change — the column reads the
 agent already journaled on `ScheduleInstalledEvent`.
 
-`wiki doctor` gains one check (additive to RFC-0003's three):
+`wiki doctor` gains two checks (additive to RFC-0003's three):
 
 4. **Agent bindings.** For each operation in any schedule entry's
    resolved agent chain, verify the agent's `AGENT.md` exists at
    the journaled path. Missing → drift, with the same one-line
    fix suggestion shape as RFC-0003 (`wiki add agent:<name>` or
    re-run `wiki init`).
+5. **Bound-agent version drift.** When an agent primitive has been
+   upgraded (a `PrimitiveUpgradeEvent` for `kind: agent`) since the
+   most recent `OperationRunByAgentEvent` referencing it, surface a
+   warning naming the agent, the old/new versions, and the
+   operations it's bound to. Rationale: an upgrade can change
+   `role:`, `tone:`, or `knows:` in ways the user wants to read
+   before the next scheduled run. `wiki upgrade` itself does not
+   rebind silently — the journal-side rebinding is a no-op, but the
+   doctor warning prompts the user to review the persona change.
 
 ### 8. Default identities per recipe
 
@@ -599,27 +608,30 @@ push back if any resolution looks wrong:
 
 ## Unresolved questions
 
-Open for reviewer input:
+One item deferred to a follow-on ADR rather than frozen in this RFC:
 
 - **Claude CLI flag set for agent passthrough.** The exact flag
-  (`--agent <path>` vs `--system-prompt-file <path>` vs
-  something else) is a moving target in the Claude CLI. Pin
-  against a documented minimum version in a follow-on ADR
-  rather than freezing in this RFC. Same approach RFC-0003 took
-  for its own headless flag set.
-- **`wiki upgrade` semantics for a bound agent.** If a user has
-  `weekly-digest` bound to `household-manager` and the agent
-  primitive ships a v0.2 upgrade with a different `role:` or
-  `knows:` list, does `wiki upgrade` rebind silently or surface
-  the change? Lean: surface as a `wiki doctor` warning so the
-  user can review the persona change before the next scheduled
-  run. Worth a reviewer call.
+  (`--agent <path>` vs `--system-prompt-file <path>` vs something
+  else) is a moving target in the Claude CLI. Pin against a
+  documented minimum version in a follow-on ADR rather than
+  freezing in this RFC. Same approach RFC-0003 took for its own
+  headless flag set.
 
 ## Outcome
 
-Filled in on acceptance. Expected: one or two ADRs (the agent
-primitive kind shape; the executor argv contract), a follow-on
-spec sequence under `docs/specs/wiki-agents/` (or similar), and a
-vault-side `wiki-agent` SKILL.md. Multi-agent coordination, if it
-ever lands, comes in a separate RFC that names this one as its
-predecessor.
+**Accepted 2026-05-20.** This RFC produces:
+
+- An ADR pinning the Claude CLI agent-passthrough flag set
+  (resolves the one item in Unresolved questions) against a
+  documented minimum CLI version.
+- A follow-on spec sequence under `docs/specs/wiki-agents/`
+  covering the seven migration-path tasks in §"Migration path":
+  primitive-kind plumbing, additive journal fields, recipe schema
+  extension, executor agent resolution, `wiki list agents` +
+  doctor coverage, and the default agent catalog.
+- A vault-side `wiki-agent` SKILL.md teaching Claude when to
+  prompt the user about installing or rebinding an agent, and
+  how the agent-aware `wiki-conflict` UX reads.
+
+Multi-agent coordination, if it ever lands, comes in a separate
+RFC that names this one as its predecessor.
