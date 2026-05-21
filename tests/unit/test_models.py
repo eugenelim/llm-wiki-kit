@@ -42,6 +42,7 @@ from llm_wiki_kit.models import (
     ResearchProvidersConfig,
     ResearchQueryEvent,
     SourceIngestEvent,
+    VaultGitInitializedEvent,
     VaultInitEvent,
     VaultState,
 )
@@ -253,6 +254,7 @@ def test_operation_contract_accepts_period_and_skill() -> None:
 
 EVENT_CLASSES_BY_TYPE: dict[str, type] = {
     "vault.init": VaultInitEvent,
+    "vault.git_initialized": VaultGitInitializedEvent,
     "primitive.install": PrimitiveInstallEvent,
     "primitive.remove": PrimitiveRemoveEvent,
     "primitive.upgrade": PrimitiveUpgradeEvent,
@@ -273,6 +275,7 @@ EVENT_CLASSES_BY_TYPE: dict[str, type] = {
 
 EVENT_FIXTURES: dict[str, dict[str, object]] = {
     "vault.init": {"vault_name": "home", "recipe": "family"},
+    "vault.git_initialized": {},
     "primitive.install": {"primitive": "meeting", "version": "0.1.0"},
     "primitive.remove": {"primitive": "meeting"},
     "primitive.upgrade": {
@@ -374,6 +377,44 @@ def test_event_union_round_trips_through_json() -> None:
     parsed = EVENT_ADAPTER.validate_json(text)
     assert parsed == original
     assert isinstance(parsed, PageWriteEvent)
+
+
+def test_vault_git_initialized_event_roundtrip() -> None:
+    """The bare event shape — only ``type``, ``timestamp``, ``by``, ``schema_version``.
+
+    Spec §Outputs (`docs/specs/wiki-init-git/spec.md`) deliberately
+    drops ``commit_sha`` and ``branch`` so the journal stays one line
+    behind the commit's tree. This test pins that shape — adding a
+    field here would silently violate the spec's clean-porcelain
+    invariant.
+    """
+
+    original = VaultGitInitializedEvent(timestamp=NOW, by="wiki-init")
+    text = EVENT_ADAPTER.dump_json(original).decode()
+    parsed = EVENT_ADAPTER.validate_json(text)
+    assert parsed == original
+    assert isinstance(parsed, VaultGitInitializedEvent)
+    assert parsed.type == "vault.git_initialized"
+    assert parsed.by == "wiki-init"
+    assert parsed.schema_version == 1
+
+
+def test_vault_git_initialized_event_discriminator() -> None:
+    """The ``type`` literal must dispatch through the discriminated union.
+
+    A raw payload with ``type: "vault.git_initialized"`` and only the
+    base fields must parse to ``VaultGitInitializedEvent`` — no extra
+    fields required.
+    """
+
+    payload = {
+        "type": "vault.git_initialized",
+        "timestamp": NOW.isoformat(),
+        "by": "wiki-init",
+    }
+    parsed = EVENT_ADAPTER.validate_python(payload)
+    assert isinstance(parsed, VaultGitInitializedEvent)
+    assert parsed.type == "vault.git_initialized"
 
 
 def test_page_conflict_resolved_event_region_defaults_to_none() -> None:
