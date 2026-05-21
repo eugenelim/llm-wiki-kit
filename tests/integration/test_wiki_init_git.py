@@ -18,8 +18,7 @@ Contract tests (see ``docs/specs/wiki-init-git/spec.md`` §Contract tests):
   counterpart to the direct-call test in ``test_git_init.py``)
 * #9 ``test_wiki_init_initial_commit_excludes_proposed_sidecars``
 * #10 ``test_rendered_gitignore_load_bearing_invariants``
-* #11 ``test_wiki_doctor_clean_after_git_init`` (lives in ``test_wiki_doctor.py``
-  — or here if doctor coverage stays in one file; see Step 5)
+* #11 ``test_wiki_doctor_clean_after_git_init``
 """
 
 from __future__ import annotations
@@ -357,6 +356,44 @@ def test_wiki_init_initial_commit_excludes_proposed_sidecars(tmp_path: Path) -> 
     assert ".gitignore" in tracked
     proposed = [p for p in tracked if p.endswith(".proposed")]
     assert proposed == []
+
+
+def test_wiki_doctor_clean_after_git_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Contract test #11 — ``wiki doctor`` is clean on both vault shapes.
+
+    Runs `wiki init` (default) and `wiki init --no-git` against fresh
+    targets, then `wiki doctor` against each; both must exit 0. On the
+    default-flag run, also asserts `git status --porcelain` returns
+    empty bytes — pins the "initial commit captures the full kit
+    shape; nothing landed after" invariant.
+
+    Doctor needs no code change for this PR: the orphan check derives
+    owned-directory roots from journaled paths, and `.git/` is never
+    journaled, so it can't surface as orphan.
+    """
+
+    default_vault = tmp_path / "default" / "vault"
+    no_git_vault = tmp_path / "no-git" / "vault"
+
+    assert main(["init", str(default_vault), "--recipe", "personal"]) == 0
+    assert main(["init", str(no_git_vault), "--recipe", "personal", "--no-git"]) == 0
+
+    # `wiki doctor` operates on Path.cwd(); chdir into each vault.
+    monkeypatch.chdir(default_vault)
+    assert main(["doctor"]) == 0
+    monkeypatch.chdir(no_git_vault)
+    assert main(["doctor"]) == 0
+
+    # On the default run, the kit's initial commit captured everything —
+    # nothing should be staged or untracked afterward.
+    porcelain = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=default_vault,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert porcelain.stdout == ""
 
 
 def test_rendered_gitignore_load_bearing_invariants(tmp_path: Path) -> None:

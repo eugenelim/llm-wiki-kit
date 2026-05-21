@@ -59,7 +59,7 @@ def initialize_git(
     *,
     recipe_name: str,
     journal_path: Path,
-    now: datetime,
+    _now: datetime,
 ) -> None:
     """Initialize a git repository in ``target`` and make one initial commit.
 
@@ -68,10 +68,13 @@ def initialize_git(
     init`` and ``git commit`` (the append-before-stage ordering pinned
     by ``docs/specs/wiki-init-git/spec.md`` §Behavior step 6).
 
-    The ``now`` argument is unused — :func:`initialize_git` recomputes
-    its own timestamp immediately before the journal append so a long
-    ``git init`` on slow disks doesn't journal a stale timestamp
-    (precedent: safe-write-ordering spec's adopt fast-path).
+    The ``_now`` argument is accepted for call-site symmetry with
+    ``_cmd_init``'s ``now`` (other init-time helpers consume it), but
+    :func:`initialize_git` recomputes its own timestamp immediately
+    before the journal append so a long ``git init`` on slow disks
+    doesn't journal a stale timestamp (precedent: safe-write-ordering
+    spec's adopt fast-path). The underscore prefix signals "do not
+    rely on this value reaching the journal."
 
     Raises :class:`WikiError` when ``git init`` or ``git commit``
     returns a non-zero exit code.
@@ -94,7 +97,11 @@ def initialize_git(
         VaultGitInitializedEvent(timestamp=now_git, by="wiki-init"),
     )
 
-    _run_git(["git", "add", "-A"], cwd=target, failure_prefix="git add failed", hint=True)
+    # ``git add`` failure is bucketed with `git init` failure for
+    # error-shape purposes: the most plausible causes (disk full,
+    # permission, filesystem oddity) aren't config-shaped, so the
+    # `pass --no-git` hint would be misleading.
+    _run_git(["git", "add", "-A"], cwd=target, failure_prefix="git add failed", hint=False)
     _run_git(
         [
             "git",

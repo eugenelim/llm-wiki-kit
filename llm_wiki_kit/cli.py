@@ -366,7 +366,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 target,
                 recipe_name=recipe.name,
                 journal_path=journal_path,
-                now=now,
+                _now=now,
             )
     return 0
 

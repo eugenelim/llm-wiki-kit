@@ -20,7 +20,23 @@ file is the shipped-work record. Decisions behind shipped work live in
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `wiki init --no-git` opt-out for the new default git-init behavior.
+  Skips `git init` and the initial commit; the kit's `.gitignore`
+  still ships through the normal render path. See
+  [`docs/specs/wiki-init-git/spec.md`](docs/specs/wiki-init-git/spec.md).
+- `VaultGitInitializedEvent` journal event (`type:
+  "vault.git_initialized"`) marking the kit's initial commit.
+
+### Changed
+
+- `wiki init` now initializes a git repository in the new vault by
+  default and makes one initial commit covering the freshly-rendered
+  tree. The commit message is `Initialize wiki vault from <recipe>
+  recipe`. Tutorial 1 and the README's quick-start no longer instruct
+  users to run `git init && git add . && git commit -m "..."`
+  manually.
 
 ## [2.0.0] — 2026-05-20
 

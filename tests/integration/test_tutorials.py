@@ -139,7 +139,7 @@ def _seed_git_identity(home: Path) -> None:
     """
 
     (home / ".gitconfig").write_text(
-        '[user]\n\tname = "Tutorial Test"\n\temail = "tutorial-test@example.com"\n',
+        "[user]\n\tname = Tutorial Test\n\temail = tutorial-test@example.com\n",
         encoding="utf-8",
     )
 

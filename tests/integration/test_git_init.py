@@ -74,7 +74,7 @@ def test_initialize_git_creates_repo_with_one_commit(tmp_path: Path) -> None:
         target,
         recipe_name="personal",
         journal_path=journal_path,
-        now=NOW,
+        _now=NOW,
     )
 
     assert (target / ".git").is_dir()
@@ -126,7 +126,7 @@ def test_initialize_git_surfaces_init_failure(tmp_path: Path) -> None:
             target,
             recipe_name="personal",
             journal_path=journal_path,
-            now=NOW,
+            _now=NOW,
         )
 
     message = str(excinfo.value)
@@ -175,7 +175,7 @@ def test_initialize_git_surfaces_commit_failure(
             target,
             recipe_name="personal",
             journal_path=journal_path,
-            now=NOW,
+            _now=NOW,
         )
 
     message = str(excinfo.value)
@@ -243,7 +243,7 @@ def test_initialize_git_skips_when_dot_git_exists(tmp_path: Path) -> None:
         target,
         recipe_name="personal",
         journal_path=journal_path,
-        now=NOW,
+        _now=NOW,
     )
 
     # HEAD content + SHA unchanged.

@@ -89,13 +89,14 @@ text any time:
 $ cat .wiki.journal/journal.jsonl
 ```
 
-You should see one `vault.init` line and one `primitive.install` line
-per primitive the recipe installed. Each line has a `timestamp`, a
-`by` field (the kit's name for whoever performed the action), and
-type-specific fields. The richer surfaces (`wiki journal tail`,
-`wiki journal grep`, `wiki journal explain`) are planned but not yet
-shipped in v2.0.0 — until they land, `cat` and `tail` are how you
-read the journal.
+You should see one `vault.init` line, one `primitive.install` line
+per primitive the recipe installed, and (because step 1 didn't pass
+`--no-git`) one `vault.git_initialized` line marking the kit's
+initial commit. Each line has a `timestamp`, a `by` field (the kit's
+name for whoever performed the action), and type-specific fields.
+The richer surfaces (`wiki journal tail`, `wiki journal grep`,
+`wiki journal explain`) are planned but not yet shipped in v2.0.0 —
+until they land, `cat` and `tail` are how you read the journal.
 
 ## Step 4 — Ingest a source
 
