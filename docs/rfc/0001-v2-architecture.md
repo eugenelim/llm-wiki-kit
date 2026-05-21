@@ -442,13 +442,16 @@ doesn't need `stakeholder-map-refresh`, a CX lead doesn't need
 - **What's the exact CLI library?** Migration plan suggests Click; ADR
   not yet written. Decided at Task 2.
 - **Does `wiki init` over a non-empty folder refuse, or offer an
-  `--adopt` path?** Partly decided at Task 10: `wiki init` refuses by
-  default over a non-empty folder. The `--adopt` flag itself was
-  deferred — the inline comment in `cli.py` notes that a future task
-  must pin its semantics (which files get journaled at adopt time,
-  how baseline hashes are seeded, what happens to files the kit
-  wouldn't otherwise own). Captured in Task 22's deferred-to-post-2.0
-  list above; needs its own spec before any task picks it up.
+  `--adopt` path?** Resolved post-v2.0: `wiki init` keeps its
+  refuse-on-non-empty default; `wiki init --adopt` adopts a
+  pre-existing folder by journaling kit-owned files as dedicated
+  `PageAdoptedEvent` / `ManagedRegionAdoptedEvent` baselines before
+  the install pipeline runs. Policy pinned in
+  [ADR-0008](../adr/0008-init-adopt-ownership-policy.md); contract
+  + plan in
+  [`docs/specs/wiki-init-adopt/`](../specs/wiki-init-adopt/).
+  Implementation queued (three PRs per the plan); the inline comment
+  in `cli.py:_cmd_init` carries the same pointer.
 - **Recipe inheritance (`extends:`)?** Out of scope for v2.0. Tier 3
   roadmap item.
 
