@@ -22,6 +22,7 @@ Pure-function helpers:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -268,7 +269,10 @@ def test_walk_proposed_finds_sidecar_in_content_dir(tmp_path: Path) -> None:
     (tmp_path / "wiki" / "notes").mkdir(parents=True)
     sidecar = tmp_path / "wiki" / "notes" / "foo.md.proposed"
     sidecar.write_text("body", encoding="utf-8")
-    assert _walk_proposed_sidecars(tmp_path) == ["wiki/notes/foo.md.proposed"]
+    walk = _walk_proposed_sidecars(tmp_path)
+    assert walk.paths == ["wiki/notes/foo.md.proposed"]
+    assert walk.total == 1
+    assert walk.over_cap is False
 
 
 def test_walk_proposed_excludes_dot_prefixed_directories(tmp_path: Path) -> None:
@@ -287,8 +291,8 @@ def test_walk_proposed_excludes_dot_prefixed_directories(tmp_path: Path) -> None
     inscope = tmp_path / "wiki" / "x.md.proposed"
     inscope.write_text("body", encoding="utf-8")
 
-    result = _walk_proposed_sidecars(tmp_path)
-    assert result == ["wiki/x.md.proposed"]
+    walk = _walk_proposed_sidecars(tmp_path)
+    assert walk.paths == ["wiki/x.md.proposed"]
 
 
 def test_walk_proposed_excludes_inbox_scheduled_failures(tmp_path: Path) -> None:
@@ -299,8 +303,8 @@ def test_walk_proposed_excludes_inbox_scheduled_failures(tmp_path: Path) -> None
     inbox_user = tmp_path / "inbox" / "user.md.proposed"
     inbox_user.write_text("body", encoding="utf-8")
 
-    result = _walk_proposed_sidecars(tmp_path)
-    assert result == ["inbox/user.md.proposed"]
+    walk = _walk_proposed_sidecars(tmp_path)
+    assert walk.paths == ["inbox/user.md.proposed"]
 
 
 def test_walk_proposed_honors_obsidianignore(tmp_path: Path) -> None:
@@ -313,23 +317,37 @@ def test_walk_proposed_honors_obsidianignore(tmp_path: Path) -> None:
     inscope = tmp_path / "wiki" / "y.md.proposed"
     inscope.write_text("body", encoding="utf-8")
 
-    result = _walk_proposed_sidecars(tmp_path)
-    assert result == ["wiki/y.md.proposed"]
+    walk = _walk_proposed_sidecars(tmp_path)
+    assert walk.paths == ["wiki/y.md.proposed"]
 
 
-def test_walk_proposed_caps_at_20(tmp_path: Path) -> None:
+def test_walk_proposed_obsidianignore_requires_segment_boundary(tmp_path: Path) -> None:
+    # `att` must NOT match `attachments/x.md.proposed` — only `att/`
+    # or `attachments/` (or the literal path) does.
+    (tmp_path / ".obsidianignore").write_text("att\n", encoding="utf-8")
+    (tmp_path / "attachments").mkdir()
+    (tmp_path / "attachments" / "x.md.proposed").write_text("body", encoding="utf-8")
+    walk = _walk_proposed_sidecars(tmp_path)
+    assert walk.paths == ["attachments/x.md.proposed"]
+
+
+def test_walk_proposed_caps_at_20_and_reports_total(tmp_path: Path) -> None:
     (tmp_path / "wiki").mkdir()
-    for i in range(30):
+    for i in range(25):
         sidecar = tmp_path / "wiki" / f"file-{i:02d}.md.proposed"
         sidecar.write_text("body", encoding="utf-8")
-    result = _walk_proposed_sidecars(tmp_path)
-    assert len(result) == 20
+    walk = _walk_proposed_sidecars(tmp_path)
+    assert len(walk.paths) == 20
+    assert walk.total == 25
+    assert walk.over_cap is True
 
 
 def test_walk_proposed_returns_empty_on_clean_vault(tmp_path: Path) -> None:
     (tmp_path / "wiki" / "notes").mkdir(parents=True)
     (tmp_path / "wiki" / "notes" / "foo.md").write_text("body", encoding="utf-8")
-    assert _walk_proposed_sidecars(tmp_path) == []
+    walk = _walk_proposed_sidecars(tmp_path)
+    assert walk.paths == []
+    assert walk.total == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1142,3 +1160,172 @@ def test_orch_log_rotation_runs(
     )
     assert result.exec_status == "succeeded"
     assert not old.exists()
+
+
+# ---------------------------------------------------------------------------
+# Post-review additions (REVIEW iteration 1)
+# ---------------------------------------------------------------------------
+
+
+def test_orch_conflict_walk_runs_before_binary_resolution(
+    exec_vault: Path, kit_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sidecar refusal fires even when claude binary is missing.
+
+    Per spec §"What this is" the conflict walk precedes binary
+    resolution, so a vault in conflict surfaces ``failed_conflict``
+    even without a usable ``claude`` on PATH.
+    """
+
+    (exec_vault / "wiki").mkdir()
+    (exec_vault / "wiki" / "x.md.proposed").write_text("body", encoding="utf-8")
+    monkeypatch.delenv("WIKI_CLAUDE_BINARY", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=None,
+    )
+    assert result.exec_status == "failed_conflict"
+    failures = [e for e in read_events(journal_path) if isinstance(e, OperationExecFailedEvent)]
+    assert len(failures) == 1
+    assert failures[0].reason == "conflict-refused"
+
+
+def test_orch_failure_duration_is_nonzero(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
+    """Per-failure file duration must reflect actual elapsed time.
+
+    The orchestrator accepts a ``failure_clock`` callable so tests
+    can inject a deterministic ``failed_at = now + 17s``. The
+    rendered duration must read ``duration 17s``, not ``0s``.
+    """
+
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(1)")
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+    failed_at = NOW + timedelta(seconds=17)
+
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+        timeout_seconds=10,
+        failure_clock=lambda: failed_at,
+    )
+    assert result.exec_status == "failed_exit"
+    failure_file = (
+        exec_vault / "inbox" / "scheduled-failures" / f"{result.dispatch.dispatch_event_id}.md"
+    )
+    body = failure_file.read_text(encoding="utf-8")
+    assert "duration 17s" in body
+    # And the failure event's journaled timestamp matches failed_at,
+    # not dispatch's now — verifies the clock drove both surfaces.
+    failures = [e for e in read_events(journal_path) if isinstance(e, OperationExecFailedEvent)]
+    assert len(failures) == 1
+    assert failures[0].timestamp == failed_at
+
+
+def test_orch_over_cap_sidecars_render_n_more(
+    exec_vault: Path, kit_root: Path, tmp_path: Path
+) -> None:
+    """When >20 sidecars in scope, the failure file lists 20 plus ``(…N more)``."""
+
+    (exec_vault / "wiki").mkdir()
+    for i in range(25):
+        (exec_vault / "wiki" / f"f-{i:02d}.md.proposed").write_text("x", encoding="utf-8")
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(0)")
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert result.exec_status == "failed_conflict"
+    failure_file = (
+        exec_vault / "inbox" / "scheduled-failures" / f"{result.dispatch.dispatch_event_id}.md"
+    )
+    body = failure_file.read_text(encoding="utf-8")
+    assert "(…5 more)" in body
+
+
+def test_orch_skill_path_override_in_argv(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
+    """``--skill-path <override>`` flows into the prompt the kit sends to claude."""
+
+    override = tmp_path / "custom-skills" / "custom-SKILL.md"
+    override.parent.mkdir()
+    override.write_text("# override SKILL", encoding="utf-8")
+    argv_log = tmp_path / "argv.log"
+    claude = _make_python_stub(
+        tmp_path,
+        "import sys, json\n"
+        f"open({str(argv_log)!r}, 'w').write(json.dumps(sys.argv))\n"
+        "sys.exit(0)\n",
+        name="claude",
+    )
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=exec_vault / ".wiki.journal" / "journal.jsonl",
+        now=NOW,
+        claude_binary=claude,
+        skill_path_override=override,
+    )
+    assert result.exec_status == "succeeded"
+    argv = json.loads(argv_log.read_text(encoding="utf-8"))
+    prompt = argv[-1]
+    assert str(override) in prompt
+
+
+def test_orch_two_failures_produce_two_distinct_files(
+    exec_vault: Path, kit_root: Path, tmp_path: Path
+) -> None:
+    """CT-11 invariant — distinct dispatches keep distinct file names."""
+
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(1)")
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    first = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+        timeout_seconds=10,
+    )
+    second = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W21"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW + timedelta(seconds=60),
+        claude_binary=claude,
+        timeout_seconds=10,
+    )
+    assert first.dispatch.dispatch_event_id != second.dispatch.dispatch_event_id
+    failures_dir = exec_vault / "inbox" / "scheduled-failures"
+    files = sorted(p.name for p in failures_dir.iterdir())
+    assert files == sorted(
+        [
+            f"{first.dispatch.dispatch_event_id}.md",
+            f"{second.dispatch.dispatch_event_id}.md",
+        ]
+    )

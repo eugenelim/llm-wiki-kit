@@ -39,8 +39,9 @@ import shutil
 import signal
 import subprocess
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -540,7 +541,44 @@ def _read_obsidianignore(vault_root: Path) -> tuple[str, ...]:
     return tuple(prefixes)
 
 
-def _walk_proposed_sidecars(vault_root: Path) -> list[str]:
+@dataclass(frozen=True)
+class _SidecarWalk:
+    """Result of a conflict-refusal walk.
+
+    ``paths`` holds up to 20 vault-relative POSIX paths in sorted
+    order. ``total`` counts every sidecar discovered in scope,
+    including those beyond the 20-path cap, so the failure-file can
+    render the spec's ``(…N more)`` indicator. ``over_cap`` is a
+    convenience derived from ``total > len(paths)``.
+    """
+
+    paths: list[str]
+    total: int
+
+    @property
+    def over_cap(self) -> bool:
+        return self.total > len(self.paths)
+
+
+def _obsidianignore_matches(rel: str, ignore_prefixes: tuple[str, ...]) -> bool:
+    """Match a vault-relative POSIX path against ``.obsidianignore`` entries.
+
+    Spec §"Conflict-refusal walk scope": "exact-prefix matching
+    against vault-relative paths, no negation." Concretely: a path
+    is ignored when an entry equals it (with or without a trailing
+    ``/``) or names a directory that contains it. Prefix tokens
+    that don't end on a path-segment boundary do **not** match a
+    deeper segment — ``att`` does not match ``attachments/x.md``.
+    """
+
+    for raw in ignore_prefixes:
+        token = raw.rstrip("/")
+        if rel == token or rel.startswith(token + "/"):
+            return True
+    return False
+
+
+def _walk_proposed_sidecars(vault_root: Path) -> _SidecarWalk:
     """Walk the vault for unresolved ``.proposed`` sidecars in scope.
 
     Scope per spec §"Conflict-refusal walk scope":
@@ -551,45 +589,49 @@ def _walk_proposed_sidecars(vault_root: Path) -> list[str]:
     - **Nested exclusion** — ``inbox/scheduled-failures/`` (the kit's
       own scratch; preventing a refusal-loop on failures the kit
       itself authored).
-    - **`.obsidianignore` excludes** — exact-prefix match against the
-      vault-relative path.
+    - **`.obsidianignore` excludes** — path-segment-boundary match
+      against the vault-relative path (``att`` does not match
+      ``attachments/foo``; ``attachments/`` does).
 
-    Returns up to 20 vault-relative POSIX paths, breadth-first; the
-    20-path cap is the single bound per spec §"Conflict-refusal walk
-    scope" (no separate byte cap). The walk does not short-circuit at
-    the first sidecar — it collects up to the cap so the failure-file
-    can list multiple offenders.
+    Returns up to 20 vault-relative POSIX paths plus a ``total``
+    count of every in-scope sidecar (so the failure file can render
+    ``(…N more)`` when ``total > 20``). The 20-path cap is the
+    single bound per spec; counting past the cap is cheap because
+    the walk keeps iterating the same generator. Ordering inside
+    each top-level subtree is ``Path.rglob`` insertion order
+    sorted lexicographically.
     """
 
-    sidecars: list[str] = []
+    paths: list[str] = []
+    total = 0
     ignore_prefixes = _read_obsidianignore(vault_root)
     if not vault_root.is_dir():
-        return sidecars
+        return _SidecarWalk(paths=paths, total=total)
+
+    def consume(rel: str) -> None:
+        nonlocal total
+        nested = _CONFLICT_WALK_NESTED_EXCLUDE
+        if rel == nested or rel.startswith(nested + "/"):
+            return
+        if _obsidianignore_matches(rel, ignore_prefixes):
+            return
+        total += 1
+        if len(paths) < 20:
+            paths.append(rel)
+
     for child in sorted(vault_root.iterdir()):
         if child.name.startswith("."):
             continue
-        if not child.is_dir() and not child.is_file():
-            continue
         if child.is_file():
             if child.name.endswith(".proposed"):
-                rel = child.name
-                if any(rel.startswith(p) for p in ignore_prefixes):
-                    continue
-                sidecars.append(rel)
-                if len(sidecars) >= 20:
-                    return sidecars
+                consume(child.name)
             continue
-        # child is a directory — walk it for *.proposed
+        if not child.is_dir():
+            continue
         for path in sorted(child.rglob("*.proposed")):
             rel = path.relative_to(vault_root).as_posix()
-            if rel.startswith(_CONFLICT_WALK_NESTED_EXCLUDE + "/"):
-                continue
-            if any(rel.startswith(p) for p in ignore_prefixes):
-                continue
-            sidecars.append(rel)
-            if len(sidecars) >= 20:
-                return sidecars
-    return sidecars
+            consume(rel)
+    return _SidecarWalk(paths=paths, total=total)
 
 
 def _validate_max_budget(value: str | None) -> str | None:
@@ -830,6 +872,7 @@ def _render_failure_file(
     stderr_tail: str,
     log_path: str | None,
     conflict_sidecars: list[str],
+    extra_sidecars: int = 0,
 ) -> str:
     """Render the per-failure markdown body.
 
@@ -854,6 +897,12 @@ def _render_failure_file(
                 lines.append(f"  - `{sidecar}`")
         else:
             lines.append("  - (none recorded)")
+        # Spec §"Conflict-refusal walk scope": if more than 20 sidecars
+        # exist, render `(…N more)` after the 20th. ``extra_sidecars``
+        # carries the overflow count from the caller; 0 means no
+        # overflow.
+        if extra_sidecars > 0:
+            lines.append(f"  - (…{extra_sidecars} more)")
         lines.extend(
             [
                 "",
@@ -924,6 +973,41 @@ def _write_failure_file(
     )
 
 
+def _write_failure_file_safe(
+    *,
+    vault_root: Path,
+    journal_path: Path,
+    dispatch_event_id: str,
+    body: str,
+) -> None:
+    """Best-effort wrapper around ``_write_failure_file``.
+
+    Spec §"Error cases" lines 376-381: if the per-failure write
+    fails (disk full, permission denied, write_helper drift on the
+    failure path itself), the kit must still journal the
+    ``OperationExecFailedEvent`` so the operator has a journal
+    record of the exec attempt. We swallow the inner exception
+    here, write a one-line warning to stderr, and let the orchestrator
+    proceed to ``_append_failure_event``.
+    """
+
+    try:
+        _write_failure_file(
+            vault_root=vault_root,
+            journal_path=journal_path,
+            dispatch_event_id=dispatch_event_id,
+            body=body,
+        )
+    except Exception as exc:
+        import sys as _sys
+
+        print(
+            f"wiki-run-exec: per-failure file write failed: {exc!r}; "
+            "failure event will still be journaled.",
+            file=_sys.stderr,
+        )
+
+
 # ---------------------------------------------------------------------------
 # dispatch_and_exec orchestrator
 # ---------------------------------------------------------------------------
@@ -955,6 +1039,15 @@ class ExecResult:
     ]
 
 
+def _utc_now() -> datetime:
+    """Default failure-clock — module-level so tests can monkeypatch
+    ``llm_wiki_kit.run._utc_now`` to inject a deterministic value
+    without touching the orchestrator's signature.
+    """
+
+    return datetime.now(UTC)
+
+
 def dispatch_and_exec(
     operation: str,
     raw_args: list[str],
@@ -968,6 +1061,7 @@ def dispatch_and_exec(
     timeout_seconds: int = 1800,
     log_retention_days: int = 30,
     max_budget_usd: str | None = None,
+    failure_clock: Callable[[], datetime] | None = None,
 ) -> ExecResult:
     """Orchestrate ``wiki run --exec``.
 
@@ -976,16 +1070,19 @@ def dispatch_and_exec(
     1. Run :func:`dispatch` (journals one ``OperationRunEvent`` with
        a fresh ``event_id``). If status is ``invalid_args``, return
        ``exec_status="skipped"`` — no subprocess, no failure event.
-    2. Resolve the Claude binary (override > env var > shutil.which).
-       Missing → ``WikiError`` with install-pointer; dispatch event
-       remains journaled, no failure event journaled.
-    3. Re-load the contract (cheap; the same file ``dispatch`` just
-       read) to resolve the SKILL path. Missing → ``WikiError``.
-    4. Validate ``max_budget_usd`` shape if supplied. Malformed →
-       ``WikiError``.
-    5. Walk for ``.proposed`` sidecars. If any: write the per-failure
+    2. Walk for ``.proposed`` sidecars. If any: write the per-failure
        file, append a ``conflict-refused`` exec event, return
-       ``exec_status="failed_conflict"``.
+       ``exec_status="failed_conflict"`` — **regardless** of whether
+       the binary/SKILL/budget would have resolved. The spec puts
+       conflict refusal ahead of binary discovery so a vault in
+       conflict surfaces cleanly even when ``claude`` is missing.
+    3. Resolve the Claude binary (override > env var > shutil.which).
+       Missing → ``WikiError``; dispatch event remains journaled,
+       no failure event.
+    4. Re-load the contract; resolve the SKILL path. Missing →
+       ``WikiError``.
+    5. Validate ``max_budget_usd`` shape if supplied. Malformed →
+       ``WikiError``.
     6. Rotate old logs; build prompt + argv; run subprocess.
     7. On exit 0 → ``exec_status="succeeded"``; no second journal
        event (CT-14).
@@ -993,12 +1090,16 @@ def dispatch_and_exec(
        ``non-zero-exit`` / ``timeout`` exec event, return
        ``exec_status="failed_exit"`` / ``"failed_timeout"``.
 
-    ``now`` is the timestamp used for the dispatch and (for
-    determinism in tests) the failure events. Real failure-event
-    timestamps in production would drift slightly from dispatch by
-    the subprocess duration; the journal field carries the original
-    ``now`` from this argument so tests stay deterministic.
+    ``now`` is the dispatch timestamp (used by ``dispatch()`` and
+    by the exec event's journaled ``timestamp``). ``failure_clock``
+    is called at failure-render time to produce the per-failure
+    file's ``Failed:`` timestamp and the duration calculation —
+    defaults to ``_utc_now``; tests inject a fixed
+    ``lambda: now + timedelta(seconds=K)`` to make duration
+    deterministic.
     """
+
+    clock = failure_clock if failure_clock is not None else _utc_now
 
     dispatch_result = dispatch(
         operation,
@@ -1012,9 +1113,48 @@ def dispatch_and_exec(
     if dispatch_result.status != "dispatched":
         return ExecResult(dispatch=dispatch_result, exec_status="skipped")
 
-    # Resolve binary + SKILL + budget. All three raise WikiError on
-    # failure; none journal an exec event (the dispatch event is
-    # already durable).
+    # Conflict-refusal walk runs *before* binary/SKILL/budget resolution
+    # so a vault in conflict surfaces with a refusal event even when
+    # claude is missing. Spec §"What this is" lists the order:
+    # refuse-on-sidecars → locate binary → invoke.
+    walk = _walk_proposed_sidecars(vault_root)
+    if walk.paths:
+        failed_at = clock()
+        extra = max(walk.total - len(walk.paths), 0)
+        body = _render_failure_file(
+            operation=operation,
+            dispatch_event_id=dispatch_result.dispatch_event_id,
+            dispatched_at=now,
+            failed_at=failed_at,
+            reason="conflict-refused",
+            exit_code=-1,
+            stderr_tail="",
+            log_path=None,
+            conflict_sidecars=walk.paths,
+            extra_sidecars=extra,
+        )
+        _write_failure_file_safe(
+            vault_root=vault_root,
+            journal_path=journal_path,
+            dispatch_event_id=dispatch_result.dispatch_event_id,
+            body=body,
+        )
+        _append_failure_event(
+            journal_path=journal_path,
+            now=failed_at,
+            operation=operation,
+            dispatch_event_id=dispatch_result.dispatch_event_id,
+            exit_code=-1,
+            reason="conflict-refused",
+            stderr_tail="",
+            log_path=None,
+            conflict_sidecars=walk.paths,
+        )
+        return ExecResult(dispatch=dispatch_result, exec_status="failed_conflict")
+
+    # No conflicts — resolve binary, SKILL, budget. All three raise
+    # WikiError on failure; none journal an exec event (the dispatch
+    # event is already durable).
     binary = _locate_claude(override=claude_binary)
     if binary is None:
         raise WikiError(
@@ -1028,40 +1168,6 @@ def dispatch_and_exec(
         vault_root=vault_root,
     )
     validated_budget = _validate_max_budget(max_budget_usd)
-
-    # Conflict-refusal walk runs after binary/SKILL resolution so
-    # spec-side gate errors surface before the disk walk.
-    sidecars = _walk_proposed_sidecars(vault_root)
-    if sidecars:
-        body = _render_failure_file(
-            operation=operation,
-            dispatch_event_id=dispatch_result.dispatch_event_id,
-            dispatched_at=now,
-            failed_at=now,
-            reason="conflict-refused",
-            exit_code=-1,
-            stderr_tail="",
-            log_path=None,
-            conflict_sidecars=sidecars,
-        )
-        _write_failure_file(
-            vault_root=vault_root,
-            journal_path=journal_path,
-            dispatch_event_id=dispatch_result.dispatch_event_id,
-            body=body,
-        )
-        _append_failure_event(
-            journal_path=journal_path,
-            now=now,
-            operation=operation,
-            dispatch_event_id=dispatch_result.dispatch_event_id,
-            exit_code=-1,
-            reason="conflict-refused",
-            stderr_tail="",
-            log_path=None,
-            conflict_sidecars=sidecars,
-        )
-        return ExecResult(dispatch=dispatch_result, exec_status="failed_conflict")
 
     # Happy path — rotate logs, build prompt + argv, run subprocess.
     _rotate_logs(vault_root=vault_root, retention_days=log_retention_days, now=now)
@@ -1091,6 +1197,7 @@ def dispatch_and_exec(
 
     # Non-zero exit or timeout — journal the failure event + write
     # the per-failure file.
+    failed_at = clock()
     reason: Literal["non-zero-exit", "timeout"] = (
         "timeout" if sp_result.timed_out else "non-zero-exit"
     )
@@ -1099,14 +1206,14 @@ def dispatch_and_exec(
         operation=operation,
         dispatch_event_id=dispatch_result.dispatch_event_id,
         dispatched_at=now,
-        failed_at=now,
+        failed_at=failed_at,
         reason=reason,
         exit_code=sp_result.returncode,
         stderr_tail=sp_result.stderr_tail,
         log_path=log_path_relative,
         conflict_sidecars=[],
     )
-    _write_failure_file(
+    _write_failure_file_safe(
         vault_root=vault_root,
         journal_path=journal_path,
         dispatch_event_id=dispatch_result.dispatch_event_id,
@@ -1114,7 +1221,7 @@ def dispatch_and_exec(
     )
     _append_failure_event(
         journal_path=journal_path,
-        now=now,
+        now=failed_at,
         operation=operation,
         dispatch_event_id=dispatch_result.dispatch_event_id,
         exit_code=sp_result.returncode,
