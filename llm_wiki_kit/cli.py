@@ -58,6 +58,7 @@ from llm_wiki_kit.models import (
     LockAcquiredEvent,
     LockReleasedEvent,
     ManagedRegionWriteEvent,
+    OperationExecFailedEvent,
     OperationRunEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
@@ -1367,6 +1368,11 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
     OperationRunEvent: (
         ("operation", "operation", False),
         ("status", "status", False),
+    ),
+    OperationExecFailedEvent: (
+        ("operation", "operation", False),
+        ("reason", "reason", False),
+        ("exit_code", "exit_code", False),
     ),
     ResearchQueryEvent: (
         ("provider", "provider", False),

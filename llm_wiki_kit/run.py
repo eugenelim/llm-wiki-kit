@@ -23,6 +23,7 @@ and tested directly under ``tests/unit/test_run*.py``.
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,11 @@ from llm_wiki_kit.models import (
     Primitive,
     PrimitiveKind,
 )
+
+# Hex pattern for ``dispatch_event_id`` shape validation. 12 lowercase
+# hex chars — first 12 of ``uuid.uuid4().hex``. See
+# ``docs/specs/wiki-run-exec/spec.md`` §"Event identity".
+_EVENT_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
 
 # Vehicle name recorded on every ``OperationRunEvent`` this module emits.
@@ -245,6 +251,13 @@ class DispatchResult:
     non-None iff status==invalid_args". The kit's `--help`
     short-circuit lives at the CLI boundary, not here — dispatch
     only sees real invocations.
+
+    ``dispatch_event_id`` carries the ``event_id`` the kit
+    generated and journaled on the surviving ``OperationRunEvent``
+    (see ``docs/specs/wiki-run-exec/spec.md`` §"DispatchResult
+    extension"). Required field, ordered before defaulted fields
+    so Python's ``@dataclass`` field-ordering rule holds.
+    ``__post_init__`` validates the shape (12 lowercase hex).
     """
 
     status: Literal["dispatched", "invalid_args"]
@@ -253,6 +266,7 @@ class DispatchResult:
     args_raw: dict[str, str]
     period: str | None
     skill: str
+    dispatch_event_id: str
     error: str | None = None
     produced_pages: list[str] = field(default_factory=list)
 
@@ -261,6 +275,11 @@ class DispatchResult:
             raise ValueError("DispatchResult: status='invalid_args' requires a non-None error")
         if self.status == "dispatched" and self.error is not None:
             raise ValueError("DispatchResult: status='dispatched' must have error=None")
+        if not _EVENT_ID_RE.fullmatch(self.dispatch_event_id):
+            raise ValueError(
+                "DispatchResult: dispatch_event_id must be 12 lowercase hex chars; "
+                f"got {self.dispatch_event_id!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +380,8 @@ def dispatch(
         "invalid_args" if error is not None else "dispatched"
     )
 
+    event_id = uuid.uuid4().hex[:12]
+
     append_event(
         journal_path,
         OperationRunEvent(
@@ -372,6 +393,7 @@ def dispatch(
             produced_pages=[],
             args=raw,
             error=error,
+            event_id=event_id,
         ),
     )
 
@@ -382,5 +404,6 @@ def dispatch(
         args_raw=raw,
         period=contract.period,
         skill=skill,
+        dispatch_event_id=event_id,
         error=error,
     )
