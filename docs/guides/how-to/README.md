@@ -10,6 +10,12 @@ exhaustive — focused.
 - **[Resolve a conflict](resolve-a-conflict.md)** — the kit wrote a
   `<path>.proposed` sidecar (because it detected your edits) and you
   want to reconcile.
+- **[Set up the Obsidian Web Clipper](web-clipper.md)** — configure
+  the Web Clipper extension to drop clean markdown into the kit's
+  `raw/web-clips/` path so the `ingest` orchestrator picks it up.
+- **[Add a typed inventory](inventories.md)** — define a new collection
+  (per-item schema, `_templates/<type>.md`, `.base` view) for things
+  you'll add to over time.
 
 ## Other Diátaxis buckets
 
@@ -20,6 +26,3 @@ exhaustive — focused.
 - **[Explanation](../explanation/)** — understanding-oriented; the
   reader wants the *why* behind a design.
 
-The kit's existing user docs still live flat under `docs/guides/*.md`
-(`customizing.md`, `sync-options.md`, `web-clipper.md`). Migrating
-them into how-to format is a future docs PR, not adoption scope.

@@ -10,8 +10,8 @@ What formats the kit supports, how Claude handles non-markdown files, and the co
 | Word (`.docx`) | Full read/write | Required for Claude Cowork file editing. Works on Google Drive but auto-converts in Google Docs for collaborative viewing. |
 | Excel (`.xlsx`) | Full read/write | Use `.xlsx` instead of Google Sheets — Claude can't edit Sheets format directly. |
 | PowerPoint (`.pptx`) | Full read/write | Same pattern — use native Office format, not Google Slides. |
-| PDF (`.pdf`) | Read + create | Claude reads and generates PDFs. Use [[ingest-document]] to convert PDFs to markdown for the wiki. |
-| Images (`.png`, `.jpg`, `.tif`) | Read + OCR | Use [[ingest-document]] for OCR via Docling. |
+| PDF (`.pdf`) | Read + create | Claude reads and generates PDFs. Use [[ingest]] to convert PDFs to markdown for the wiki. |
+| Images (`.png`, `.jpg`, `.tif`) | Read + OCR | Use [[ingest]] for OCR via Docling. |
 | Google Docs / Sheets / Slides | Read-only (indirect) | Claude cannot write to native Google formats. Always save as Office equivalents. |
 
 **Recommendation.** If your team is in Google Workspace, keep the wiki itself as markdown (no format issues) and use `.docx`/`.xlsx`/`.pptx` for any deliverables Claude needs to create or edit. If you're on Microsoft 365, the format alignment is seamless.

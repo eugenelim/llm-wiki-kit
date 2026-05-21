@@ -29,7 +29,3 @@ reader follows along and produces a working result by the end.
 - **[Explanation](../explanation/)** — understanding-oriented; the
   reader wants the *why* behind a design.
 
-The kit's existing user docs still live flat under `docs/guides/*.md`
-(`customizing.md`, `setup.md`, `sync-options.md`, `web-clipper.md`,
-`file-formats.md`, `inventories.md`). Migrating them into the right
-Diátaxis bucket is a future docs PR, not adoption scope.
