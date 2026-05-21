@@ -29,6 +29,7 @@ import errno
 import fcntl
 import importlib.resources
 import os
+import shutil
 import sys
 import traceback
 from collections.abc import Sequence
@@ -38,6 +39,7 @@ from pathlib import Path
 from llm_wiki_kit import __version__, journal
 from llm_wiki_kit.doctor import format_issue, run_doctor
 from llm_wiki_kit.errors import JournalCorruptError, WikiError
+from llm_wiki_kit.git_init import initialize_git
 from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
 from llm_wiki_kit.install import install_primitives, validate_contributions
 from llm_wiki_kit.journal import (
@@ -70,6 +72,7 @@ from llm_wiki_kit.models import (
     Recipe,
     ResearchQueryEvent,
     SourceIngestEvent,
+    VaultGitInitializedEvent,
     VaultInitEvent,
 )
 from llm_wiki_kit.primitives import (
@@ -270,6 +273,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
     *before* the corresponding filesystem writes. If a write crashes
     mid-install, the journal still reflects the intent and ``wiki
     doctor`` (Task 12) can reconcile.
+
+    Unless ``--no-git`` is passed, the handler concludes by calling
+    :func:`llm_wiki_kit.git_init.initialize_git`, which runs ``git
+    init`` + one initial commit and journals
+    :class:`VaultGitInitializedEvent`. The empty-target refusal fires
+    **before** the git pre-flight so a user who passes a non-empty
+    path sees the existing "not empty" error rather than a misleading
+    "git missing" one when both conditions fail. See
+    ``docs/specs/wiki-init-git/spec.md`` §Behavior.
     """
 
     target = Path(args.path).resolve()
@@ -282,6 +294,13 @@ def _cmd_init(args: argparse.Namespace) -> int:
             "wiki init refuses to render over existing files. "
             "Choose an empty directory or remove its contents first."
         )
+
+    # Git pre-flight runs AFTER the empty-target refusal so a user who
+    # passes a non-empty path with no git installed sees the more
+    # informative refusal first (spec §Behavior step 2). Pre-flight
+    # before mutation: refusing here leaves the filesystem untouched.
+    if not args.no_git and shutil.which("git") is None:
+        raise WikiError("git is not on PATH; install git or pass --no-git, then re-run.")
 
     recipes_dir, core_dir, templates_dir = _kit_paths(args.kit_root)
     recipe = load_recipe(recipes_dir / f"{args.recipe}.yaml")
@@ -335,6 +354,20 @@ def _cmd_init(args: argparse.Namespace) -> int:
             install_vehicle=INSTALL_VEHICLE_INIT,
             now=now,
         )
+
+        # Git phase (spec §Behavior step 6). Runs inside the still-open
+        # journal-cache scope so the new event flows through the cache
+        # like every other init-time append. The function appends its
+        # event between ``git init`` and ``git add -A``/``git commit``
+        # so the journaled line is captured by the initial commit's
+        # tree, leaving ``git status --porcelain`` empty.
+        if not args.no_git:
+            initialize_git(
+                target,
+                recipe_name=recipe.name,
+                journal_path=journal_path,
+                now=now,
+            )
     return 0
 
 
@@ -1330,6 +1363,11 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
         ("vault_name", "vault", False),
         ("recipe", "recipe", False),
     ),
+    # ``vault.git_initialized`` carries no per-event payload fields (see
+    # ``docs/specs/wiki-init-git/spec.md`` §Outputs); the summary is
+    # empty. The empty tuple keeps the row present so the "missing
+    # summary mapping is loud" KeyError invariant still pins coverage.
+    VaultGitInitializedEvent: (),
     PrimitiveInstallEvent: (
         ("primitive", "primitive", False),
         ("version", "version", False),
@@ -1600,6 +1638,15 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("path", help="Directory to create the vault in.")
     init.add_argument(
         "--recipe", required=True, help="Recipe name (e.g. family, work-os, personal)."
+    )
+    init.add_argument(
+        "--no-git",
+        dest="no_git",
+        action="store_true",
+        help=(
+            "Skip git repo initialization and the initial commit. The kit's "
+            ".gitignore still ships through the normal render path."
+        ),
     )
     init.set_defaults(func=_cmd_init)
 

@@ -40,6 +40,7 @@ from llm_wiki_kit.models import (
     PrimitiveUpgradeEvent,
     ResearchQueryEvent,
     SourceIngestEvent,
+    VaultGitInitializedEvent,
     VaultInitEvent,
 )
 
@@ -752,6 +753,7 @@ def _build_instance(cls: type) -> typing.Any:
 
     extras_by_class: dict[type, dict[str, object]] = {
         VaultInitEvent: {"vault_name": "x", "recipe": "family"},
+        VaultGitInitializedEvent: {},
         PrimitiveInstallEvent: {"primitive": "core", "version": "1.0.0"},
         PrimitiveRemoveEvent: {"primitive": "core"},
         PrimitiveUpgradeEvent: {
