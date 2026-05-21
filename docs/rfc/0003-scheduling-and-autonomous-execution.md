@@ -1,6 +1,6 @@
 # RFC-0003: scheduling and autonomous execution of operation primitives
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Author:** maintainer
 - **Created:** 2026-05-20
 - **Discussion:** PR opened against `main`
