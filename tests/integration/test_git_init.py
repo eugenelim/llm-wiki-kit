@@ -26,6 +26,8 @@ by ``tests/integration/test_wiki_init_git.py``.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -104,22 +106,37 @@ def test_initialize_git_creates_repo_with_one_commit(tmp_path: Path) -> None:
     assert git_events[0].by == "wiki-init"
 
 
-def test_initialize_git_surfaces_init_failure(tmp_path: Path) -> None:
+def test_initialize_git_surfaces_init_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``git init`` failure surfaces stderr without the kit-authored hint.
 
-    Pre-creates ``target/.git`` as a regular file so ``git init`` fails
-    when it tries to create the directory. The spec pins the negative
-    assertion on the literal kit-authored substring
-    ``pass --no-git to skip git initialization`` — git's own stderr is
-    out of the kit's control and may use words like "config" or
-    "user" incidentally, so anchoring on the kit substring is the
-    only safe negative assertion.
+    Forces failure with a broken ``git`` shim on ``$PATH`` so the
+    subprocess returns non-zero. (Pre-creating ``target/.git`` as a
+    regular file was the original approach, but the kit now treats
+    any pre-existing ``.git`` — directory or gitfile — as user
+    territory and short-circuits, so that route no longer exercises
+    the init-failure code path.)
+
+    The spec pins the negative assertion on the literal kit-authored
+    substring ``pass --no-git to skip git initialization`` — git's
+    own stderr is out of the kit's control and may use words like
+    "config" or "user" incidentally, so anchoring on the kit
+    substring is the only safe negative assertion.
     """
+
+    shim_dir = tmp_path / "broken-git-bin"
+    shim_dir.mkdir()
+    shim = shim_dir / "git"
+    shim.write_text(
+        '#!/bin/sh\necho "git: broken wrapper for test" >&2\nexit 1\n',
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
 
     target = tmp_path / "vault"
     journal_path = _stage_partial_vault(target)
-    # Make `.git` a file so git init refuses to create the directory.
-    (target / ".git").write_text("not a directory\n", encoding="utf-8")
 
     with pytest.raises(WikiError) as excinfo:
         initialize_git(
@@ -131,14 +148,71 @@ def test_initialize_git_surfaces_init_failure(tmp_path: Path) -> None:
 
     message = str(excinfo.value)
     assert "pass --no-git to skip git initialization" not in message
-    # The init failure is not config-shaped; the kit surfaces git's stderr.
-    # We don't pin a specific substring — git's wording across versions
-    # varies — but the message must be non-empty and reference git's
-    # failure (the kit prefixes with "git init failed:").
     assert "git init" in message.lower()
 
     events = read_events(journal_path)
     assert not any(isinstance(e, VaultGitInitializedEvent) for e in events)
+
+
+def test_initialize_git_surfaces_add_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``git add`` failure surfaces stderr without the kit-authored hint.
+
+    The kit's spec puts ``git add -A`` *after* the
+    ``VaultGitInitializedEvent`` append but before ``git commit``, so
+    an add failure leaves the same partial state as a commit failure:
+    event journaled, no commit, vault rendered. The error message
+    shape is bucketed with ``git init`` failure — no hint — because
+    the plausible causes (disk full, permission, index corruption)
+    aren't config-shaped.
+
+    Pinned with a selective shim that delegates to the real ``git``
+    for everything except ``git add``, which exits non-zero.
+    """
+
+    real_git = shutil.which("git")
+    assert real_git is not None, "test sandbox lacks git on PATH"
+
+    shim_dir = tmp_path / "add-failing-bin"
+    shim_dir.mkdir()
+    shim = shim_dir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "add" ]; then\n'
+        '  echo "git: simulated add failure" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        f'exec {real_git} "$@"\n',
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
+
+    target = tmp_path / "vault"
+    journal_path = _stage_partial_vault(target)
+
+    with pytest.raises(WikiError) as excinfo:
+        initialize_git(
+            target,
+            recipe_name="personal",
+            journal_path=journal_path,
+            _now=NOW,
+        )
+
+    message = str(excinfo.value)
+    # `git add` failure is bucketed with init-failure — no config hint.
+    assert "pass --no-git to skip git initialization" not in message
+    assert "git add" in message.lower()
+
+    # `.git/` exists (real `git init` ran via the shim's exec-through).
+    assert (target / ".git").is_dir()
+
+    # Event WAS journaled (append-before-stage ordering); the partial
+    # state is identical to the commit-failure recovery story.
+    events = read_events(journal_path)
+    git_events = [e for e in events if isinstance(e, VaultGitInitializedEvent)]
+    assert len(git_events) == 1
 
 
 def test_initialize_git_surfaces_commit_failure(

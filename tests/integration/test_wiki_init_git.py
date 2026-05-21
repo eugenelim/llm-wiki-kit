@@ -358,14 +358,21 @@ def test_wiki_init_initial_commit_excludes_proposed_sidecars(tmp_path: Path) -> 
     assert proposed == []
 
 
-def test_wiki_doctor_clean_after_git_init(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Contract test #11 — ``wiki doctor`` is clean on both vault shapes.
+def test_wiki_doctor_clean_after_git_init(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Contract test #11 — ``wiki doctor`` reports clean on both vault shapes.
 
     Runs `wiki init` (default) and `wiki init --no-git` against fresh
-    targets, then `wiki doctor` against each; both must exit 0. On the
-    default-flag run, also asserts `git status --porcelain` returns
-    empty bytes — pins the "initial commit captures the full kit
-    shape; nothing landed after" invariant.
+    targets, then `wiki doctor` against each. Both must exit 0 AND
+    produce no issue output on stdout — a doctor regression that
+    returned 0 while printing spurious "drift" or "orphan" lines
+    would slip past an exit-code-only check, so we pin both. On the
+    default-flag run, also asserts `git status --porcelain` is empty
+    — pins the "initial commit captures the full kit shape; nothing
+    landed after" invariant.
 
     Doctor needs no code change for this PR: the orphan check derives
     owned-directory roots from journaled paths, and `.git/` is never
@@ -378,11 +385,19 @@ def test_wiki_doctor_clean_after_git_init(tmp_path: Path, monkeypatch: pytest.Mo
     assert main(["init", str(default_vault), "--recipe", "personal"]) == 0
     assert main(["init", str(no_git_vault), "--recipe", "personal", "--no-git"]) == 0
 
+    # Flush any stdout from the init runs so capsys only catches doctor.
+    capsys.readouterr()
+
     # `wiki doctor` operates on Path.cwd(); chdir into each vault.
     monkeypatch.chdir(default_vault)
     assert main(["doctor"]) == 0
+    default_out = capsys.readouterr().out
+    assert default_out == "", f"doctor printed issues on a clean default vault: {default_out!r}"
+
     monkeypatch.chdir(no_git_vault)
     assert main(["doctor"]) == 0
+    no_git_out = capsys.readouterr().out
+    assert no_git_out == "", f"doctor printed issues on a clean --no-git vault: {no_git_out!r}"
 
     # On the default run, the kit's initial commit captured everything —
     # nothing should be staged or untracked afterward.

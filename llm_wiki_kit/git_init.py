@@ -81,12 +81,14 @@ def initialize_git(
     """
 
     # The "target already contains ``.git/``" variant (spec §Behavior)
-    # is the case where the user already had a git repo — i.e. ``.git``
-    # is a directory. A ``.git`` that exists but is a regular file is
-    # not a repo; falling through to ``git init`` lets git surface a
-    # meaningful "exists but isn't a directory" failure rather than
-    # silently short-circuiting on a degenerate state.
-    if (target / ".git").is_dir():
+    # covers both the directory shape (a normal repo) AND the gitfile
+    # shape (a regular file containing ``gitdir: <path>``, used by
+    # worktrees and submodules). Treating either as "git territory" is
+    # the safer default: ``.exists()`` short-circuits both. A plain
+    # non-git file named ``.git`` is rare; the empty-target refusal
+    # in ``_cmd_init`` blocks it from the CLI today, and a direct
+    # caller passing a degenerate state still gets a clean no-op.
+    if (target / ".git").exists():
         return
 
     _run_git(["git", "init"], cwd=target, failure_prefix="git init failed", hint=False)
