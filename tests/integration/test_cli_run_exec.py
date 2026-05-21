@@ -163,6 +163,59 @@ def test_cli_run_exec_binary_missing_exits_with_error(tmp_path: Path) -> None:
     assert "claude" in proc.stderr.lower()
 
 
+def test_cli_run_exec_set_but_invalid_override_fails_fast(tmp_path: Path) -> None:
+    # CT-3a: a set-but-invalid `--claude-binary` raises at the CLI's
+    # pre-dispatch _locate_claude call. The journal must contain ZERO
+    # `operation.*` events — neither operation.run nor
+    # operation.exec_failed — because the failure is pre-dispatch.
+    vault = _make_vault(tmp_path)
+    not_executable = tmp_path / "not-claude"
+    not_executable.write_text("not a real binary", encoding="utf-8")
+    # File exists but is NOT marked executable.
+
+    proc = _run_wiki(
+        [
+            "run",
+            "--exec",
+            "--claude-binary",
+            str(not_executable),
+            "weekly-digest",
+            "--window=2026-W20",
+        ],
+        cwd=vault,
+        # Pin every env var the CLI's pre-dispatch validators read to a
+        # known-good value so this test exercises the `_locate_claude`
+        # raise path specifically. Without this, a polluted CI host
+        # with (say) a malformed WIKI_EXEC_TIMEOUT would also produce
+        # a zero-event failure for an unrelated reason, and a
+        # regression that moved `_locate_claude` to *after* `dispatch()`
+        # would still pass those assertions. WIKI_EXEC_TIMEOUT and
+        # WIKI_EXEC_LOG_RETENTION_DAYS take the CLI defaults (empty
+        # string would fail the integer parse and raise before
+        # `_locate_claude`); WIKI_EXEC_MAX_BUDGET_USD="" is the
+        # documented empty sentinel — `_validate_max_budget` returns
+        # `None` for it.
+        env_overrides={
+            "WIKI_CLAUDE_BINARY": "",
+            "WIKI_EXEC_TIMEOUT": "1800",
+            "WIKI_EXEC_LOG_RETENTION_DAYS": "30",
+            "WIKI_EXEC_MAX_BUDGET_USD": "",
+        },
+    )
+    assert proc.returncode != 0
+    # Pin the specific raise path: the error must come from
+    # `_locate_claude`, not from one of the env-var validators that run
+    # earlier in `_cmd_run_exec`.
+    assert "not an executable file" in proc.stderr
+    # Zero operation.* events in the journal — pre-dispatch raise means
+    # no event was journaled.
+    journal_lines = (
+        (vault / ".wiki.journal" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+    assert not any('"type":"operation.run"' in line for line in journal_lines)
+    assert not any('"type":"operation.exec_failed"' in line for line in journal_lines)
+
+
 def test_cli_run_exec_invalid_args_skips_exec(tmp_path: Path) -> None:
     # CT-2 via CLI: invalid_args path skips exec, prints stderr, exits non-zero.
     vault = _make_vault(tmp_path)
