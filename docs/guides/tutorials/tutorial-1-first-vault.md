@@ -50,6 +50,19 @@ You'll see a short summary of installed primitives. The kit creates
 the vault directory, lays down `wiki/`, `skills/`, `_templates/`, and
 the journal under `.wiki.journal/journal.jsonl`.
 
+Because `--no-git` was not passed, the kit also initialized a git
+repository for you and made one initial commit covering the
+freshly-rendered tree. `git log --oneline` should show one commit
+named *Initialize wiki vault from personal recipe*. The rest of this
+tutorial is git-agnostic; any subsequent commits are yours to make.
+
+If you'd rather manage versions yourself (or your global git config
+isn't set up), pass `--no-git` to step 1 instead:
+
+```text
+wiki init my-first-vault --recipe personal --no-git
+```
+
 `personal` is the smallest recipe and the right starting point for a
 first vault. The other two shipped recipes — `family` and `work-os` —
 each ship more primitives; pick those when you're ready for more

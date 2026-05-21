@@ -300,7 +300,10 @@ The differing-bytes case the ADR's §Positive describes:
   directory is non-empty otherwise, treat the contents normally.
 - **Target contains `.git/` or other VCS metadata** — proceed. The
   VCS directory's contents are user-territory (no recipe renders
-  inside `.git/`); not adopted, not journaled.
+  inside `.git/`); not adopted, not journaled. *See also:
+  `docs/specs/wiki-init-git/spec.md` §"Variant — target already
+  contains `.git/`" for how `wiki init`'s git-init phase responds
+  to a pre-existing `.git/` when both flags compose.*
 - **Target contains `.proposed` sidecars from a prior run** — the
   sidecars are recorded in `adopt_set.pre_existing_sidecars` and
   surfaced via the informational stderr-only warning line (per
