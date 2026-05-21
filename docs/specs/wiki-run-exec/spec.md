@@ -237,14 +237,22 @@ the kit considers vault content:
   `attachments/`) can still carry conflicts the user needs to
   resolve before a scheduled run mutates them.
 
-The walk is breadth-first. It does **not** short-circuit — it
-collects up to 20 sidecar paths so the event and per-failure file
-can list them, then stops. The event's `conflict_sidecars` field
-carries the collected paths verbatim (vault-relative POSIX form).
-The per-failure file renders them as a bullet list. If more than
-20 sidecars exist, the kit notes `(…N more)` after the 20th in
-both the event body's per-failure file and any user-visible
-prose. No 4 KB byte cap — the 20-path count is the single bound.
+The walk is **deterministic in sorted lexicographic order** —
+each top-level subtree is enumerated via `Path.rglob("*.proposed")`
+sorted by path, so two runs over the same on-disk state report the
+same paths in the same order. (Earlier drafts said "breadth-first";
+the implementation's depth-first-with-sorted-ordering produces a
+deterministic, replayable result, which is what the contract needs
+— the BFS-vs-DFS distinction was unnecessary precision.) It does
+**not** short-circuit — it collects up to 20 sidecar paths so the
+event and per-failure file can list them, then stops adding to
+`paths` while continuing to count `total`. The event's
+`conflict_sidecars` field carries the collected paths verbatim
+(vault-relative POSIX form). The per-failure file renders them as
+a bullet list. If more than 20 sidecars exist, the kit notes
+`(…N more)` after the 20th in both the per-failure file and any
+user-visible prose, where `N == total - 20`. No 4 KB byte cap —
+the 20-path count is the single bound.
 
 Rationale for the scope: prevents the deadlock loop where a sidecar
 created by an earlier refusal's failure-file write triggers the next

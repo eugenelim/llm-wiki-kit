@@ -1329,3 +1329,45 @@ def test_orch_two_failures_produce_two_distinct_files(
             f"{second.dispatch.dispatch_event_id}.md",
         ]
     )
+
+
+def test_orch_subprocess_runs_with_vault_cwd_and_inherits_env(
+    exec_vault: Path,
+    kit_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spec §Invariants line 436-445: ``cwd=vault_root``, env unchanged at v1.
+
+    Captures both surfaces from a python-stub claude that writes
+    ``os.getcwd()`` and a marker env var to a fixture file. Pins
+    the contract so a future refactor that filters env or changes
+    cwd can't regress silently.
+    """
+
+    capture = tmp_path / "capture.json"
+    script = (
+        "import os, json, sys\n"
+        "data = {'cwd': os.getcwd(),"
+        " 'marker': os.environ.get('WIKI_EXEC_TEST_MARKER')}\n"
+        f"json.dump(data, open({str(capture)!r}, 'w'))\n"
+        "sys.exit(0)\n"
+    )
+    claude = _make_python_stub(tmp_path, script, name="claude")
+    monkeypatch.setenv("WIKI_EXEC_TEST_MARKER", "sentinel-value")
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=exec_vault / ".wiki.journal" / "journal.jsonl",
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert result.exec_status == "succeeded"
+    captured = json.loads(capture.read_text(encoding="utf-8"))
+    # cwd resolves to the same path under macOS /private symlink — compare
+    # via Path.resolve so /var vs /private/var don't trip the assertion.
+    assert Path(captured["cwd"]).resolve() == exec_vault.resolve()
+    # Parent env passes through unchanged (the marker we set is visible).
+    assert captured["marker"] == "sentinel-value"

@@ -887,7 +887,7 @@ def _render_failure_file(
             "# Scheduled exec refused: unresolved conflicts",
             "",
             f"- **Operation:** {operation}",
-            f"- **Dispatched:** {dispatched_at.isoformat()}",
+            f"- **Dispatched:** {dispatched_at.isoformat()} (dispatch event {dispatch_event_id})",
             f"- **Refused:** {failed_at.isoformat()} (dispatch event {dispatch_event_id})",
             "- **Reason:** conflict-refused — `.proposed` sidecars present in scope.",
             "- **Sidecars found:**",
@@ -931,7 +931,7 @@ def _render_failure_file(
             "",
             f"- **Operation:** {operation}",
             f"- **Dispatched:** {dispatched_at.isoformat()} (dispatch event {dispatch_event_id})",
-            f"- **Failed:** {failed_at.isoformat()}",
+            f"- **Failed:** {failed_at.isoformat()} (dispatch event {dispatch_event_id})",
             f"- **Reason:** {reason} (exit {exit_code}, duration {duration_s:.0f}s)",
             log_line,
             (
