@@ -64,10 +64,16 @@ def build_vault(kit_root: Path, parent: Path, *adds: str) -> Path:
     ``contextlib.chdir`` (Python 3.11+) to scope the cwd change to
     the add sequence so this helper is safe to call from
     session-scoped fixtures without leaking cwd into other tests.
+
+    ``--no-git`` is passed because (a) the eval suite is testing
+    skill outcomes, not git semantics, and (b) this helper runs from
+    session-scoped fixtures that fire before any function-scoped
+    autouse ``GIT_AUTHOR_*`` fixture activates, so a default git-init
+    would hit the missing-identity failure on a hermetic CI runner.
     """
 
     vault = parent / "vault"
-    assert cli.main(["init", str(vault), "--recipe", "minimal"], kit_root=kit_root) == 0
+    assert cli.main(["init", str(vault), "--recipe", "minimal", "--no-git"], kit_root=kit_root) == 0
     if adds:
         with contextlib.chdir(vault):
             for primitive in adds:
