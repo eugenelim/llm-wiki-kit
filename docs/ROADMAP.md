@@ -18,17 +18,21 @@ the Phase F contract-completion sweep have shipped.
 
 ## Deferred from v2.0
 
-The RFC explicitly defers a single item out of v2.0; it needs its own
-spec before any task picks it up.
+The RFC explicitly defers a single item out of v2.0; the spec has
+landed and implementation is queued.
 
 - **`wiki init --adopt`** — adopt an existing folder as a vault rather
   than refusing on a non-empty target. Flagged as an "Unresolved
-  question" in RFC-0001 and deferred at Task 10. The semantics are
-  non-trivial — every pre-existing file needs to be journaled before
-  any kit-owned write can land safely, baseline hashes have to be
-  seeded, and the policy for files the kit wouldn't otherwise own has
-  to be pinned. The inline comment in `llm_wiki_kit/cli.py:_cmd_init`
-  carries the same pointer for future readers.
+  question" in RFC-0001 and deferred at Task 10. **Spec landed**:
+  policy pinned in
+  [`docs/adr/0008-init-adopt-ownership-policy.md`](adr/0008-init-adopt-ownership-policy.md),
+  contract and plan in
+  [`docs/specs/wiki-init-adopt/`](specs/wiki-init-adopt/). The
+  implementation breaks into three sequential PRs per the plan
+  (event types + replay, adopt-aware `safe_write` predicate,
+  `_cmd_init --adopt` end-to-end) and is awaiting a free slot. The
+  inline comment in `llm_wiki_kit/cli.py:_cmd_init` carries the same
+  pointer for future readers.
 
 ## Pointers
 
