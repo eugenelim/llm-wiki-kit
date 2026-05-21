@@ -133,7 +133,7 @@ description: >-
   medical summaries, weekly digests — in the voice of a family-side
   operator who knows the household's standing context.
 license: MIT
-audience: family            # one of: family | work-os | personal | shared
+audience: family            # enum: family | work-os | personal | shared
 role: coordinator           # free-text role label, shown in conflict UX
 tone: warm, brief, direct   # free-text tone label
 knows:                      # vault pages the agent treats as standing context
@@ -290,17 +290,23 @@ backward compatibility.
 
 Additive per ADR-0002:
 
-- `agent.install` — `AgentInstallEvent` with fields `agent` (name)
-  and `version`. Mirrors `PrimitiveInstallEvent` but discriminated
-  separately so replay can derive an "installed agents" set without
-  filtering on `kind`. (Open for review — see Unresolved Questions
-  §1.)
+- **No new install event.** Agents are installed via the existing
+  `PrimitiveInstallEvent`, the same way ontology, content-type,
+  operation, and infrastructure primitives are. The kind is
+  recoverable from the primitive name via the installed catalog,
+  so a separate `AgentInstallEvent` discriminator would be pure
+  ceremony — `wiki list agents` filters the primitive set by kind
+  at replay time.
 - `operation.run_by_agent` — recorded by `wiki run --exec` *only
   when an agent was resolved*. Fields: `operation`, `agent`,
   `event_id` (of the paired `OperationRunEvent`). Stays additive
   rather than extending `OperationRunEvent` for the same
   replay-assertion safety reason RFC-0003 §4 picked
-  `ScheduledRunEvent` over a `triggered_by` field.
+  `ScheduledRunEvent` over a `triggered_by` field. Also recorded
+  by `wiki run <op>` *without* `--exec` if the user passed
+  `--agent` — manual invocations get the same audit tag as
+  scheduled ones, even though the kit doesn't pass the agent
+  anywhere on the dispatch-only path.
 
 `ScheduleInstalledEvent` (from RFC-0003) gains one optional field
 with default:
@@ -340,9 +346,16 @@ update lands in the same PR sequence (one of the migration tasks).
 ### 7. Discovery: `wiki list agents` and `wiki doctor`
 
 `wiki list agents` lists installed agents (one per
-`AgentInstallEvent` with no later remove event), with the recipe
-and operations each agent runs. Output is short — name, audience,
-role, operations bound.
+`PrimitiveInstallEvent` with `kind: agent` and no later remove
+event), with the recipe and operations each agent runs. Output is
+short — name, audience, role, operations bound.
+
+`wiki schedule list` (from RFC-0003) gains an **Agent** column
+showing the resolved agent for each schedule entry. Without it,
+"who runs `weekly-digest` on Sunday at 9am" requires reading the
+schedule entry, the recipe's `agents:` block, and the operation's
+`preferred_agent:`. No schema change — the column reads the
+agent already journaled on `ScheduleInstalledEvent`.
 
 `wiki doctor` gains one check (additive to RFC-0003's three):
 
@@ -416,7 +429,8 @@ On acceptance, this RFC produces a numbered task sequence (probably
 seven tasks):
 
 1. `PrimitiveKind.AGENT` + `_CATALOG_DIRS` entry +
-   `AgentInstallEvent` + `OperationRunByAgentEvent` in `models.py`.
+   `OperationRunByAgentEvent` in `models.py`. (No new install
+   event — agents reuse `PrimitiveInstallEvent`.)
 2. Optional fields on `ScheduleInstalledEvent` and
    `PageProposalEvent` (additive; replay tests).
 3. Agent discovery + install plumbing in `primitives.py` and the
@@ -547,39 +561,59 @@ Called out explicitly so reviewers can hold the boundary:
   reviewers find a load-bearing change is needed there, amend
   RFC-0003, don't bury it here.
 
+## Resolved before review
+
+Six open questions were raised during drafting and resolved with
+the author before this RFC opened for review. Captured here as a
+trace of where the proposal could have forked, so reviewers can
+push back if any resolution looks wrong:
+
+1. **`PrimitiveInstallEvent` covers all kinds; no separate
+   `AgentInstallEvent`.** The kind is recoverable from the
+   installed catalog, so a dedicated discriminator was ceremony.
+   `wiki list agents` filters by kind at replay time. (Folded
+   into §5.)
+1. **`audience:` is an enum.** `family | work-os | personal |
+   shared` matches the three shipped recipes plus a catch-all.
+   Free-text was rejected for v1 because doctor can't catch
+   typos; revisit when a fourth recipe lands or someone forks.
+   (Folded into §1.)
+1. **`wiki schedule list` shows the resolved agent.** New
+   **Agent** column, reads the field already journaled on
+   `ScheduleInstalledEvent`. (Folded into §7.)
+1. **Agent-specific config lives in vault pages, not on the
+   agent.** CHARTER principle 4 — vault state belongs in
+   journal/pages. Defer per-agent config until a user actually
+   asks. (Stated in the §6 / §1 framing; no new surface needed.)
+1. **Conflict UX reads the *latest* proposal's
+   `proposed_by_agent`.** The edge case isn't recipe-switching
+   (the kit has no "switch recipe" verb) — it's a user
+   `wiki add`-ing a different agent and rebinding an operation,
+   or `wiki upgrade` swapping the bound agent. Either way, the
+   merge is about the latest conflict, not the page's identity
+   history. (Folded into §6.)
+1. **`wiki run <op>` (without `--exec`) accepts `--agent` and
+   journals it.** The flag is meaningless on the dispatch-only
+   path (no `claude` invocation), but tagging the audit trail
+   keeps manual and scheduled runs symmetric. (Folded into §5.)
+
 ## Unresolved questions
 
-- **Separate `AgentInstallEvent` or extend `PrimitiveInstallEvent`?**
-  §5 picks the former for separable replay. The cheaper path is to
-  let `PrimitiveInstallEvent` cover all kinds and filter at replay
-  time (since the kind is recoverable from the primitive name via
-  the installed catalog). Reviewer call.
-- **Should `audience:` on `AGENT.md` be free-text or enum?** §1
-  shows `audience: family | work-os | personal | shared`. An enum
-  constrains the catalog; free-text lets users invent audiences
-  for forked recipes. Lean enum for v1; revisit when a fourth
-  recipe lands.
-- **Does `wiki schedule list` show the resolved agent per entry?**
-  Probably yes — without it, "who runs this on Sunday at 9am"
-  requires reading three files. Adds a column to the existing
-  table, no schema change.
-- **Where do agent-specific config values live?** An agent might
-  want per-vault config (e.g. the Care Coordinator's preferred
-  level of medical detail). Options: a managed region in
-  `AGENT.md`, a sibling `config.yaml`, or just "use vault pages."
-  Proposed: use vault pages (CHARTER principle 4) and defer
-  config-on-agents until a user actually asks.
-- **How does the agent-aware conflict UX read when the same page
-  has proposals from different agents over time?** Edge case: the
-  Household Manager wrote a digest last week, the Personal
-  Coordinator wrote one this week (the user switched recipes).
-  Proposed: the SKILL reads only the *latest* proposal's
-  `proposed_by_agent`. Open for review.
-- **Should `wiki run <op>` (without `--exec`) accept `--agent`?**
-  The dispatch-only path doesn't invoke `claude`, so the agent has
-  nowhere to attach. Proposed: accept the flag and journal it on
-  `OperationRunByAgentEvent` so manual runs are also agent-tagged,
-  even though the kit doesn't pass it anywhere. Open.
+Open for reviewer input:
+
+- **Claude CLI flag set for agent passthrough.** The exact flag
+  (`--agent <path>` vs `--system-prompt-file <path>` vs
+  something else) is a moving target in the Claude CLI. Pin
+  against a documented minimum version in a follow-on ADR
+  rather than freezing in this RFC. Same approach RFC-0003 took
+  for its own headless flag set.
+- **`wiki upgrade` semantics for a bound agent.** If a user has
+  `weekly-digest` bound to `household-manager` and the agent
+  primitive ships a v0.2 upgrade with a different `role:` or
+  `knows:` list, does `wiki upgrade` rebind silently or surface
+  the change? Lean: surface as a `wiki doctor` warning so the
+  user can review the persona change before the next scheduled
+  run. Worth a reviewer call.
 
 ## Outcome
 
