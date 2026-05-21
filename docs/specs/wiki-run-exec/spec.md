@@ -310,8 +310,10 @@ deletions — they're cache-housekeeping, not state changes.
    `.gitignore` entry on first creation if not already in vault
    `.gitignore`).
 6. `subprocess.run` with the args above. The dispatch event's id is
-   passed to `claude` via `--input` so the SKILL can chain its
-   work to the same event.
+   inlined into the prompt text the kit constructs (per
+   [ADR-0009 §Decision](../../adr/0009-headless-claude-invocation-contract.md)),
+   so the SKILL can chain its work to the same event by reading
+   the id from the prompt.
 7. On success: stdout line, exit 0. **No second event.**
 8. On failure (non-zero exit / timeout): journal
    `OperationExecFailedEvent`, append failure-page bullet, exit
@@ -476,8 +478,9 @@ deletions — they're cache-housekeeping, not state changes.
   `inbox/scheduled-failures/<dispatch-event-id>.md`. No managed
   regions, no new helper — each file is single-write by
   construction.
-- **The vault-side SKILL** — receives the dispatch event id via
-  `--input`. The SKILL contract is unchanged; spec'd separately
+- **The vault-side SKILL** — receives the dispatch event id
+  inlined into the prompt text (per ADR-0009 §Decision). The
+  SKILL contract is unchanged; spec'd separately
   in the vault-side `wiki-schedule` SKILL.md (out of scope here).
 
 ## Acceptance criteria
