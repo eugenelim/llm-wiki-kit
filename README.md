@@ -8,7 +8,11 @@ A Python package and template catalog for building LLM-maintained markdown wikis
 
 ---
 
-## Install
+## Quick start
+
+Five steps, fresh machine to working vault.
+
+**1. Install.** Requires Python 3.11+.
 
 ```bash
 pip install llm-wiki-kit
@@ -16,22 +20,93 @@ pip install llm-wiki-kit
 pipx install llm-wiki-kit
 ```
 
-Requires Python 3.11+. Runtime deps are `pyyaml` and `pydantic>=2`; everything else is stdlib. `pipx install` works out of the box — the wheel bundles the recipe catalog and template assets so no source checkout is needed (see [`docs/specs/wheel-bundled-assets/spec.md`](docs/specs/wheel-bundled-assets/spec.md)).
-
-## Quick start
+**2. Init a vault.** Pick a recipe — `personal` (smallest, start here), `family`, or `work-os`.
 
 ```bash
-# Pick a recipe: family, work-os, or personal.
-wiki init --recipe family my-vault
-
-# Sanity check.
+wiki init my-vault --recipe personal
 cd my-vault
-wiki doctor
 ```
 
-Then point Claude Code (or any agent that reads `AGENTS.md`) at `my-vault/`. The kit lays down the journal, the skills, the schema, and the seed pages; the agent reads the vault-side `AGENTS.md` to learn what to do next.
+**3. Version it.** The vault is plain markdown. Commit it like code so you can read history and roll back. The kit already drops a sensible `.gitignore` (covers `*.proposed` sidecars, OS junk, search-index runtime).
+
+```bash
+git init && git add . && git commit -m "init vault"
+```
+
+**4. Open it.** The vault is Obsidian-compatible: in Obsidian, *File → Open vault* → pick `my-vault/`. Or just open the folder in any editor — it's regular markdown.
+
+**5. Talk to Claude.** Open Claude Code (or any agent that reads `AGENTS.md`) at the vault root. It will read `AGENTS.md` and `CORE.md` to learn what the vault is and what skills it can run. Then paste one of the prompts below.
 
 A 20-minute walkthrough lives in [`docs/guides/tutorials/tutorial-1-first-vault.md`](docs/guides/tutorials/tutorial-1-first-vault.md), with a deeper `work-os` tour in [`tutorial-2-work-os-walkthrough.md`](docs/guides/tutorials/tutorial-2-work-os-walkthrough.md). Browse `examples/family-mini/` and `examples/work-os-mini/` to see what a rendered vault looks like before installing.
+
+## Talking to Claude
+
+Three things to try first, in escalating order. Paste any of these into Claude Code at the vault root:
+
+**Read the journal.** Works on day one with no setup. The journal is the kit's source of truth — every state-changing action lands one line of JSON before touching disk.
+
+```text
+Read .wiki.journal/journal.jsonl and summarize what's happened in this
+vault in the last seven days. Group by event type.
+```
+
+**Ingest a source.** Drop a file under `raw/` and route it through the kit first (this journals the ingest dispatch):
+
+```bash
+mkdir -p raw
+printf '# Standup\n\nDiscussed Q3.\n' > raw/standup.md
+wiki ingest --as meeting raw/standup.md
+```
+
+Then in Claude:
+
+```text
+Pick up the journaled ingest route for raw/standup.md and run the
+ingest-meeting skill; write the synthesized page under wiki/meetings/.
+```
+
+**Run an operation.** Once you have a few meeting pages from this week in `wiki/meetings/`:
+
+```text
+Run the weekly-digest skill for the current ISO week. Write the digest
+under outputs/digests/ at the path the skill specifies.
+```
+
+The default `wiki run weekly-digest` (with no args) targets the most recent *complete* ISO week; we pin the current week in the prompt above so you see output on day one.
+
+If you get a `.proposed` sidecar next to a file, see [*How to fix a `.proposed` sidecar*](#how-to-fix-a-proposed-sidecar) below — the kit never silently overwrites your edits.
+
+## What you'll see in week 1
+
+After `wiki init my-vault --recipe personal`, you have:
+
+```
+my-vault/
+├── AGENTS.md               # Contract the agent reads when you open the vault.
+├── CORE.md                 # What this vault is, in plain English.
+├── .gitignore              # Sensible defaults — commit the journal, ignore sidecars.
+├── .wiki.journal/          # Append-only event log. The kit's source of truth.
+├── _templates/             # Page templates the kit fills in.
+├── frontmatter.schema.yaml # YAML-frontmatter contract for typed pages.
+├── identity.md             # Seed page about you (personal recipe).
+├── skills/                 # Vault-side skills your agent session runs.
+│   ├── ingest-meeting/, weekly-digest/, ingest-recipe/, …
+│   └── wiki-search/, wiki-doctor/, wiki-conflict/, …
+└── wiki/                   # Typed pages land here.
+    ├── meetings/, people/, decisions/, food/, trips/, …
+```
+
+Two directories `wiki init` doesn't create — they appear on first use:
+
+- `raw/` — informal convention; you (or the agent) drop source material here before ingest.
+- `outputs/` — prescribed by operation contracts (e.g. `weekly-digest` writes to `outputs/digests/<window>.md`). The directory shows up the first time an operation runs.
+
+A typical first week:
+
+- **Day 1–2:** ingest a handful of sources (meeting notes, recipes, a trip plan). `wiki/<thing>/` starts filling up with one typed page per source. The journal grows by one `page.write` event per page.
+- **Day 3–7:** run the `weekly-digest` operation. The agent reads across your meetings and writes a summary the kit places by the skill's contract. Run `wiki doctor` whenever you want to sanity-check that on-disk reality still matches the journal.
+
+The deeper a recipe you pick, the more ontology folders, content-types, and operations show up — `family` adds shared-household primitives (action items, follow-up tracking, meal planning), `work-os` adds stakeholder/customer/decision primitives plus the operations that read across them.
 
 ## The two loops
 
@@ -59,7 +134,7 @@ The deep dive — module map, journal events, write-safety layers — lives in [
 ## CLI surface
 
 ```
-wiki init --recipe <name> <path>     Create a new vault from a recipe.
+wiki init <path> --recipe <name>     Create a new vault from a recipe.
 wiki add <kind>:<name>               Install a primitive into the current vault.
 wiki upgrade [--primitive <name>]    Upgrade installed primitives to latest.
 wiki doctor                          Validate vault state against the journal.
