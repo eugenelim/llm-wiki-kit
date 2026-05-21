@@ -129,7 +129,7 @@ Accepted.
 ### CLI surface (target)
 
 ```
-wiki init --recipe <name> <path>     # create a new vault
+wiki init --recipe <name> [--no-git] <path>     # create a new vault; --no-git opts out of the default git init + initial commit
 wiki add <kind>:<name>               # install a primitive into the current vault
 wiki upgrade [--primitive <name>]    # upgrade installed primitives to latest
 wiki doctor                          # validate vault state against journal

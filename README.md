@@ -27,11 +27,7 @@ wiki init my-vault --recipe personal
 cd my-vault
 ```
 
-**3. Version it.** The vault is plain markdown. Commit it like code so you can read history and roll back. The kit already drops a sensible `.gitignore` (covers `*.proposed` sidecars, OS junk, search-index runtime).
-
-```bash
-git init && git add . && git commit -m "init vault"
-```
+**3. Version it.** `wiki init` initializes a git repository in the new vault by default and makes one initial commit covering the freshly-rendered tree. Pass `--no-git` to step 2 if you'd rather manage versions yourself (or you have no global `git config user.name`/`user.email` set yet). The kit's `.gitignore` ships either way — it covers `*.proposed` sidecars, OS junk, and search-index runtime.
 
 **4. Open it.** The vault is Obsidian-compatible: in Obsidian, *File → Open vault* → pick `my-vault/`. Or just open the folder in any editor — it's regular markdown.
 

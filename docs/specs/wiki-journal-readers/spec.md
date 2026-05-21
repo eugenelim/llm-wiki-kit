@@ -79,6 +79,7 @@ side effects").
   | Event type | Summary fields |
   |---|---|
   | `vault.init` | `vault=<vault_name> recipe=<recipe>` |
+  | `vault.git_initialized` | *(no fields — empty summary)* |
   | `primitive.install` | `primitive=<primitive> version=<version>` |
   | `primitive.remove` | `primitive=<primitive>` |
   | `primitive.upgrade` | `primitive=<primitive> from=<from_version> to=<to_version>` |

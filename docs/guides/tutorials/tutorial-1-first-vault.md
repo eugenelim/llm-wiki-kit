@@ -50,6 +50,19 @@ You'll see a short summary of installed primitives. The kit creates
 the vault directory, lays down `wiki/`, `skills/`, `_templates/`, and
 the journal under `.wiki.journal/journal.jsonl`.
 
+Because `--no-git` was not passed, the kit also initialized a git
+repository for you and made one initial commit covering the
+freshly-rendered tree. `git log --oneline` should show one commit
+named *Initialize wiki vault from personal recipe*. The rest of this
+tutorial is git-agnostic; any subsequent commits are yours to make.
+
+If you'd rather manage versions yourself (or your global git config
+isn't set up), pass `--no-git` to step 1 instead:
+
+```text
+wiki init my-first-vault --recipe personal --no-git
+```
+
 `personal` is the smallest recipe and the right starting point for a
 first vault. The other two shipped recipes — `family` and `work-os` —
 each ship more primitives; pick those when you're ready for more
@@ -76,13 +89,14 @@ text any time:
 $ cat .wiki.journal/journal.jsonl
 ```
 
-You should see one `vault.init` line and one `primitive.install` line
-per primitive the recipe installed. Each line has a `timestamp`, a
-`by` field (the kit's name for whoever performed the action), and
-type-specific fields. The richer surfaces (`wiki journal tail`,
-`wiki journal grep`, `wiki journal explain`) are planned but not yet
-shipped in v2.0.0 — until they land, `cat` and `tail` are how you
-read the journal.
+You should see one `vault.init` line, one `primitive.install` line
+per primitive the recipe installed, and (because step 1 didn't pass
+`--no-git`) one `vault.git_initialized` line marking the kit's
+initial commit. Each line has a `timestamp`, a `by` field (the kit's
+name for whoever performed the action), and type-specific fields.
+The richer surfaces (`wiki journal tail`, `wiki journal grep`,
+`wiki journal explain`) are planned but not yet shipped in v2.0.0 —
+until they land, `cat` and `tail` are how you read the journal.
 
 ## Step 4 — Ingest a source
 

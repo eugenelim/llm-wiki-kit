@@ -22,6 +22,13 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
+# Load-bearing for ``git_init.initialize_git``'s commit-message argv — the
+# recipe name is interpolated into ``"Initialize wiki vault from <recipe>
+# recipe"`` and passed as a single argv element to ``git commit -m`` with
+# ``shell=False``. The ``[a-z][a-z0-9-]*`` pattern keeps the name shell-safe
+# without quoting concerns. Any future relaxation must audit
+# ``llm_wiki_kit/git_init.py`` per ``docs/specs/wiki-init-git/spec.md``
+# §Behavior step 6.
 NAME_PATTERN = r"^[a-z][a-z0-9-]*$"
 SEMVER_PATTERN = r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
 
@@ -219,6 +226,22 @@ class VaultInitEvent(_EventBase):
     schema_version: int = 1
 
 
+class VaultGitInitializedEvent(_EventBase):
+    """Recorded when ``wiki init`` initializes a git repo for the vault.
+
+    The event is appended between ``git init`` and ``git add -A`` /
+    ``git commit`` so its journal line is captured by the initial
+    commit's tree, leaving ``git status --porcelain`` empty after a
+    successful ``wiki init``. Carries no ``commit_sha`` or ``branch``
+    — see ``docs/specs/wiki-init-git/spec.md`` §Outputs for the
+    rationale (recording the SHA would require either two commits or
+    a journal-ahead-of-HEAD state).
+    """
+
+    type: Literal["vault.git_initialized"] = "vault.git_initialized"
+    schema_version: int = 1
+
+
 class PrimitiveInstallEvent(_EventBase):
     type: Literal["primitive.install"] = "primitive.install"
     primitive: str
@@ -375,6 +398,7 @@ class LockReleasedEvent(_EventBase):
 
 Event = Annotated[
     VaultInitEvent
+    | VaultGitInitializedEvent
     | PrimitiveInstallEvent
     | PrimitiveRemoveEvent
     | PrimitiveUpgradeEvent

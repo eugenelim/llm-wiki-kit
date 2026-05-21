@@ -191,7 +191,11 @@ def build_vault(recipe: str, target: Path) -> None:
 
     _assert_recipe_variables_stable(recipe)
 
-    rc = cli.main(["init", str(target), "--recipe", recipe])
+    # `--no-git` keeps committed example vaults free of a `.git/`
+    # directory and the corresponding `VaultGitInitializedEvent` line
+    # in the journal — the examples are reference content, not git
+    # repositories. See `docs/specs/wiki-init-git/spec.md`.
+    rc = cli.main(["init", str(target), "--recipe", recipe, "--no-git"])
     if rc != 0:
         raise RuntimeError(f"`wiki init --recipe {recipe}` exited {rc}")
 
@@ -235,7 +239,9 @@ def build_conflict_pending(target: Path) -> None:
 
     _assert_recipe_variables_stable("personal")
 
-    rc = cli.main(["init", str(target), "--recipe", "personal"])
+    # `--no-git` for the same reason as `build_vault`: committed
+    # example vaults are reference content, not git repositories.
+    rc = cli.main(["init", str(target), "--recipe", "personal", "--no-git"])
     if rc != 0:
         raise RuntimeError(f"`wiki init --recipe personal` exited {rc}")
 

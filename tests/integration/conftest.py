@@ -8,6 +8,11 @@ install tests.
 
 See ``docs/specs/wheel-bundled-assets/plan.md`` step 3 §"What you'll
 change" for the contract.
+
+The ``GIT_AUTHOR_*`` / ``GIT_COMMITTER_*`` autouse fixture that the
+default ``wiki init`` path relies on lives in ``tests/conftest.py``
+so unit-level and eval-level tests that call ``cli.main(["init", …])``
+to seed a vault are covered too.
 """
 
 from __future__ import annotations

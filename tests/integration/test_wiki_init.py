@@ -110,7 +110,16 @@ def test_init_renders_core_only_vault(tmp_path: Path, core_only_kit: Path) -> No
 def test_init_journal_state_replays_cleanly(tmp_path: Path, core_only_kit: Path) -> None:
     vault = tmp_path / "another-vault"
 
-    assert main(["init", str(vault), "--recipe", "core-only"], kit_root=core_only_kit) == 0
+    # `--no-git` keeps the journal shape this test pins narrow to
+    # render events; the git-init path lives under its own coverage
+    # in `tests/integration/test_wiki_init_git.py`.
+    assert (
+        main(
+            ["init", str(vault), "--recipe", "core-only", "--no-git"],
+            kit_root=core_only_kit,
+        )
+        == 0
+    )
 
     events = read_events(_journal_path(vault))
 

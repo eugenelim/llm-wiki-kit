@@ -126,6 +126,24 @@ def _safe_env(home: Path) -> dict[str, str]:
     return env
 
 
+def _seed_git_identity(home: Path) -> None:
+    """Drop a minimal ``~/.gitconfig`` into the tutorial's isolated HOME.
+
+    The tutorials' opening ``wiki init`` command initializes git and
+    makes one initial commit by default (see
+    ``docs/specs/wiki-init-git/spec.md``); ``git commit`` needs a
+    ``user.name`` / ``user.email`` to attribute the commit to. The
+    real-user path is "run `git config --global ...` once"; the test
+    sandbox bypasses that one-time setup so the tutorial's commands
+    can run unmodified.
+    """
+
+    (home / ".gitconfig").write_text(
+        "[user]\n\tname = Tutorial Test\n\temail = tutorial-test@example.com\n",
+        encoding="utf-8",
+    )
+
+
 def _run_tutorial_script(
     md_path: Path,
     cwd: Path,
@@ -168,6 +186,7 @@ def _fmt_failure(md_path: Path, proc: subprocess.CompletedProcess[bytes]) -> str
 def test_tutorial_1_runs_end_to_end(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
+    _seed_git_identity(home)
     work = tmp_path / "work"
     work.mkdir()
     proc = _run_tutorial_script(TUTORIAL_1, cwd=work, home=home)
@@ -182,6 +201,7 @@ def test_tutorial_1_runs_end_to_end(tmp_path: Path) -> None:
 def test_tutorial_2_runs_end_to_end(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
+    _seed_git_identity(home)
     work = tmp_path / "work"
     work.mkdir()
     proc = _run_tutorial_script(TUTORIAL_2, cwd=work, home=home)
@@ -199,6 +219,7 @@ def test_resolve_a_conflict_runs_end_to_end(tmp_path: Path) -> None:
 
     home = tmp_path / "home"
     home.mkdir()
+    _seed_git_identity(home)
     work = tmp_path / "work"
     work.mkdir()
     # The how-to's literal text writes to `/tmp/conflict-demo`. The test

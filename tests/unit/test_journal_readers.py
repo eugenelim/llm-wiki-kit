@@ -40,6 +40,7 @@ from llm_wiki_kit.models import (
     PrimitiveUpgradeEvent,
     ResearchQueryEvent,
     SourceIngestEvent,
+    VaultGitInitializedEvent,
     VaultInitEvent,
 )
 
@@ -546,6 +547,16 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
         "vault=alpha recipe=family",
     ),
     (
+        # `vault.git_initialized` carries no per-event payload fields
+        # (see `docs/specs/wiki-init-git/spec.md` §Outputs). The
+        # summary is the empty string — pinned here so a future field
+        # accidentally added to the event class wouldn't silently
+        # change the journal-readers contract.
+        VaultGitInitializedEvent,
+        {},
+        "",
+    ),
+    (
         PrimitiveInstallEvent,
         {"primitive": "core", "version": "1.0.0"},
         "primitive=core version=1.0.0",
@@ -752,6 +763,7 @@ def _build_instance(cls: type) -> typing.Any:
 
     extras_by_class: dict[type, dict[str, object]] = {
         VaultInitEvent: {"vault_name": "x", "recipe": "family"},
+        VaultGitInitializedEvent: {},
         PrimitiveInstallEvent: {"primitive": "core", "version": "1.0.0"},
         PrimitiveRemoveEvent: {"primitive": "core"},
         PrimitiveUpgradeEvent: {
