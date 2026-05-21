@@ -619,8 +619,17 @@ def _walk_proposed_sidecars(vault_root: Path) -> _SidecarWalk:
         if len(paths) < 20:
             paths.append(rel)
 
+    # Resolve once so symlink-escape rejection (below) compares
+    # canonical paths.
+    resolved_root = vault_root.resolve()
     for child in sorted(vault_root.iterdir()):
         if child.name.startswith("."):
+            continue
+        # Skip symlinks at the top level — a symlinked subtree could
+        # cause the walk to descend system directories (security
+        # review concern). Same posture for symlinks discovered
+        # deeper: ``os.walk(..., followlinks=False)`` is the canon.
+        if child.is_symlink():
             continue
         if child.is_file():
             if child.name.endswith(".proposed"):
@@ -628,9 +637,27 @@ def _walk_proposed_sidecars(vault_root: Path) -> _SidecarWalk:
             continue
         if not child.is_dir():
             continue
-        for path in sorted(child.rglob("*.proposed")):
-            rel = path.relative_to(vault_root).as_posix()
-            consume(rel)
+        for dirpath, dirnames, filenames in os.walk(child, followlinks=False, onerror=None):
+            # Sort dirnames so the walk is deterministic; this also
+            # lets the consumer rely on lexicographic ordering.
+            dirnames.sort()
+            for name in sorted(filenames):
+                if not name.endswith(".proposed"):
+                    continue
+                path = Path(dirpath) / name
+                # Defence in depth — even with followlinks=False,
+                # the file itself might be a symlink whose target
+                # lives outside the vault. Reject those.
+                try:
+                    resolved = path.resolve()
+                except OSError:
+                    continue
+                try:
+                    resolved.relative_to(resolved_root)
+                except ValueError:
+                    continue
+                rel = path.relative_to(vault_root).as_posix()
+                consume(rel)
     return _SidecarWalk(paths=paths, total=total)
 
 
@@ -998,7 +1025,7 @@ def _write_failure_file_safe(
             dispatch_event_id=dispatch_event_id,
             body=body,
         )
-    except Exception as exc:
+    except (OSError, WikiError) as exc:
         import sys as _sys
 
         print(
@@ -1018,15 +1045,12 @@ class ExecResult:
     """Return value from :func:`dispatch_and_exec`.
 
     Wraps the inner :class:`DispatchResult` and adds an ``exec_status``
-    discriminator naming the exec phase outcome. Pinned by spec
-    §"Contracts with other modules".
-
-    Reserved statuses ``failed_binary_missing`` and
-    ``failed_skill_missing`` from the spec are not returned at v1 —
-    those failure modes raise :class:`WikiError` before the
-    orchestrator can return (the dispatch event is journaled, the
-    failure event is not — spec §Inputs item 4 and §"SKILL file
-    missing" edge case).
+    discriminator naming the exec phase outcome. ``exit_code`` /
+    ``duration_seconds`` / ``log_path`` are set on the
+    ``succeeded`` / ``failed_exit`` / ``failed_timeout`` paths so
+    the CLI can render the success/failure line per spec
+    §"Happy path" step 5. ``conflict-refused`` and ``skipped`` paths
+    leave them as defaults.
     """
 
     dispatch: DispatchResult
@@ -1037,6 +1061,9 @@ class ExecResult:
         "failed_exit",
         "failed_timeout",
     ]
+    exit_code: int | None = None
+    duration_seconds: float | None = None
+    log_path: str | None = None
 
 
 def _utc_now() -> datetime:
@@ -1191,17 +1218,26 @@ def dispatch_and_exec(
         timeout_seconds=timeout_seconds,
     )
 
+    log_path_relative = log_path.relative_to(vault_root).as_posix()
+    finished_at = clock()
+    duration_s = max((finished_at - now).total_seconds(), 0.0)
+
     if sp_result.returncode == 0:
         # Success — no second journal event per CT-14.
-        return ExecResult(dispatch=dispatch_result, exec_status="succeeded")
+        return ExecResult(
+            dispatch=dispatch_result,
+            exec_status="succeeded",
+            exit_code=0,
+            duration_seconds=duration_s,
+            log_path=log_path_relative,
+        )
 
     # Non-zero exit or timeout — journal the failure event + write
     # the per-failure file.
-    failed_at = clock()
+    failed_at = finished_at
     reason: Literal["non-zero-exit", "timeout"] = (
         "timeout" if sp_result.timed_out else "non-zero-exit"
     )
-    log_path_relative = log_path.relative_to(vault_root).as_posix()
     body = _render_failure_file(
         operation=operation,
         dispatch_event_id=dispatch_result.dispatch_event_id,
@@ -1232,4 +1268,10 @@ def dispatch_and_exec(
     exec_status: Literal["failed_exit", "failed_timeout"] = (
         "failed_timeout" if sp_result.timed_out else "failed_exit"
     )
-    return ExecResult(dispatch=dispatch_result, exec_status=exec_status)
+    return ExecResult(
+        dispatch=dispatch_result,
+        exec_status=exec_status,
+        exit_code=sp_result.returncode,
+        duration_seconds=duration_s,
+        log_path=log_path_relative,
+    )

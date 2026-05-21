@@ -177,3 +177,40 @@ def test_cli_run_exec_invalid_args_skips_exec(tmp_path: Path) -> None:
     # The argv log was never written — the subprocess wasn't spawned.
     argv_log = tmp_path / "argv.json"
     assert not argv_log.exists()
+
+
+def test_cli_run_exec_success_line_carries_exit_duration_log(tmp_path: Path) -> None:
+    """Spec §"Happy path" step 5a: success line includes exit, duration, log."""
+
+    vault = _make_vault(tmp_path)
+    claude = _make_stub_claude(tmp_path, exit_code=0)
+    proc = _run_wiki(
+        ["run", "--exec", "--claude-binary", str(claude), "weekly-digest", "--window=2026-W20"],
+        cwd=vault,
+        env_overrides={"WIKI_CLAUDE_BINARY": ""},
+    )
+    assert proc.returncode == 0, proc.stderr
+    # The line should contain the literal segments the spec promises.
+    assert "Exec succeeded for weekly-digest" in proc.stdout
+    assert "exit 0" in proc.stdout
+    assert "log: .wiki.journal/exec-logs/" in proc.stdout
+
+
+def test_cli_run_exec_rejects_negative_timeout(tmp_path: Path) -> None:
+    """``WIKI_EXEC_TIMEOUT=-1`` raises ``WikiError`` at CLI start."""
+
+    vault = _make_vault(tmp_path)
+    claude = _make_stub_claude(tmp_path, exit_code=0)
+    proc = _run_wiki(
+        ["run", "--exec", "--claude-binary", str(claude), "weekly-digest", "--window=2026-W20"],
+        cwd=vault,
+        env_overrides={"WIKI_CLAUDE_BINARY": "", "WIKI_EXEC_TIMEOUT": "-1"},
+    )
+    assert proc.returncode != 0
+    assert "WIKI_EXEC_TIMEOUT" in proc.stderr
+    # The dispatch event was NOT journaled — the CLI rejects the timeout
+    # before invoking dispatch_and_exec at all.
+    journal_lines = (
+        (vault / ".wiki.journal" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+    assert not any('"type":"operation.run"' in line for line in journal_lines)

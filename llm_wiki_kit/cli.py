@@ -1172,6 +1172,11 @@ def _cmd_run_exec(
         timeout_seconds = int(timeout_env)
     except ValueError as exc:
         raise WikiError(f"WIKI_EXEC_TIMEOUT={timeout_env!r}: must be an integer (seconds)") from exc
+    if timeout_seconds <= 0:
+        raise WikiError(
+            f"WIKI_EXEC_TIMEOUT={timeout_env!r}: must be a positive integer "
+            "(seconds); zero or negative would kill the subprocess immediately"
+        )
     retention_env = os.environ.get("WIKI_EXEC_LOG_RETENTION_DAYS", "30")
     try:
         log_retention_days = int(retention_env)
@@ -1179,7 +1184,25 @@ def _cmd_run_exec(
         raise WikiError(
             f"WIKI_EXEC_LOG_RETENTION_DAYS={retention_env!r}: must be an integer (days)"
         ) from exc
+    if log_retention_days < 0:
+        raise WikiError(
+            f"WIKI_EXEC_LOG_RETENTION_DAYS={retention_env!r}: must be a "
+            "non-negative integer (0 disables rotation)"
+        )
     max_budget_usd = os.environ.get("WIKI_EXEC_MAX_BUDGET_USD")
+
+    # Observability — record which binary the kit resolved so the user
+    # reviewing recent runs can see what was executed. (Security review:
+    # the explicit log line is the only signal that --claude-binary or
+    # WIKI_CLAUDE_BINARY pointed somewhere unexpected.)
+    from llm_wiki_kit.run import _locate_claude
+
+    resolved_binary = _locate_claude(override=args.claude_binary)
+    if resolved_binary is not None:
+        print(
+            f"wiki-run-exec: invoking {resolved_binary}",
+            file=sys.stderr,
+        )
 
     result = dispatch_and_exec(
         args.operation,
@@ -1214,7 +1237,16 @@ def _cmd_run_exec(
         print(f"  {name}={_render_dispatch_value(dispatch_result.parsed[name])}")
 
     if result.exec_status == "succeeded":
-        print(f"Exec succeeded for {dispatch_result.operation}.")
+        # Spec §"Happy path" step 5a: full success line carries the
+        # exit code, duration, and log path.
+        duration = (
+            f"{result.duration_seconds:.0f}s" if result.duration_seconds is not None else "?s"
+        )
+        log = result.log_path or "(none)"
+        print(
+            f"Exec succeeded for {dispatch_result.operation} "
+            f"(exit {result.exit_code}, {duration}, log: {log})."
+        )
         return 0
 
     # exec_status is one of failed_conflict / failed_exit / failed_timeout.

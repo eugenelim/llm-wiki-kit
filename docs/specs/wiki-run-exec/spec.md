@@ -351,9 +351,12 @@ deletions — they're cache-housekeeping, not state changes.
 4. The kit resolves the SKILL path. If the default doesn't exist
    and no `--skill-path` was supplied: raise `WikiError`. No exec
    event journaled.
-5. The kit ensures `.wiki.journal/exec-logs/` exists (mkdir + add a
-   `.gitignore` entry on first creation if not already in vault
-   `.gitignore`).
+5. The kit ensures `.wiki.journal/exec-logs/` exists (mkdir only).
+   **v1 does not write `.gitignore`.** Operators who want the
+   directory excluded from git add the entry manually; the spec
+   defers the additive-write helper to a follow-up because
+   ``.wiki.journal/`` is itself a kit-owned tree (the journal lives
+   inside it) and users typically already ignore the whole path.
 6. `subprocess.run` with the args above. The dispatch event's id is
    inlined into the prompt text the kit constructs (per
    [ADR-0009 §Decision](../../adr/0009-headless-claude-invocation-contract.md);
@@ -402,10 +405,11 @@ deletions — they're cache-housekeeping, not state changes.
   detection is the safety net. Documented under spec §"Non-goals"
   for explicit recognition.
 - **Vault `.gitignore` doesn't include `.wiki.journal/exec-logs/`.**
-  The kit appends the entry on first log creation via the same
-  additive-write helper used by `_ensure_obsidianignore` (per
-  [`safe-write-ordering`](../safe-write-ordering/spec.md)). Pending
-  audit; plan step 5 confirms the seam.
+  v1 does not write `.gitignore` — the spec was originally going to
+  reuse `_ensure_obsidianignore`'s pattern, but `.wiki.journal/` is
+  already kit-owned scratch that users typically ignore wholesale
+  (the journal itself lives there). Deferred to a follow-up if a
+  user-visible drift surface emerges.
 
 ### Error cases
 
@@ -452,9 +456,9 @@ deletions — they're cache-housekeeping, not state changes.
   v1 documents the pass-through; the ADR upgrades to scrubbing if
   warranted.
 - No filesystem writes outside the journal append, the exec log,
-  the failure page, and the additive `.gitignore` entry. No vault
-  page writes from this module — page writes come from `claude`
-  itself, via the kit's `safe_write` invoked by SKILL code.
+  and the failure page. No vault page writes from this module —
+  page writes come from `claude` itself, via the kit's
+  `safe_write` invoked by SKILL code.
 - `--exec`-less behavior is **byte-identical** to the existing
   task-17 contract. The CT-N items from
   [`task-17-wiki-run/spec.md`](../task-17-wiki-run/spec.md)

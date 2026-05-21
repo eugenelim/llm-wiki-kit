@@ -1008,6 +1008,17 @@ def test_orch_non_zero_exit_journals_failure_event(
     body = failure_file.read_text(encoding="utf-8")
     assert "non-zero-exit" in body
     assert "137" in body
+    # Q4: last-non-empty-stderr line is rendered in the failure file.
+    assert "`boom`" in body
+
+    # Q2: the log file on disk actually carries the captured stderr,
+    # not just that it exists.
+    log_file = (
+        exec_vault / ".wiki.journal" / "exec-logs" / f"{result.dispatch.dispatch_event_id}.log"
+    )
+    assert log_file.exists()
+    log_contents = log_file.read_text(encoding="utf-8")
+    assert "boom" in log_contents
 
 
 def test_orch_timeout(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
@@ -1129,9 +1140,10 @@ def test_orch_max_budget_invalid_raises_after_dispatch(
             claude_binary=claude,
             max_budget_usd="not-a-number",
         )
-    # Dispatch event journaled; no exec failure.
+    # Dispatch event journaled with status="dispatched"; no exec failure.
     op_events = [e for e in read_events(journal_path) if isinstance(e, OperationRunEvent)]
     assert len(op_events) == 1
+    assert op_events[0].status == "dispatched"
     assert _failure_events(exec_vault) == []
 
 
@@ -1260,6 +1272,11 @@ def test_orch_over_cap_sidecars_render_n_more(
     )
     body = failure_file.read_text(encoding="utf-8")
     assert "(…5 more)" in body
+    # Q3: the journaled event's conflict_sidecars carries up to 20
+    # paths, not the full 25 — the 20-path bound is the contract.
+    failures = _failure_events(exec_vault)
+    assert len(failures) == 1
+    assert len(failures[0].conflict_sidecars) == 20
 
 
 def test_orch_skill_path_override_in_argv(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
