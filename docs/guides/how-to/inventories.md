@@ -1,5 +1,7 @@
 # Inventories — Tracking Typed Entity Collections
 
+> **v1-vintage page.** This how-to describes the v1 inventories pattern; some references (page-types tables in `CLAUDE.variant.md`, specific skill names like `trip-planner` or `ingest-website`) describe artifacts the v2 kit no longer ships. The underlying pattern — per-item markdown + a `.base` view — still applies; the wiring into v2's recipe/primitive surface is a future rewrite. Treat this as background reading until then.
+
 The kit ships with a handful of curated inventories (restaurants, subscriptions, cloud tooling, SaaS contracts, advisors, role-tooling). Adding your own follows the same pattern: small per-item markdown files + a `.base` file rendering the collection.
 
 ## When to use an inventory vs. ad-hoc notes

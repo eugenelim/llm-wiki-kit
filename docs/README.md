@@ -21,11 +21,9 @@ Reference docs for `llm-wiki-kit`. Start with the [project README](../README.md)
 User-facing documentation, organized by [Diátaxis](https://diataxis.fr/):
 
 - [Tutorials](guides/tutorials/) — step-by-step walkthroughs. Start with [Tutorial 1 — first vault](guides/tutorials/tutorial-1-first-vault.md), then [Tutorial 2 — work-os walkthrough](guides/tutorials/tutorial-2-work-os-walkthrough.md).
-- [How-to](guides/how-to/) — task recipes. Currently: [Resolve a conflict](guides/how-to/resolve-a-conflict.md).
-- [Reference](guides/reference/) — schemas and contracts.
-- [Explanation](guides/explanation/) — conceptual background.
-
-Some older user-facing notes still live flat at `guides/*.md` and migrate gradually as their contents are folded into the four Diátaxis directories.
+- [How-to](guides/how-to/) — task recipes: [Resolve a conflict](guides/how-to/resolve-a-conflict.md), [Set up the Obsidian Web Clipper](guides/how-to/web-clipper.md), [Add a typed inventory](guides/how-to/inventories.md).
+- [Reference](guides/reference/) — [File formats](guides/reference/file-formats.md) and other schemas/contracts.
+- [Explanation](guides/explanation/) — conceptual background ([Evals](guides/explanation/evals.md)).
 
 ## Templates
 

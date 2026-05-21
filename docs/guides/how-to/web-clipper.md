@@ -37,7 +37,7 @@ When you ask the agent to process clippings (or when it encounters them during a
 
 1. **Detect** new files in `Clippings/`.
 2. **Skip source-type cleanup** — Web Clipper already produced clean markdown.
-3. **Route to content-type schema** — `ingest-recipe`, `ingest-application`, `ingest-book-note`, generic article, etc., based on URL pattern + content shape, then run the standard scope / contradiction / wiki-update flow.
+3. **Route to content-type schema** — the appropriate content-type primitive (see [`templates/content-types/`](../../../templates/content-types/) for what ships) or a generic article, based on URL pattern + content shape, then run the standard scope / contradiction / wiki-update flow.
 4. **Relocate after processing** — on success, the clipping is moved to `raw/web-clips/<YYYY-MM-DD>-<slug>.md` so it joins the canonical immutable source store. The wiki page footnote points to the relocated path.
 5. **Leave on failure** — if the user rejects the routing, the source falls out of scope, or the routing is ambiguous and the user defers, the file stays in `Clippings/` for retry.
 

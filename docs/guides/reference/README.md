@@ -5,11 +5,18 @@ Authoritative, dry, complete descriptions of interfaces, config, file
 formats, and commands. The reader looks something up; they do not read it
 top-to-bottom.
 
-Empty for now. The kit's existing user docs still live flat under
-`docs/guides/*.md`; gradual migration into the right Diátaxis bucket is a
-future docs PR, not adoption scope.
+## Index
 
-Candidates to migrate here in that future PR:
+- **[File formats](file-formats.md)** — what file formats the kit
+  supports, how Claude handles non-markdown files, and the
+  companion-page convention that keeps deliverables visible in
+  Obsidian.
 
-- `file-formats.md` — supported ingest formats and their handlers.
-- `inventories.md` — the inventories schema and CLI surface.
+## Other Diátaxis buckets
+
+- **[Tutorials](../tutorials/)** — learning-oriented; the reader is
+  new and wants to build a working result.
+- **[How-to guides](../how-to/)** — task-oriented; the reader has a
+  problem and wants a recipe.
+- **[Explanation](../explanation/)** — understanding-oriented; the
+  reader wants the *why* behind a design.
