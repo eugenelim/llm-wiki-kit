@@ -545,9 +545,7 @@ def test_dispatch_event_id_matches_journaled_event(vault: Path, kit_root: Path) 
     assert op_run_events[0].event_id == result.dispatch_event_id
 
 
-def test_two_consecutive_dispatches_produce_distinct_event_ids(
-    vault: Path, kit_root: Path
-) -> None:
+def test_two_consecutive_dispatches_produce_distinct_event_ids(vault: Path, kit_root: Path) -> None:
     first = _dispatch(vault, kit_root, "weekly-digest", ["--window=2026-W20"])
     second = _dispatch(vault, kit_root, "weekly-digest", ["--window=2026-W21"])
     assert first.dispatch_event_id != second.dispatch_event_id
