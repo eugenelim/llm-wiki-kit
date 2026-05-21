@@ -922,3 +922,207 @@ def _write_failure_file(
         by=EXEC_VEHICLE,
         journal_path=vault_root / ".wiki.journal" / "journal.jsonl",
     )
+
+
+# ---------------------------------------------------------------------------
+# dispatch_and_exec orchestrator
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ExecResult:
+    """Return value from :func:`dispatch_and_exec`.
+
+    Wraps the inner :class:`DispatchResult` and adds an ``exec_status``
+    discriminator naming the exec phase outcome. Pinned by spec
+    §"Contracts with other modules".
+
+    Reserved statuses ``failed_binary_missing`` and
+    ``failed_skill_missing`` from the spec are not returned at v1 —
+    those failure modes raise :class:`WikiError` before the
+    orchestrator can return (the dispatch event is journaled, the
+    failure event is not — spec §Inputs item 4 and §"SKILL file
+    missing" edge case).
+    """
+
+    dispatch: DispatchResult
+    exec_status: Literal[
+        "skipped",
+        "succeeded",
+        "failed_conflict",
+        "failed_exit",
+        "failed_timeout",
+    ]
+
+
+def dispatch_and_exec(
+    operation: str,
+    raw_args: list[str],
+    *,
+    vault_root: Path,
+    kit_root: Path,
+    journal_path: Path,
+    now: datetime,
+    claude_binary: Path | None = None,
+    skill_path_override: Path | None = None,
+    timeout_seconds: int = 1800,
+    log_retention_days: int = 30,
+    max_budget_usd: str | None = None,
+) -> ExecResult:
+    """Orchestrate ``wiki run --exec``.
+
+    Sequence per spec §Behavior:
+
+    1. Run :func:`dispatch` (journals one ``OperationRunEvent`` with
+       a fresh ``event_id``). If status is ``invalid_args``, return
+       ``exec_status="skipped"`` — no subprocess, no failure event.
+    2. Resolve the Claude binary (override > env var > shutil.which).
+       Missing → ``WikiError`` with install-pointer; dispatch event
+       remains journaled, no failure event journaled.
+    3. Re-load the contract (cheap; the same file ``dispatch`` just
+       read) to resolve the SKILL path. Missing → ``WikiError``.
+    4. Validate ``max_budget_usd`` shape if supplied. Malformed →
+       ``WikiError``.
+    5. Walk for ``.proposed`` sidecars. If any: write the per-failure
+       file, append a ``conflict-refused`` exec event, return
+       ``exec_status="failed_conflict"``.
+    6. Rotate old logs; build prompt + argv; run subprocess.
+    7. On exit 0 → ``exec_status="succeeded"``; no second journal
+       event (CT-14).
+    8. On non-zero exit / timeout → write per-failure file, append
+       ``non-zero-exit`` / ``timeout`` exec event, return
+       ``exec_status="failed_exit"`` / ``"failed_timeout"``.
+
+    ``now`` is the timestamp used for the dispatch and (for
+    determinism in tests) the failure events. Real failure-event
+    timestamps in production would drift slightly from dispatch by
+    the subprocess duration; the journal field carries the original
+    ``now`` from this argument so tests stay deterministic.
+    """
+
+    dispatch_result = dispatch(
+        operation,
+        raw_args,
+        vault_root=vault_root,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=now,
+    )
+
+    if dispatch_result.status != "dispatched":
+        return ExecResult(dispatch=dispatch_result, exec_status="skipped")
+
+    # Resolve binary + SKILL + budget. All three raise WikiError on
+    # failure; none journal an exec event (the dispatch event is
+    # already durable).
+    binary = _locate_claude(override=claude_binary)
+    if binary is None:
+        raise WikiError(
+            "--exec set but no claude binary found; install Claude Code or "
+            "pass --claude-binary <path>"
+        )
+    contract = _load_contract(operation, kit_root)
+    skill_path = _locate_skill(
+        skill_path_override=skill_path_override,
+        contract=contract,
+        vault_root=vault_root,
+    )
+    validated_budget = _validate_max_budget(max_budget_usd)
+
+    # Conflict-refusal walk runs after binary/SKILL resolution so
+    # spec-side gate errors surface before the disk walk.
+    sidecars = _walk_proposed_sidecars(vault_root)
+    if sidecars:
+        body = _render_failure_file(
+            operation=operation,
+            dispatch_event_id=dispatch_result.dispatch_event_id,
+            dispatched_at=now,
+            failed_at=now,
+            reason="conflict-refused",
+            exit_code=-1,
+            stderr_tail="",
+            log_path=None,
+            conflict_sidecars=sidecars,
+        )
+        _write_failure_file(
+            vault_root=vault_root,
+            journal_path=journal_path,
+            dispatch_event_id=dispatch_result.dispatch_event_id,
+            body=body,
+        )
+        _append_failure_event(
+            journal_path=journal_path,
+            now=now,
+            operation=operation,
+            dispatch_event_id=dispatch_result.dispatch_event_id,
+            exit_code=-1,
+            reason="conflict-refused",
+            stderr_tail="",
+            log_path=None,
+            conflict_sidecars=sidecars,
+        )
+        return ExecResult(dispatch=dispatch_result, exec_status="failed_conflict")
+
+    # Happy path — rotate logs, build prompt + argv, run subprocess.
+    _rotate_logs(vault_root=vault_root, retention_days=log_retention_days, now=now)
+    log_dir = _exec_log_dir(vault_root)
+    log_path = log_dir / f"{dispatch_result.dispatch_event_id}.log"
+    prompt = _build_prompt(
+        operation=operation,
+        skill_path=skill_path,
+        dispatch_event_id=dispatch_result.dispatch_event_id,
+    )
+    argv = _build_argv(
+        claude_binary=binary,
+        vault_root=vault_root,
+        prompt=prompt,
+        max_budget_usd=validated_budget,
+    )
+    sp_result = _run_subprocess(
+        argv=argv,
+        cwd=vault_root,
+        log_path=log_path,
+        timeout_seconds=timeout_seconds,
+    )
+
+    if sp_result.returncode == 0:
+        # Success — no second journal event per CT-14.
+        return ExecResult(dispatch=dispatch_result, exec_status="succeeded")
+
+    # Non-zero exit or timeout — journal the failure event + write
+    # the per-failure file.
+    reason: Literal["non-zero-exit", "timeout"] = (
+        "timeout" if sp_result.timed_out else "non-zero-exit"
+    )
+    log_path_relative = log_path.relative_to(vault_root).as_posix()
+    body = _render_failure_file(
+        operation=operation,
+        dispatch_event_id=dispatch_result.dispatch_event_id,
+        dispatched_at=now,
+        failed_at=now,
+        reason=reason,
+        exit_code=sp_result.returncode,
+        stderr_tail=sp_result.stderr_tail,
+        log_path=log_path_relative,
+        conflict_sidecars=[],
+    )
+    _write_failure_file(
+        vault_root=vault_root,
+        journal_path=journal_path,
+        dispatch_event_id=dispatch_result.dispatch_event_id,
+        body=body,
+    )
+    _append_failure_event(
+        journal_path=journal_path,
+        now=now,
+        operation=operation,
+        dispatch_event_id=dispatch_result.dispatch_event_id,
+        exit_code=sp_result.returncode,
+        reason=reason,
+        stderr_tail=sp_result.stderr_tail,
+        log_path=log_path_relative,
+    )
+    exec_status: Literal["failed_exit", "failed_timeout"] = (
+        "failed_timeout" if sp_result.timed_out else "failed_exit"
+    )
+    return ExecResult(dispatch=dispatch_result, exec_status=exec_status)

@@ -23,6 +23,7 @@ Pure-function helpers:
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +36,9 @@ from llm_wiki_kit.models import (
     OperationContract,
     OperationExecFailedEvent,
     OperationInputSpec,
+    OperationRunEvent,
+    PageWriteEvent,
+    PrimitiveInstallEvent,
     VaultInitEvent,
 )
 from llm_wiki_kit.run import (
@@ -50,6 +54,7 @@ from llm_wiki_kit.run import (
     _run_subprocess,
     _validate_max_budget,
     _walk_proposed_sidecars,
+    dispatch_and_exec,
 )
 
 NOW = datetime(2026, 5, 21, 9, 0, 0, tzinfo=UTC)
@@ -677,3 +682,463 @@ def test_append_failure_event_rejects_reserved_reasons(vault: Path, reason: str)
             exit_code=-3,
             reason=reason,
         )
+
+
+# ---------------------------------------------------------------------------
+# Slice 3 — dispatch_and_exec orchestrator
+# ---------------------------------------------------------------------------
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_WEEKLY_DIGEST_CONTRACT = """\
+name: weekly-digest
+description: Weekly digest test contract.
+period: weekly
+skill: weekly-digest
+inputs:
+  window:
+    type: iso_week
+outputs:
+  digest:
+    type: page
+    path_pattern: outputs/digests/{window}.md
+"""
+
+
+@pytest.fixture
+def kit_root(tmp_path: Path) -> Path:
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    shutil.copytree(REPO_ROOT / "core", kit / "core")
+    templates = kit / "templates"
+    templates.mkdir()
+    op_dir = templates / "operations" / "weekly-digest"
+    op_dir.mkdir(parents=True)
+    (op_dir / "contract.yaml").write_text(_WEEKLY_DIGEST_CONTRACT, encoding="utf-8")
+    (op_dir / "primitive.yaml").write_text(
+        "name: weekly-digest\n"
+        "kind: operation\n"
+        "version: 0.1.0\n"
+        "description: weekly-digest test primitive.\n",
+        encoding="utf-8",
+    )
+    (op_dir / "files").mkdir()
+    return kit
+
+
+@pytest.fixture
+def exec_vault(tmp_path: Path) -> Path:
+    """A vault with weekly-digest installed and a SKILL file in place."""
+
+    v = tmp_path / "exec-vault"
+    (v / ".wiki.journal").mkdir(parents=True)
+    journal_path = v / ".wiki.journal" / "journal.jsonl"
+    append_event(
+        journal_path,
+        VaultInitEvent(
+            timestamp=NOW,
+            by="wiki-init",
+            vault_name="test-vault",
+            recipe="minimal",
+        ),
+    )
+    append_event(
+        journal_path,
+        PrimitiveInstallEvent(
+            timestamp=NOW,
+            by="wiki-init",
+            primitive="weekly-digest",
+            version="0.1.0",
+        ),
+    )
+    skill_dir = v / ".claude" / "skills" / "weekly-digest"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# weekly-digest", encoding="utf-8")
+    return v
+
+
+def _ensure_python_claude(tmp_path: Path, script: str) -> Path:
+    return _make_python_stub(tmp_path, script, name="claude")
+
+
+def _failure_events(vault: Path) -> list[OperationExecFailedEvent]:
+    return [
+        e
+        for e in read_events(vault / ".wiki.journal" / "journal.jsonl")
+        if isinstance(e, OperationExecFailedEvent)
+    ]
+
+
+def _page_write_events(vault: Path) -> list[PageWriteEvent]:
+    return [
+        e
+        for e in read_events(vault / ".wiki.journal" / "journal.jsonl")
+        if isinstance(e, PageWriteEvent)
+    ]
+
+
+def test_orch_happy_path_succeeded(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
+    # CT-1: subprocess exits 0; one OperationRunEvent journaled; no exec event.
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(0)")
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=exec_vault / ".wiki.journal" / "journal.jsonl",
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert result.exec_status == "succeeded"
+    assert result.dispatch.status == "dispatched"
+    assert len(result.dispatch.dispatch_event_id) == 12
+    # No failure event journaled (CT-14: no exec_succeeded either).
+    assert _failure_events(exec_vault) == []
+    # Log file exists, named after the dispatch event id.
+    log_path = (
+        exec_vault / ".wiki.journal" / "exec-logs" / f"{result.dispatch.dispatch_event_id}.log"
+    )
+    assert log_path.exists()
+
+
+def test_orch_invalid_args_skips_exec(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
+    # CT-2: invalid_args path returns exec_status="skipped" without spawning.
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(0)")
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--frobnicate=x"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=exec_vault / ".wiki.journal" / "journal.jsonl",
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert result.exec_status == "skipped"
+    assert result.dispatch.status == "invalid_args"
+    assert _failure_events(exec_vault) == []
+    # No log file written.
+    log_dir = exec_vault / ".wiki.journal" / "exec-logs"
+    assert not log_dir.exists() or list(log_dir.iterdir()) == []
+
+
+def test_orch_binary_not_found_raises_after_dispatch(
+    exec_vault: Path,
+    kit_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CT-3: no claude on PATH, no override, no env var → WikiError.
+    # The dispatch event is journaled; no exec event.
+    monkeypatch.delenv("WIKI_CLAUDE_BINARY", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    with pytest.raises(WikiError, match="claude binary"):
+        dispatch_and_exec(
+            "weekly-digest",
+            ["--window=2026-W20"],
+            vault_root=exec_vault,
+            kit_root=kit_root,
+            journal_path=journal_path,
+            now=NOW,
+            claude_binary=None,
+        )
+    # Dispatch event journaled; no exec failure.
+    op_events = [e for e in read_events(journal_path) if isinstance(e, OperationRunEvent)]
+    assert len(op_events) == 1
+    assert op_events[0].status == "dispatched"
+    assert _failure_events(exec_vault) == []
+
+
+def test_orch_skill_missing_raises(
+    exec_vault: Path,
+    kit_root: Path,
+    tmp_path: Path,
+) -> None:
+    # CT-4: remove the SKILL file → WikiError; no exec event.
+    (exec_vault / ".claude" / "skills" / "weekly-digest" / "SKILL.md").unlink()
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(0)")
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+    with pytest.raises(WikiError, match="SKILL file not found"):
+        dispatch_and_exec(
+            "weekly-digest",
+            ["--window=2026-W20"],
+            vault_root=exec_vault,
+            kit_root=kit_root,
+            journal_path=journal_path,
+            now=NOW,
+            claude_binary=claude,
+        )
+    assert _failure_events(exec_vault) == []
+
+
+def test_orch_conflict_refused(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
+    # CT-6: a .proposed sidecar in scope causes a conflict-refused failure.
+    (exec_vault / "wiki" / "notes").mkdir(parents=True)
+    (exec_vault / "wiki" / "notes" / "x.md.proposed").write_text("body", encoding="utf-8")
+    claude = _ensure_python_claude(tmp_path, 'raise SystemExit("should not be called")')
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert result.exec_status == "failed_conflict"
+    failure = _failure_events(exec_vault)
+    assert len(failure) == 1
+    assert failure[0].reason == "conflict-refused"
+    assert failure[0].exit_code == -1
+    assert failure[0].stderr_tail == ""
+    assert failure[0].conflict_sidecars == ["wiki/notes/x.md.proposed"]
+    assert failure[0].dispatch_event_id == result.dispatch.dispatch_event_id
+
+    failure_file = (
+        exec_vault / "inbox" / "scheduled-failures" / f"{result.dispatch.dispatch_event_id}.md"
+    )
+    assert failure_file.exists()
+    body = failure_file.read_text(encoding="utf-8")
+    assert "Scheduled exec refused" in body
+    assert "wiki/notes/x.md.proposed" in body
+
+    # A PageWriteEvent was journaled for the failure file (spec
+    # §Invariants — "plus any PageWriteEvent/PageProposalEvent the
+    # per-failure file write through safe_write produces").
+    page_writes = _page_write_events(exec_vault)
+    failure_file_writes = [
+        e for e in page_writes if e.path.endswith(".md") and "scheduled-failures" in e.path
+    ]
+    assert len(failure_file_writes) == 1
+
+
+def test_orch_no_refusal_loop_from_failure_file_write(
+    exec_vault: Path, kit_root: Path, tmp_path: Path
+) -> None:
+    # CT-17: a per-failure file write under inbox/scheduled-failures/
+    # must NOT cause the next --exec invocation to refuse.
+    (exec_vault / "wiki").mkdir()
+    (exec_vault / "wiki" / "first.md.proposed").write_text("x", encoding="utf-8")
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(0)")
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    # First call: refuses due to the user sidecar.
+    first = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert first.exec_status == "failed_conflict"
+
+    # Remove the user sidecar; the failure file the kit wrote remains.
+    (exec_vault / "wiki" / "first.md.proposed").unlink()
+
+    # Second call: should NOT refuse — the kit's own per-failure file
+    # lives under inbox/scheduled-failures/ which is walk-scope-excluded.
+    second = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W21"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert second.exec_status == "succeeded"
+
+
+def test_orch_non_zero_exit_journals_failure_event(
+    exec_vault: Path, kit_root: Path, tmp_path: Path
+) -> None:
+    # CT-7: subprocess exits non-zero → failure event + failure file.
+    claude = _ensure_python_claude(
+        tmp_path, 'import sys; sys.stderr.write("boom\\n"); sys.exit(137)'
+    )
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+        timeout_seconds=10,
+    )
+    assert result.exec_status == "failed_exit"
+    failure = _failure_events(exec_vault)
+    assert len(failure) == 1
+    assert failure[0].reason == "non-zero-exit"
+    assert failure[0].exit_code == 137
+    assert "boom" in failure[0].stderr_tail
+    assert failure[0].dispatch_event_id == result.dispatch.dispatch_event_id
+    assert failure[0].log_path is not None
+    assert failure[0].log_path.endswith(".log")
+
+    failure_file = (
+        exec_vault / "inbox" / "scheduled-failures" / f"{result.dispatch.dispatch_event_id}.md"
+    )
+    assert failure_file.exists()
+    body = failure_file.read_text(encoding="utf-8")
+    assert "non-zero-exit" in body
+    assert "137" in body
+
+
+def test_orch_timeout(exec_vault: Path, kit_root: Path, tmp_path: Path) -> None:
+    # CT-8: subprocess sleeps past timeout → exec_status="failed_timeout".
+    claude = _ensure_python_claude(tmp_path, "import time; time.sleep(10)")
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=NOW,
+        claude_binary=claude,
+        timeout_seconds=1,
+    )
+    assert result.exec_status == "failed_timeout"
+    failure = _failure_events(exec_vault)
+    assert len(failure) == 1
+    assert failure[0].reason == "timeout"
+    assert failure[0].exit_code == -2
+
+
+def test_orch_argv_shape_matches_adr_0009(
+    exec_vault: Path,
+    kit_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CT-13: argv structure matches ADR-0009 with the dispatch event id
+    # inlined into the prompt.
+    argv_log = tmp_path / "argv.log"
+    claude = _make_python_stub(
+        tmp_path,
+        "import sys, json\n"
+        f'open({str(argv_log)!r}, "w").write(json.dumps(sys.argv))\n'
+        "sys.exit(0)\n",
+        name="claude",
+    )
+    monkeypatch.delenv("WIKI_EXEC_MAX_BUDGET_USD", raising=False)
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=exec_vault / ".wiki.journal" / "journal.jsonl",
+        now=NOW,
+        claude_binary=claude,
+    )
+    assert result.exec_status == "succeeded"
+    import json as _json
+
+    raw = argv_log.read_text(encoding="utf-8")
+    argv = _json.loads(raw)
+    # argv[0] is the stub itself.
+    assert argv[1] == "-p"
+    assert argv[2] == "--add-dir"
+    assert argv[3] == str(exec_vault)
+    assert argv[4] == "--permission-mode"
+    assert argv[5] == "dontAsk"
+    assert argv[6] == "--output-format"
+    assert argv[7] == "json"
+    # Last element is the prompt; must contain the dispatch event id.
+    prompt = argv[-1]
+    assert result.dispatch.dispatch_event_id in prompt
+    assert "weekly-digest" in prompt
+    # --agent must NOT appear at v1 (ADR-0010 deferred).
+    assert "--agent" not in argv
+
+
+def test_orch_max_budget_inserts_pair(
+    exec_vault: Path,
+    kit_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CT-13a: WIKI_EXEC_MAX_BUDGET_USD valid value emits --max-budget-usd.
+    argv_log = tmp_path / "argv.log"
+    claude = _make_python_stub(
+        tmp_path,
+        "import sys, json\n"
+        f"open({str(argv_log)!r}, 'w').write(json.dumps(sys.argv))\n"
+        "sys.exit(0)\n",
+        name="claude",
+    )
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=exec_vault / ".wiki.journal" / "journal.jsonl",
+        now=NOW,
+        claude_binary=claude,
+        max_budget_usd="5.00",
+    )
+    assert result.exec_status == "succeeded"
+    import json as _json
+
+    argv = _json.loads(argv_log.read_text(encoding="utf-8"))
+    # --max-budget-usd <value> appears immediately before the prompt positional.
+    assert argv[-3:-1] == ["--max-budget-usd", "5.00"]
+
+
+def test_orch_max_budget_invalid_raises_after_dispatch(
+    exec_vault: Path, kit_root: Path, tmp_path: Path
+) -> None:
+    # CT-13a: invalid budget shape raises WikiError; no subprocess; no exec event.
+    claude = _ensure_python_claude(tmp_path, 'raise SystemExit("should not be called")')
+    journal_path = exec_vault / ".wiki.journal" / "journal.jsonl"
+    with pytest.raises(WikiError, match="WIKI_EXEC_MAX_BUDGET_USD"):
+        dispatch_and_exec(
+            "weekly-digest",
+            ["--window=2026-W20"],
+            vault_root=exec_vault,
+            kit_root=kit_root,
+            journal_path=journal_path,
+            now=NOW,
+            claude_binary=claude,
+            max_budget_usd="not-a-number",
+        )
+    # Dispatch event journaled; no exec failure.
+    op_events = [e for e in read_events(journal_path) if isinstance(e, OperationRunEvent)]
+    assert len(op_events) == 1
+    assert _failure_events(exec_vault) == []
+
+
+def test_orch_log_rotation_runs(
+    exec_vault: Path,
+    kit_root: Path,
+    tmp_path: Path,
+) -> None:
+    # CT-15: old logs in .wiki.journal/exec-logs/ are deleted at exec start.
+    log_dir = exec_vault / ".wiki.journal" / "exec-logs"
+    log_dir.mkdir(parents=True)
+    old = log_dir / "old.log"
+    old.write_text("body", encoding="utf-8")
+    _set_mtime(old, days_ago=31)
+
+    claude = _ensure_python_claude(tmp_path, "import sys; sys.exit(0)")
+    result = dispatch_and_exec(
+        "weekly-digest",
+        ["--window=2026-W20"],
+        vault_root=exec_vault,
+        kit_root=kit_root,
+        journal_path=exec_vault / ".wiki.journal" / "journal.jsonl",
+        now=NOW,
+        claude_binary=claude,
+        log_retention_days=30,
+    )
+    assert result.exec_status == "succeeded"
+    assert not old.exists()
