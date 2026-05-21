@@ -60,6 +60,7 @@ from llm_wiki_kit.models import (
     LockAcquiredEvent,
     LockReleasedEvent,
     ManagedRegionWriteEvent,
+    OperationExecFailedEvent,
     OperationRunEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
@@ -1107,8 +1108,9 @@ def _render_dispatch_value(value: object) -> str:
 def _cmd_run(args: argparse.Namespace) -> int:
     """Validate args against the operation contract and journal one run.
 
-    Real handler since RFC-0001 Task 17. The orchestrator is in
-    :mod:`llm_wiki_kit.run`; this handler is the I/O boundary.
+    Real handler since RFC-0001 Task 17 (dispatch) + RFC-0003
+    (``--exec``). The orchestrator is in :mod:`llm_wiki_kit.run`;
+    this handler is the I/O boundary.
 
     The ``--help``/``-h`` short-circuit lives here (not in
     ``dispatch``) because only the CLI has access to the subparser
@@ -1117,6 +1119,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
     sidesteps ``argparse.REMAINDER``'s capture; value-form tokens
     like ``--help=false`` flow through the normal validation path
     and produce ``invalid_args``.
+
+    With ``--exec``: after dispatch, the kit shells out to ``claude``
+    in headless mode (ADR-0009). The dispatch line is still printed
+    in both flows; on exec failure (non-zero exit / timeout /
+    conflict-refused) the kit prints a failure summary to stderr
+    and exits ``WIKI_ERROR_EXIT``. Without ``--exec``: behavior is
+    byte-identical to the dispatch-only contract.
     """
 
     op_args: list[str] = list(args.op_args or [])
@@ -1137,11 +1146,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
             "Run `wiki init <path> --recipe <name>` first."
         )
 
+    kit_root = args.kit_root if args.kit_root is not None else _kit_root()
+
+    if getattr(args, "exec_run", False):
+        return _cmd_run_exec(
+            args=args,
+            vault_root=vault_root,
+            kit_root=kit_root,
+            journal_path=journal_path,
+        )
+
     # Local import keeps the module-load surface narrow — dispatch
     # is the only consumer here.
     from llm_wiki_kit.run import dispatch
 
-    kit_root = args.kit_root if args.kit_root is not None else _kit_root()
     result = dispatch(
         args.operation,
         op_args,
@@ -1168,6 +1186,109 @@ def _cmd_run(args: argparse.Namespace) -> int:
     for name in sorted(result.parsed):
         print(f"  {name}={_render_dispatch_value(result.parsed[name])}")
     return 0
+
+
+def _cmd_run_exec(
+    *,
+    args: argparse.Namespace,
+    vault_root: Path,
+    kit_root: Path,
+    journal_path: Path,
+) -> int:
+    """``wiki run --exec`` branch — see ``docs/specs/wiki-run-exec/spec.md``."""
+
+    from llm_wiki_kit.run import dispatch_and_exec
+
+    op_args: list[str] = list(args.op_args or [])
+    timeout_env = os.environ.get("WIKI_EXEC_TIMEOUT", "1800")
+    try:
+        timeout_seconds = int(timeout_env)
+    except ValueError as exc:
+        raise WikiError(f"WIKI_EXEC_TIMEOUT={timeout_env!r}: must be an integer (seconds)") from exc
+    if timeout_seconds <= 0:
+        raise WikiError(
+            f"WIKI_EXEC_TIMEOUT={timeout_env!r}: must be a positive integer "
+            "(seconds); zero or negative would kill the subprocess immediately"
+        )
+    retention_env = os.environ.get("WIKI_EXEC_LOG_RETENTION_DAYS", "30")
+    try:
+        log_retention_days = int(retention_env)
+    except ValueError as exc:
+        raise WikiError(
+            f"WIKI_EXEC_LOG_RETENTION_DAYS={retention_env!r}: must be an integer (days)"
+        ) from exc
+    if log_retention_days < 0:
+        raise WikiError(
+            f"WIKI_EXEC_LOG_RETENTION_DAYS={retention_env!r}: must be a "
+            "non-negative integer (0 disables rotation)"
+        )
+    max_budget_usd = os.environ.get("WIKI_EXEC_MAX_BUDGET_USD")
+
+    # Observability — record which binary the kit resolved so the user
+    # reviewing recent runs can see what was executed. (Security review:
+    # the explicit log line is the only signal that --claude-binary or
+    # WIKI_CLAUDE_BINARY pointed somewhere unexpected.)
+    from llm_wiki_kit.run import _locate_claude
+
+    resolved_binary = _locate_claude(override=args.claude_binary)
+    if resolved_binary is not None:
+        print(
+            f"wiki-run-exec: invoking {resolved_binary}",
+            file=sys.stderr,
+        )
+
+    result = dispatch_and_exec(
+        args.operation,
+        op_args,
+        vault_root=vault_root,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=datetime.now(UTC),
+        claude_binary=args.claude_binary,
+        skill_path_override=args.skill_path,
+        timeout_seconds=timeout_seconds,
+        log_retention_days=log_retention_days,
+        max_budget_usd=max_budget_usd,
+    )
+
+    dispatch_result = result.dispatch
+    if dispatch_result.status == "invalid_args":
+        # CT-2: exec phase skipped; mirror the non-exec contract.
+        assert dispatch_result.error is not None
+        print(
+            f"wiki run {dispatch_result.operation}: {dispatch_result.error}",
+            file=sys.stderr,
+        )
+        return WIKI_ERROR_EXIT
+
+    # Always print the dispatch line so the user has a record.
+    print(
+        f"Dispatched {dispatch_result.operation}. "
+        f"Run `{dispatch_result.skill}` in your Claude session."
+    )
+    for name in sorted(dispatch_result.parsed):
+        print(f"  {name}={_render_dispatch_value(dispatch_result.parsed[name])}")
+
+    if result.exec_status == "succeeded":
+        # Spec §"Happy path" step 5a: full success line carries the
+        # exit code, duration, and log path.
+        duration = (
+            f"{result.duration_seconds:.0f}s" if result.duration_seconds is not None else "?s"
+        )
+        log = result.log_path or "(none)"
+        print(
+            f"Exec succeeded for {dispatch_result.operation} "
+            f"(exit {result.exit_code}, {duration}, log: {log})."
+        )
+        return 0
+
+    # exec_status is one of failed_conflict / failed_exit / failed_timeout.
+    print(
+        f"wiki run --exec {dispatch_result.operation}: failed ({result.exec_status}); "
+        f"see inbox/scheduled-failures/{dispatch_result.dispatch_event_id}.md",
+        file=sys.stderr,
+    )
+    return WIKI_ERROR_EXIT
 
 
 RESEARCH_VEHICLE = "wiki-research"
@@ -1405,6 +1526,11 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
     OperationRunEvent: (
         ("operation", "operation", False),
         ("status", "status", False),
+    ),
+    OperationExecFailedEvent: (
+        ("operation", "operation", False),
+        ("reason", "reason", False),
+        ("exit_code", "exit_code", False),
     ),
     ResearchQueryEvent: (
         ("provider", "provider", False),
@@ -1760,6 +1886,38 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         parents=[verbose_parent],
         help="Run a named operation.",
+    )
+    # ``--exec`` and friends sit BEFORE the operation positional so
+    # ``argparse.REMAINDER`` doesn't swallow them. See
+    # ``docs/specs/wiki-run-exec/spec.md`` §"Contracts with other
+    # modules" — pinned by example
+    # ``wiki run --exec --claude-binary /opt/claude weekly-digest --window=…``.
+    run.add_argument(
+        "--exec",
+        dest="exec_run",
+        action="store_true",
+        help=(
+            "After dispatch, shell out to the user-installed `claude` CLI "
+            "in headless mode (ADR-0009) and journal the outcome."
+        ),
+    )
+    run.add_argument(
+        "--claude-binary",
+        type=Path,
+        default=None,
+        help=(
+            "Explicit path to the `claude` binary. Wins over WIKI_CLAUDE_BINARY "
+            "and shutil.which. Only meaningful with --exec."
+        ),
+    )
+    run.add_argument(
+        "--skill-path",
+        type=Path,
+        default=None,
+        help=(
+            "Override the SKILL.md path the executor passes to claude. Default "
+            "resolves to <vault>/.claude/skills/<contract.skill or operation>/SKILL.md."
+        ),
     )
     run.add_argument("operation", help="Operation name (e.g. weekly-digest).")
     # `argparse.REMAINDER` captures everything after `<operation>`

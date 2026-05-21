@@ -444,6 +444,9 @@ def test_at_most_one_event_per_invocation(vault: Path, kit_root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+_VALID_EVENT_ID = "0123456789ab"  # 12 lowercase hex chars — valid shape
+
+
 def test_dispatch_result_invariant_rejects_invalid_args_without_error() -> None:
     with pytest.raises(ValueError):
         DispatchResult(
@@ -453,6 +456,7 @@ def test_dispatch_result_invariant_rejects_invalid_args_without_error() -> None:
             args_raw={},
             period=None,
             skill="weekly-digest",
+            dispatch_event_id=_VALID_EVENT_ID,
             error=None,
         )
 
@@ -466,7 +470,44 @@ def test_dispatch_result_invariant_rejects_dispatched_with_error() -> None:
             args_raw={},
             period=None,
             skill="weekly-digest",
+            dispatch_event_id=_VALID_EVENT_ID,
             error="not allowed",
+        )
+
+
+def test_dispatch_result_invariant_rejects_malformed_event_id() -> None:
+    # Too short.
+    with pytest.raises(ValueError, match="12 lowercase hex"):
+        DispatchResult(
+            status="dispatched",
+            operation="weekly-digest",
+            parsed={},
+            args_raw={},
+            period=None,
+            skill="weekly-digest",
+            dispatch_event_id="abc",
+        )
+    # Uppercase hex — must be lowercase.
+    with pytest.raises(ValueError, match="12 lowercase hex"):
+        DispatchResult(
+            status="dispatched",
+            operation="weekly-digest",
+            parsed={},
+            args_raw={},
+            period=None,
+            skill="weekly-digest",
+            dispatch_event_id="ABCDEF012345",
+        )
+    # Non-hex characters.
+    with pytest.raises(ValueError, match="12 lowercase hex"):
+        DispatchResult(
+            status="dispatched",
+            operation="weekly-digest",
+            parsed={},
+            args_raw={},
+            period=None,
+            skill="weekly-digest",
+            dispatch_event_id="ghijklmnopqr",
         )
 
 
@@ -482,3 +523,61 @@ def test_journal_event_is_valid_jsonl(vault: Path, kit_root: Path) -> None:
     assert last["type"] == "operation.run"
     assert last["status"] == "dispatched"
     assert last["args"] == {"window": "2026-W20"}
+
+
+# ---------------------------------------------------------------------------
+# CT-1a: dispatch event_id round-trip (wiki-run-exec spec)
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_event_id_is_12_lowercase_hex(vault: Path, kit_root: Path) -> None:
+    result = _dispatch(vault, kit_root, "weekly-digest", ["--window=2026-W20"])
+    assert isinstance(result.dispatch_event_id, str)
+    assert len(result.dispatch_event_id) == 12
+    assert all(c in "0123456789abcdef" for c in result.dispatch_event_id)
+
+
+def test_dispatch_event_id_matches_journaled_event(vault: Path, kit_root: Path) -> None:
+    result = _dispatch(vault, kit_root, "weekly-digest", ["--window=2026-W20"])
+    events = list(read_events(_journal_path(vault)))
+    op_run_events = [e for e in events if isinstance(e, OperationRunEvent)]
+    assert len(op_run_events) == 1
+    assert op_run_events[0].event_id == result.dispatch_event_id
+
+
+def test_two_consecutive_dispatches_produce_distinct_event_ids(vault: Path, kit_root: Path) -> None:
+    first = _dispatch(vault, kit_root, "weekly-digest", ["--window=2026-W20"])
+    second = _dispatch(vault, kit_root, "weekly-digest", ["--window=2026-W21"])
+    assert first.dispatch_event_id != second.dispatch_event_id
+
+
+def test_invalid_args_dispatch_also_carries_event_id(vault: Path, kit_root: Path) -> None:
+    # CT-2: invalid_args path still journals an event with a fresh event_id.
+    result = _dispatch(vault, kit_root, "weekly-digest", ["--frobnicate=x"])
+    assert result.status == "invalid_args"
+    assert len(result.dispatch_event_id) == 12
+    events = list(read_events(_journal_path(vault)))
+    op_run_events = [e for e in events if isinstance(e, OperationRunEvent)]
+    assert len(op_run_events) == 1
+    assert op_run_events[0].event_id == result.dispatch_event_id
+    assert op_run_events[0].status == "invalid_args"
+
+
+def test_legacy_journal_line_without_event_id_replays_as_none() -> None:
+    # CT-10 (model layer): a pre-extension line with no event_id key
+    # replays cleanly with event.event_id is None.
+    from pydantic import TypeAdapter
+
+    from llm_wiki_kit.models import Event
+
+    adapter: TypeAdapter[Event] = TypeAdapter(Event)
+    legacy_line = (
+        '{"type":"operation.run","timestamp":"2026-05-15T00:00:00Z",'
+        '"by":"wiki-run","operation":"weekly-digest","status":"dispatched",'
+        '"period":"weekly","produced_pages":[]}'
+    )
+    event = adapter.validate_json(legacy_line)
+    assert isinstance(event, OperationRunEvent)
+    assert event.event_id is None
+    assert event.args == {}
+    assert event.error is None

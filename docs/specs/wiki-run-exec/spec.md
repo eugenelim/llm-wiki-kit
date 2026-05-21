@@ -237,14 +237,22 @@ the kit considers vault content:
   `attachments/`) can still carry conflicts the user needs to
   resolve before a scheduled run mutates them.
 
-The walk is breadth-first. It does **not** short-circuit — it
-collects up to 20 sidecar paths so the event and per-failure file
-can list them, then stops. The event's `conflict_sidecars` field
-carries the collected paths verbatim (vault-relative POSIX form).
-The per-failure file renders them as a bullet list. If more than
-20 sidecars exist, the kit notes `(…N more)` after the 20th in
-both the event body's per-failure file and any user-visible
-prose. No 4 KB byte cap — the 20-path count is the single bound.
+The walk is **deterministic in sorted lexicographic order** —
+each top-level subtree is enumerated via `Path.rglob("*.proposed")`
+sorted by path, so two runs over the same on-disk state report the
+same paths in the same order. (Earlier drafts said "breadth-first";
+the implementation's depth-first-with-sorted-ordering produces a
+deterministic, replayable result, which is what the contract needs
+— the BFS-vs-DFS distinction was unnecessary precision.) It does
+**not** short-circuit — it collects up to 20 sidecar paths so the
+event and per-failure file can list them, then stops adding to
+`paths` while continuing to count `total`. The event's
+`conflict_sidecars` field carries the collected paths verbatim
+(vault-relative POSIX form). The per-failure file renders them as
+a bullet list. If more than 20 sidecars exist, the kit notes
+`(…N more)` after the 20th in both the per-failure file and any
+user-visible prose, where `N == total - 20`. No 4 KB byte cap —
+the 20-path count is the single bound.
 
 Rationale for the scope: prevents the deadlock loop where a sidecar
 created by an earlier refusal's failure-file write triggers the next
@@ -343,9 +351,12 @@ deletions — they're cache-housekeeping, not state changes.
 4. The kit resolves the SKILL path. If the default doesn't exist
    and no `--skill-path` was supplied: raise `WikiError`. No exec
    event journaled.
-5. The kit ensures `.wiki.journal/exec-logs/` exists (mkdir + add a
-   `.gitignore` entry on first creation if not already in vault
-   `.gitignore`).
+5. The kit ensures `.wiki.journal/exec-logs/` exists (mkdir only).
+   **v1 does not write `.gitignore`.** Operators who want the
+   directory excluded from git add the entry manually; the spec
+   defers the additive-write helper to a follow-up because
+   ``.wiki.journal/`` is itself a kit-owned tree (the journal lives
+   inside it) and users typically already ignore the whole path.
 6. `subprocess.run` with the args above. The dispatch event's id is
    inlined into the prompt text the kit constructs (per
    [ADR-0009 §Decision](../../adr/0009-headless-claude-invocation-contract.md);
@@ -394,10 +405,11 @@ deletions — they're cache-housekeeping, not state changes.
   detection is the safety net. Documented under spec §"Non-goals"
   for explicit recognition.
 - **Vault `.gitignore` doesn't include `.wiki.journal/exec-logs/`.**
-  The kit appends the entry on first log creation via the same
-  additive-write helper used by `_ensure_obsidianignore` (per
-  [`safe-write-ordering`](../safe-write-ordering/spec.md)). Pending
-  audit; plan step 5 confirms the seam.
+  v1 does not write `.gitignore` — the spec was originally going to
+  reuse `_ensure_obsidianignore`'s pattern, but `.wiki.journal/` is
+  already kit-owned scratch that users typically ignore wholesale
+  (the journal itself lives there). Deferred to a follow-up if a
+  user-visible drift surface emerges.
 
 ### Error cases
 
@@ -444,9 +456,9 @@ deletions — they're cache-housekeeping, not state changes.
   v1 documents the pass-through; the ADR upgrades to scrubbing if
   warranted.
 - No filesystem writes outside the journal append, the exec log,
-  the failure page, and the additive `.gitignore` entry. No vault
-  page writes from this module — page writes come from `claude`
-  itself, via the kit's `safe_write` invoked by SKILL code.
+  and the failure page. No vault page writes from this module —
+  page writes come from `claude` itself, via the kit's
+  `safe_write` invoked by SKILL code.
 - `--exec`-less behavior is **byte-identical** to the existing
   task-17 contract. The CT-N items from
   [`task-17-wiki-run/spec.md`](../task-17-wiki-run/spec.md)

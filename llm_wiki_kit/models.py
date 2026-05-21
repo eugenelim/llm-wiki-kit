@@ -324,12 +324,19 @@ class OperationRunEvent(_EventBase):
     """Recorded by ``wiki run`` on every invocation that gets past the
     contract-load step (``docs/specs/task-17-wiki-run/spec.md``).
 
-    ``args`` and ``error`` are additive extensions per ADR-0002
-    §Negative's additive-schema rule — both have defaults so older
-    journal lines (Task 3) keep replaying unchanged. ``status`` is
-    a Literal-bounded enum: pre-Task-17 lines could only have
+    ``args``, ``error``, and ``event_id`` are additive extensions per
+    ADR-0002 §Negative's additive-schema rule — all have defaults so
+    older journal lines (Task 3) keep replaying unchanged. ``status``
+    is a Literal-bounded enum: pre-Task-17 lines could only have
     carried ``"dispatched"`` (no other emitter existed), so the
     narrowing rejects no legitimate legacy value.
+
+    ``event_id`` is populated by ``run.dispatch`` via
+    ``uuid.uuid4().hex[:12]`` for every new event. Older journal
+    lines (no ``event_id`` key) replay with ``event_id is None``;
+    the wiki-run-exec spec is the only consumer at v1 and tolerates
+    that absence. See ``docs/specs/wiki-run-exec/spec.md`` §"Event
+    identity".
     """
 
     type: Literal["operation.run"] = "operation.run"
@@ -339,6 +346,45 @@ class OperationRunEvent(_EventBase):
     produced_pages: list[str] = Field(default_factory=list)
     args: dict[str, str] = Field(default_factory=dict)
     error: str | None = None
+    event_id: str | None = None
+
+
+class OperationExecFailedEvent(_EventBase):
+    """Recorded by ``wiki run --exec`` when the subprocess attempt fails.
+
+    Three failure shapes (see ``docs/specs/wiki-run-exec/spec.md``
+    §Outputs):
+
+    - ``non-zero-exit`` — Claude exited with a non-zero return code.
+    - ``timeout`` — the subprocess was killed after
+      ``WIKI_EXEC_TIMEOUT`` seconds. ``exit_code`` is the sentinel
+      ``-2``.
+    - ``conflict-refused`` — the kit refused to spawn the subprocess
+      because the vault has unresolved ``.proposed`` sidecars.
+      ``exit_code`` is ``-1``, ``stderr_tail`` is empty, sidecar
+      paths live in ``conflict_sidecars``.
+
+    Two reserved reasons (``binary-missing``, ``skill-missing``)
+    appear in the Literal but are **not emitted at v1** — those
+    failure modes raise ``WikiError`` before reaching the journal
+    append. ``_append_failure_event`` enforces this with a
+    ``RuntimeError`` guard.
+    """
+
+    type: Literal["operation.exec_failed"] = "operation.exec_failed"
+    operation: str
+    dispatch_event_id: str
+    exit_code: int
+    reason: Literal[
+        "non-zero-exit",
+        "timeout",
+        "conflict-refused",
+        "binary-missing",
+        "skill-missing",
+    ]
+    stderr_tail: str = ""
+    log_path: str | None = None
+    conflict_sidecars: list[str] = Field(default_factory=list)
 
 
 class ResearchQueryEvent(_EventBase):
@@ -409,6 +455,7 @@ Event = Annotated[
     | PageProposalEvent
     | PageConflictResolvedEvent
     | OperationRunEvent
+    | OperationExecFailedEvent
     | ResearchQueryEvent
     | LintRunEvent
     | ConfigSetEvent
