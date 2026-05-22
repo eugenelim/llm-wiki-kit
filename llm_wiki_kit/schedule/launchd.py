@@ -95,9 +95,10 @@ class LaunchdEmitter:
         """Bootstrap the plist into the per-user launchd domain.
 
         Runs ``launchctl bootstrap gui/<uid> <plist>``. Raises
-        ``WikiError`` on non-zero exit; the message names both the OS
-        verb and the artifact path per the ``_emitter.py`` style
-        convention.
+        ``WikiError`` on non-zero exit; the message names the OS verb,
+        the artifact path, the numeric exit code, and stderr — all
+        operationally useful when a user needs to look up the failure
+        in launchctl docs.
         """
         uid = os.getuid()
         result = subprocess.run(
@@ -106,10 +107,10 @@ class LaunchdEmitter:
             text=True,
         )
         if result.returncode != 0:
-            stderr = result.stderr.strip()
+            stderr = result.stderr.strip() or "<no stderr>"
             raise WikiError(
-                f"launchctl bootstrap gui/{uid} {artifact_path} failed"
-                + (f": {stderr}" if stderr else "")
+                f"launchctl bootstrap gui/{uid} {artifact_path} failed "
+                f"(exit code {result.returncode}): {stderr}"
             )
 
     def deactivate(self, artifact_path: Path) -> None:
@@ -141,7 +142,8 @@ class LaunchdEmitter:
         ``com.llm-wiki-kit.<vault-id>.<op>.plist`` → label
         ``com.llm-wiki-kit.<vault-id>.<op>``).  Passing a path without
         a ``.plist`` suffix raises ``WikiError`` immediately, before any
-        filesystem or subprocess calls.
+        filesystem or subprocess calls — this is a misuse guard for
+        direct callers, not an invariant the dispatcher itself trips.
 
         Outcome mapping:
 

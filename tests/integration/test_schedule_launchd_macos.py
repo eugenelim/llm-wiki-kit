@@ -13,9 +13,11 @@ Gate conditions:
 - ``launchctl`` must be on PATH (present on all macOS systems since 10.10).
 
 If ``launchctl bootstrap`` fails because the label is already loaded
-(exit code 17, or stderr matches "service already loaded" / "EEXIST"),
-the test is marked ``xfail`` — that environment state is outside the
-test's control.  Any other bootstrap failure is a real test failure.
+(exit code 17 — "File exists", or exit code 37 — "Operation already in
+progress" on older macOS, or stderr contains "already loaded" /
+"already bootstrapped"), the test is marked ``xfail`` — that
+environment state is outside the test's control.  Any other bootstrap
+failure is a real test failure.
 """
 
 from __future__ import annotations
@@ -82,16 +84,19 @@ def test_bootstrap_inspect_bootout(vault: Path, tmp_path: Path) -> None:
 
     try:
         # Bootstrap — only xfail when the failure is the "label already
-        # loaded" class (exit code 17, or stderr contains "service already
-        # loaded" / "EEXIST").  Any other failure is a real regression.
+        # loaded" class (exit code 17 = File exists, exit code 37 = Operation
+        # already in progress on older macOS, or stderr variant "already
+        # loaded" / "already bootstrapped").  Any other failure is a real
+        # regression.
         try:
             emitter.activate(plist_path)
         except Exception as exc:
             msg = str(exc)
             already_loaded = (
                 "exit code 17" in msg
-                or "service already loaded" in msg.lower()
-                or "eexist" in msg.lower()
+                or "exit code 37" in msg
+                or "already loaded" in msg.lower()
+                or "already bootstrapped" in msg.lower()
             )
             if already_loaded:
                 pytest.xfail(f"launchctl bootstrap failed (label already loaded): {exc}")

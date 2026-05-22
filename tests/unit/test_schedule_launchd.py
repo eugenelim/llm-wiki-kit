@@ -476,7 +476,10 @@ def test_artifact_path_shape(emitter: LaunchdEmitter) -> None:
 
 
 def test_launchd_chooses_bytes_for_plistlib_xml(emitter: LaunchdEmitter) -> None:
-    """render_artifact always returns bytes (Protocol return type is ``str | bytes``)."""
+    """Launchd renders via ``plistlib.dumps(FMT_XML)``, which returns bytes.
+
+    The ``str | bytes`` Protocol slot is satisfied by the bytes branch.
+    """
     cadence = ResolvedCadence(period="daily", hour=7, minute=0)
     result = emitter.render_artifact(
         operation="daily-op",
@@ -548,3 +551,71 @@ def test_inspect_raises_wiki_error_for_non_plist_suffix(
     bad_path = tmp_path / "com.llm-wiki-kit.abc123.my-op.xml"
     with pytest.raises(WikiError, match=r"\.plist"):
         emitter.inspect(bad_path)
+
+
+# ---------------------------------------------------------------------------
+# activate() — WikiError message golden for the failure path
+# ---------------------------------------------------------------------------
+
+
+def test_activate_raises_wiki_error_with_exit_code(
+    emitter: LaunchdEmitter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``activate()`` raises ``WikiError`` whose message contains ``(exit code N):`` and stderr.
+
+    The exit code is operationally critical: users cross-reference it
+    against launchctl docs.  The message also includes the OS verb
+    (``launchctl bootstrap``), the artifact path, and the stderr text.
+    """
+    from llm_wiki_kit.errors import WikiError
+
+    plist_path = tmp_path / "com.llm-wiki-kit.abc123.my-op.plist"
+
+    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=17,
+            stdout="",
+            stderr="Load failed: 17: File exists",
+        )
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
+
+    with pytest.raises(WikiError) as exc_info:
+        emitter.activate(plist_path)
+
+    msg = str(exc_info.value)
+    assert "launchctl bootstrap" in msg
+    assert str(plist_path) in msg
+    assert "(exit code 17):" in msg
+    assert "Load failed: 17: File exists" in msg
+
+
+def test_activate_raises_wiki_error_with_no_stderr_fallback(
+    emitter: LaunchdEmitter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When stderr is empty ``activate()`` substitutes ``<no stderr>`` in the message."""
+    from llm_wiki_kit.errors import WikiError
+
+    plist_path = tmp_path / "com.llm-wiki-kit.abc123.my-op.plist"
+
+    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=1,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
+
+    with pytest.raises(WikiError) as exc_info:
+        emitter.activate(plist_path)
+
+    msg = str(exc_info.value)
+    assert "(exit code 1):" in msg
+    assert "<no stderr>" in msg
