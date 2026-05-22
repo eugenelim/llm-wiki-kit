@@ -46,8 +46,10 @@ from llm_wiki_kit.models import (
     LintRunEvent,
     LockAcquiredEvent,
     LockReleasedEvent,
+    ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
     OperationRunEvent,
+    PageAdoptedEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -602,6 +604,113 @@ def test_replay_operation_run_keeps_most_recent_per_operation() -> None:
     )
     state = replay_state([first, second])
     assert state.recent_operations == {"weekly-digest": second}
+
+
+# ---------------------------------------------------------------------------
+# replay_state for adopt-baseline events (PR-A of wiki-init-adopt)
+# ---------------------------------------------------------------------------
+
+
+def test_replay_state_populates_adopted_pages() -> None:
+    """One ``PageAdoptedEvent`` lands in ``state.adopted_pages`` keyed by path."""
+
+    event = PageAdoptedEvent(
+        timestamp=NOW,
+        by="wiki-init-adopt",
+        path="wiki/people/.gitkeep",
+        hash="a" * 64,
+    )
+    state = replay_state([event])
+    assert state.adopted_pages == {"wiki/people/.gitkeep": event}
+
+
+def test_replay_state_populates_adopted_regions() -> None:
+    """``ManagedRegionAdoptedEvent`` lands in ``state.adopted_regions``.
+
+    Keyed by ``(file, region)``.
+    """
+
+    event = ManagedRegionAdoptedEvent(
+        timestamp=NOW,
+        by="wiki-init-adopt",
+        file="frontmatter.schema.yaml",
+        region="types",
+        content_hash="b" * 64,
+    )
+    state = replay_state([event])
+    assert state.adopted_regions == {("frontmatter.schema.yaml", "types"): event}
+
+
+def test_replay_state_latest_adopted_page_event_wins() -> None:
+    """Two ``PageAdoptedEvent``s for the same path collapse to the later one."""
+
+    earlier = PageAdoptedEvent(timestamp=_at(0), by="wiki-init-adopt", path="p.md", hash="a" * 64)
+    later = PageAdoptedEvent(timestamp=_at(1), by="wiki-init-adopt", path="p.md", hash="b" * 64)
+    state = replay_state([earlier, later])
+    assert state.adopted_pages == {"p.md": later}
+
+
+def test_replay_state_latest_adopted_region_event_wins() -> None:
+    """Two ``ManagedRegionAdoptedEvent``s for the same (file, region) collapse to the later one."""
+
+    earlier = ManagedRegionAdoptedEvent(
+        timestamp=_at(0),
+        by="wiki-init-adopt",
+        file="f.yaml",
+        region="types",
+        content_hash="a" * 64,
+    )
+    later = ManagedRegionAdoptedEvent(
+        timestamp=_at(1),
+        by="wiki-init-adopt",
+        file="f.yaml",
+        region="types",
+        content_hash="b" * 64,
+    )
+    state = replay_state([earlier, later])
+    assert state.adopted_regions == {("f.yaml", "types"): later}
+
+
+def test_replay_state_page_write_does_not_evict_page_adopted_entry() -> None:
+    """Spec §Contracts: ``adopted_pages`` is "latest adopt event per path",
+    NOT a sticky-adopt view. A later ``PageWriteEvent`` for the same
+    path lands in ``state.page_writes`` AND the adopt entry stays in
+    ``state.adopted_pages``. Callers needing "is the latest baseline a
+    write or an adopt?" walk the journal (PR-B's
+    ``_latest_baseline_event_kind`` helper); callers needing "every
+    path the kit has ever claimed" use the union (see
+    ``doctor.check_orphans`` extension, PR-A step 6).
+    """
+
+    adopted = PageAdoptedEvent(timestamp=_at(0), by="wiki-init-adopt", path="p.md", hash="a" * 64)
+    write = PageWriteEvent(timestamp=_at(1), by="core", path="p.md", hash="b" * 64)
+    state = replay_state([adopted, write])
+    assert state.page_writes == {"p.md": write}
+    assert state.adopted_pages == {"p.md": adopted}
+
+
+def test_replay_state_legacy_journal_leaves_adopted_dicts_at_default() -> None:
+    """A journal carrying no adoption events leaves both new fields at default.
+
+    Pins ADR-0002's "additive schema rule" half of the PR-A contract:
+    pre-PR-A journals (no ``page.adopted`` / ``managed_region.adopted``
+    lines) keep replaying to a ``VaultState`` whose new dict fields are
+    the empty default. The JSON-roundtrip half of equivalence lives in
+    ``tests/unit/test_models.py::test_vault_state_round_trips_with_populated_adopted_pages``
+    (and its sibling for ``adopted_regions``'s in-memory-only contract).
+    """
+
+    state = replay_state(
+        [
+            VaultInitEvent(timestamp=NOW, by="wiki-init", vault_name="v", recipe="core"),
+            PrimitiveInstallEvent(
+                timestamp=_at(0), by="wiki-init", primitive="core", version="0.1.0"
+            ),
+            PageWriteEvent(timestamp=_at(1), by="core", path="p.md", hash="a" * 64),
+        ]
+    )
+    assert state.adopted_pages == {}
+    assert state.adopted_regions == {}
 
 
 def test_replay_research_query_accumulates_in_order() -> None:

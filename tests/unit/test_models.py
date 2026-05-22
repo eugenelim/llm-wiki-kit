@@ -25,9 +25,11 @@ from llm_wiki_kit.models import (
     LintRunEvent,
     LockAcquiredEvent,
     LockReleasedEvent,
+    ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
     OperationContract,
     OperationRunEvent,
+    PageAdoptedEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -637,6 +639,66 @@ def test_vault_state_round_trips_with_held_lock() -> None:
 def test_vault_state_rejects_extra_fields() -> None:
     with pytest.raises(PydanticValidationError):
         VaultState.model_validate({"surprise": 1})
+
+
+def test_vault_state_round_trips_with_populated_adopted_pages() -> None:
+    """``adopted_pages`` (string keys) round-trips through JSON unchanged.
+
+    Pins ADR-0002 §Negative's additive-schema rule for the PR-A
+    extension: a non-empty ``adopted_pages`` survives a future
+    ``wiki doctor --json`` dump.
+    """
+
+    event = PageAdoptedEvent(
+        timestamp=NOW, by="wiki-init-adopt", path="wiki/people/.gitkeep", hash="a" * 64
+    )
+    state = VaultState(adopted_pages={"wiki/people/.gitkeep": event})
+    restored = VaultState.model_validate_json(state.model_dump_json())
+    assert restored.adopted_pages == {"wiki/people/.gitkeep": event}
+
+
+def test_vault_state_json_dump_excludes_populated_adopted_regions() -> None:
+    """Spec §Contracts ``models.py`` bullet: ``adopted_regions`` is in-memory
+    derived state and ``exclude=True``.
+
+    Pins the latent regression the adversarial reviewer flagged: Pydantic
+    v2 would otherwise encode tuple keys as comma-joined strings on dump
+    and reject them on read, silently corrupting any consumer that
+    round-trips ``VaultState``. The contract is "regions are reconstructed
+    via ``replay_state`` from journal events" — so JSON snapshots drop
+    them by design. A future ``wiki doctor --json`` surface can call
+    ``replay_state`` to recover the full picture.
+    """
+
+    event = ManagedRegionAdoptedEvent(
+        timestamp=NOW,
+        by="wiki-init-adopt",
+        file="frontmatter.schema.yaml",
+        region="types",
+        content_hash="b" * 64,
+    )
+    state = VaultState(adopted_regions={("frontmatter.schema.yaml", "types"): event})
+    # In-memory state has the entry.
+    assert ("frontmatter.schema.yaml", "types") in state.adopted_regions
+
+    # JSON output excludes it entirely (no "adopted_regions" key at all,
+    # rather than a malformed one).
+    dumped = state.model_dump_json()
+    assert '"adopted_regions"' not in dumped
+
+    # The exclude=True contract is mode-agnostic: both ``model_dump()``
+    # (Python dict) and ``model_dump_json()`` drop the field. A future
+    # maintainer downgrading the field to ``exclude_unset=True`` or a
+    # ``mode='json'``-only exclusion would silently re-introduce the
+    # latent JSON-roundtrip break this exclusion was added to prevent.
+    assert "adopted_regions" not in state.model_dump()
+
+    # Round-trip restores the default-empty shape — round-trip equality
+    # of the original is intentionally not promised for this field; the
+    # field defaults back to ``{}`` and consumers reconstruct it via
+    # ``replay_state``.
+    restored = VaultState.model_validate_json(dumped)
+    assert restored.adopted_regions == {}
 
 
 # ---------------------------------------------------------------------------

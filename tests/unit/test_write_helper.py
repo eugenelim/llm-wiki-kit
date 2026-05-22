@@ -15,15 +15,18 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from llm_wiki_kit.errors import ManagedRegionError, WikiError
-from llm_wiki_kit.journal import read_events
+from llm_wiki_kit.journal import append_event, read_events
 from llm_wiki_kit.models import (
     Event,
+    ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
+    PageAdoptedEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -32,7 +35,9 @@ from llm_wiki_kit.write_helper import (
     OBSIDIAN_IGNORE_PROPOSED_PATTERN,
     OBSIDIANIGNORE_BYPASS_DOC,
     WriteResult,
+    _baseline_hash,
     _ensure_obsidianignore,
+    _managed_region_baseline_hash,
     resolve_proposal,
     safe_write,
     safe_write_region,
@@ -1707,3 +1712,199 @@ def test_safe_write_inside_cache_sees_just_appended_event(
     assert page_writes[0].timestamp == timestamps[0]
     assert page_writes[1].timestamp == timestamps[1]
     assert target.read_text() == "v1"
+
+
+# ---------------------------------------------------------------------------
+# _baseline_hash + _managed_region_baseline_hash walk both write- and
+# adopted-class events (PR-A of wiki-init-adopt). Spec §Contracts
+# ``write_helper`` bullet pins these; the adopt-aware predicate (PR-B)
+# consumes the result and routes on event class via
+# ``_latest_baseline_event_kind``.
+# ---------------------------------------------------------------------------
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def test_baseline_hash_returns_adopted_hash_when_only_adopted_present(
+    vault: Path, journal: Path
+) -> None:
+    """A journal containing only a ``PageAdoptedEvent`` for the path returns its hash."""
+
+    append_event(
+        journal,
+        PageAdoptedEvent(
+            timestamp=_utc_now(),
+            by="wiki-init-adopt",
+            path="wiki/people/.gitkeep",
+            hash="a" * 64,
+        ),
+    )
+    assert _baseline_hash(journal, "wiki/people/.gitkeep") == "a" * 64
+
+
+def test_baseline_hash_returns_latest_across_adopted_then_write(vault: Path, journal: Path) -> None:
+    """``PageWriteEvent`` after ``PageAdoptedEvent`` supersedes the baseline."""
+
+    append_event(
+        journal,
+        PageAdoptedEvent(timestamp=_utc_now(), by="wiki-init-adopt", path="p.md", hash="a" * 64),
+    )
+    append_event(
+        journal,
+        PageWriteEvent(timestamp=_utc_now(), by="core", path="p.md", hash="b" * 64),
+    )
+    assert _baseline_hash(journal, "p.md") == "b" * 64
+
+
+def test_baseline_hash_returns_latest_across_write_then_adopted(vault: Path, journal: Path) -> None:
+    """``PageAdoptedEvent`` after ``PageWriteEvent`` supersedes the baseline.
+
+    The resolve-then-re-adopt edge: an unusual sequence, but the walk
+    must respect ordinal position regardless of class so the adopt
+    baseline wins. The same hash-equality contract drives PR-B's
+    adopt-aware predicate.
+    """
+
+    append_event(
+        journal,
+        PageWriteEvent(timestamp=_utc_now(), by="core", path="p.md", hash="b" * 64),
+    )
+    append_event(
+        journal,
+        PageAdoptedEvent(timestamp=_utc_now(), by="wiki-init-adopt", path="p.md", hash="a" * 64),
+    )
+    assert _baseline_hash(journal, "p.md") == "a" * 64
+
+
+def test_baseline_hash_does_not_cross_paths_across_event_classes(
+    vault: Path, journal: Path
+) -> None:
+    """Path comparison still scopes the walk; events for other paths are ignored."""
+
+    append_event(
+        journal,
+        PageAdoptedEvent(
+            timestamp=_utc_now(),
+            by="wiki-init-adopt",
+            path="other.md",
+            hash="a" * 64,
+        ),
+    )
+    assert _baseline_hash(journal, "p.md") is None
+
+
+def test_managed_region_baseline_hash_walks_adopted_when_only_adopted_present(
+    vault: Path, journal: Path
+) -> None:
+    """``_managed_region_baseline_hash`` returns adopt hash when no write event exists."""
+
+    append_event(
+        journal,
+        ManagedRegionAdoptedEvent(
+            timestamp=_utc_now(),
+            by="wiki-init-adopt",
+            file="f.yaml",
+            region="types",
+            content_hash="a" * 64,
+        ),
+    )
+    assert _managed_region_baseline_hash(journal, "f.yaml", "types") == "a" * 64
+
+
+def test_managed_region_baseline_hash_latest_wins_across_classes(
+    vault: Path, journal: Path
+) -> None:
+    """Latest event of either class wins, regardless of class."""
+
+    append_event(
+        journal,
+        ManagedRegionAdoptedEvent(
+            timestamp=_utc_now(),
+            by="wiki-init-adopt",
+            file="f.yaml",
+            region="types",
+            content_hash="a" * 64,
+        ),
+    )
+    append_event(
+        journal,
+        ManagedRegionWriteEvent(
+            timestamp=_utc_now(),
+            by="core",
+            file="f.yaml",
+            region="types",
+            content_hash="b" * 64,
+        ),
+    )
+    assert _managed_region_baseline_hash(journal, "f.yaml", "types") == "b" * 64
+
+
+def test_managed_region_baseline_hash_latest_wins_across_write_then_adopted(
+    vault: Path, journal: Path
+) -> None:
+    """``ManagedRegionAdoptedEvent`` after ``ManagedRegionWriteEvent`` wins.
+
+    Mirrors ``test_baseline_hash_returns_latest_across_write_then_adopted``
+    for the region helper: the resolve-then-re-adopt edge the page-level
+    docstring describes applies equally at the region level.
+    """
+
+    append_event(
+        journal,
+        ManagedRegionWriteEvent(
+            timestamp=_utc_now(),
+            by="core",
+            file="f.yaml",
+            region="types",
+            content_hash="b" * 64,
+        ),
+    )
+    append_event(
+        journal,
+        ManagedRegionAdoptedEvent(
+            timestamp=_utc_now(),
+            by="wiki-init-adopt",
+            file="f.yaml",
+            region="types",
+            content_hash="a" * 64,
+        ),
+    )
+    assert _managed_region_baseline_hash(journal, "f.yaml", "types") == "a" * 64
+
+
+def test_managed_region_baseline_hash_does_not_cross_region_across_classes(
+    vault: Path, journal: Path
+) -> None:
+    """Region scoping holds across classes — sibling regions don't leak."""
+
+    append_event(
+        journal,
+        ManagedRegionAdoptedEvent(
+            timestamp=_utc_now(),
+            by="wiki-init-adopt",
+            file="f.yaml",
+            region="types",
+            content_hash="a" * 64,
+        ),
+    )
+    assert _managed_region_baseline_hash(journal, "f.yaml", "fields") is None
+
+
+def test_managed_region_baseline_hash_does_not_cross_file_across_classes(
+    vault: Path, journal: Path
+) -> None:
+    """File scoping holds across classes — sibling files don't leak."""
+
+    append_event(
+        journal,
+        ManagedRegionAdoptedEvent(
+            timestamp=_utc_now(),
+            by="wiki-init-adopt",
+            file="other.yaml",
+            region="types",
+            content_hash="a" * 64,
+        ),
+    )
+    assert _managed_region_baseline_hash(journal, "f.yaml", "types") is None

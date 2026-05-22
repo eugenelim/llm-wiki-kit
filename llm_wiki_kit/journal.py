@@ -48,8 +48,10 @@ from llm_wiki_kit.models import (
     LintRunEvent,
     LockAcquiredEvent,
     LockReleasedEvent,
+    ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
     OperationRunEvent,
+    PageAdoptedEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -874,6 +876,16 @@ def replay_state(events: Iterable[Event]) -> VaultState:
         elif isinstance(event, PageWriteEvent):
             state.page_writes[event.path] = event
             state.pending_proposals.pop(event.path, None)
+        elif isinstance(event, PageAdoptedEvent):
+            # Latest adopt event per path; NOT a sticky-adopt view. A later
+            # ``PageWriteEvent`` for the same path will not pop this entry —
+            # ``adopted_pages`` answers "every path the kit has ever
+            # claimed via adoption" (used by ``doctor.check_orphans`` to
+            # widen kit territory). "Is the latest baseline a write or an
+            # adopt?" is PR-B's ``_latest_baseline_event_kind`` walk.
+            state.adopted_pages[event.path] = event
+        elif isinstance(event, ManagedRegionAdoptedEvent):
+            state.adopted_regions[(event.file, event.region)] = event
         elif isinstance(event, PageProposalEvent):
             state.pending_proposals[event.path] = event
         elif isinstance(event, PageConflictResolvedEvent):

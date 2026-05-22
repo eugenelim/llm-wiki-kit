@@ -279,6 +279,25 @@ class ManagedRegionWriteEvent(_EventBase):
     hash_algo: str = "sha256"
 
 
+class ManagedRegionAdoptedEvent(_EventBase):
+    """Region-scope seed baseline for a pre-existing managed-region host file.
+
+    Payload mirrors :class:`ManagedRegionWriteEvent` (``file``,
+    ``region``, ``content_hash``, ``hash_algo``); the discriminator
+    differs so ``safe_write_region``'s adopt-aware predicate (PR-B)
+    can route differing-content kit writes to the proposal branch.
+    The aggregator (ADR-0006) treats this as a normal baseline via
+    ``_managed_region_baseline_hash``'s class-agnostic walk. See
+    ADR-0008 §Decision sub-choice 3.
+    """
+
+    type: Literal["managed_region.adopted"] = "managed_region.adopted"
+    file: str
+    region: str
+    content_hash: str
+    hash_algo: str = "sha256"
+
+
 class IngestRoutedEvent(_EventBase):
     """Recorded by ``wiki ingest`` after the orchestrator picks a route.
 
@@ -307,6 +326,23 @@ class SourceIngestEvent(_EventBase):
 
 class PageWriteEvent(_EventBase):
     type: Literal["page.write"] = "page.write"
+    path: str
+    hash: str
+    hash_algo: str = "sha256"
+
+
+class PageAdoptedEvent(_EventBase):
+    """Seed baseline for a pre-existing kit-owned file under ``wiki init --adopt``.
+
+    Payload mirrors :class:`PageWriteEvent` (``path``, ``hash``,
+    ``hash_algo``); the discriminator differs so ``safe_write``'s
+    adopt-aware predicate (PR-B) and ``wiki journal tail`` can
+    distinguish "kit adopted the user's existing bytes" from "kit
+    wrote this file." See ADR-0008 §Decision sub-choice 3 and
+    ``docs/specs/wiki-init-adopt/spec.md`` §Outputs Journal events.
+    """
+
+    type: Literal["page.adopted"] = "page.adopted"
     path: str
     hash: str
     hash_algo: str = "sha256"
@@ -460,9 +496,11 @@ Event = Annotated[
     | PrimitiveRemoveEvent
     | PrimitiveUpgradeEvent
     | ManagedRegionWriteEvent
+    | ManagedRegionAdoptedEvent
     | IngestRoutedEvent
     | SourceIngestEvent
     | PageWriteEvent
+    | PageAdoptedEvent
     | PageProposalEvent
     | PageConflictResolvedEvent
     | OperationRunEvent
@@ -511,6 +549,29 @@ class VaultState(_StrictModel):
     recipe: str | None = None
     installed_primitives: dict[str, str] = Field(default_factory=dict)
     page_writes: dict[str, PageWriteEvent] = Field(default_factory=dict)
+    # Latest ``PageAdoptedEvent`` per vault-relative path. NOT a "currently
+    # sticky-adopt" view: a later ``PageWriteEvent`` for the same path does
+    # NOT pop the entry — callers needing "is the latest baseline a write or
+    # an adopt?" must walk the journal (e.g. via the PR-B
+    # ``_latest_baseline_event_kind`` helper). Callers needing "every path
+    # the kit has ever claimed as territory" use ``set(page_writes) |
+    # set(adopted_pages)`` (see ``doctor.check_orphans``). ADR-0008
+    # §Decision sub-choice 3 and ``docs/specs/wiki-init-adopt/spec.md``
+    # §Contracts pin this shape.
+    adopted_pages: dict[str, PageAdoptedEvent] = Field(default_factory=dict)
+    # In-memory only. Tuple keys (``(file, region)``) round-trip natively
+    # through ``model_dump``/``model_validate`` but NOT through
+    # ``model_dump_json``/``model_validate_json``: Pydantic v2 encodes a
+    # tuple key as a comma-joined string (``"f.yaml,types"``) and rejects
+    # the same shape on read (``Input should be a valid array``). Spec
+    # §Contracts pins this as derived state — reconstruct via
+    # ``replay_state`` from the journal events. ``exclude=True`` enforces
+    # the "not serialized" contract so a future ``wiki doctor --json``
+    # snapshot (or any other dump) can never silently emit a half-valid
+    # representation of populated ``adopted_regions``.
+    adopted_regions: dict[tuple[str, str], ManagedRegionAdoptedEvent] = Field(
+        default_factory=dict, exclude=True
+    )
     pending_proposals: dict[str, PageProposalEvent] = Field(default_factory=dict)
     ingested_sources: dict[str, SourceIngestEvent] = Field(default_factory=dict)
     recent_operations: dict[str, OperationRunEvent] = Field(default_factory=dict)
