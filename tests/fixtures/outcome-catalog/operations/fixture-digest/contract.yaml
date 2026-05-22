@@ -1,0 +1,7 @@
+name: fixture-digest
+description: Test operation; prep-digest verb pinned by PR-3 fixture catalog.
+skill: fixture-digest
+outcomes:
+  - prep-digest
+inputs: {}
+outputs: {}

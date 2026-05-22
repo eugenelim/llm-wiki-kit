@@ -46,6 +46,7 @@ from llm_wiki_kit.errors import WikiError
 from llm_wiki_kit.install import (
     _warn_if_install_pipeline_uncached,
     aggregate_region_contributions,
+    write_outcome_slash_stubs,
 )
 from llm_wiki_kit.journal import append_event, read_events
 from llm_wiki_kit.models import (
@@ -272,6 +273,20 @@ def upgrade_primitives(
         plan.all_installed,
         sources,
         journal_path,
+        by=UPGRADE_VEHICLE,
+    )
+
+    # Outcome-named entry points: write/refresh stubs for every
+    # installed operation primitive (spec
+    # ``docs/specs/outcome-named-entry-points/spec.md`` §Outputs §2).
+    # Walks ``plan.all_installed`` not ``to_upgrade``: a recipe-wide
+    # catalog migration where an existing operation gains
+    # ``outcomes:`` without bumping its version still needs the new
+    # stub to land (spec AC "Backwards compatibility").
+    write_outcome_slash_stubs(
+        primitives=plan.all_installed,
+        sources=sources,
+        journal_path=journal_path,
         by=UPGRADE_VEHICLE,
     )
 

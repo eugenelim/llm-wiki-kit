@@ -1,0 +1,7 @@
+name: fixture-digest
+kind: operation
+version: 0.1.0
+description: >-
+  Synthetic operation primitive used by PR-3 install/upgrade
+  integration tests. Declares a well-formed outcome verb whose
+  matching SKILL description contains the verb verbatim.

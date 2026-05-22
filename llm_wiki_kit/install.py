@@ -32,17 +32,27 @@ already journaled by their own ``primitive.install`` events.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 from llm_wiki_kit import journal
-from llm_wiki_kit.errors import PrimitiveError
+from llm_wiki_kit.errors import PrimitiveError, WikiError
 from llm_wiki_kit.journal import append_event
-from llm_wiki_kit.models import Contribution, Primitive, PrimitiveInstallEvent
+from llm_wiki_kit.models import (
+    Contribution,
+    OperationContract,
+    Primitive,
+    PrimitiveInstallEvent,
+    PrimitiveKind,
+)
+from llm_wiki_kit.primitives import load_operation_contract
 from llm_wiki_kit.render import render_tree
-from llm_wiki_kit.write_helper import safe_write_region
+from llm_wiki_kit.write_helper import safe_write, safe_write_region
 
 _logger = logging.getLogger(__name__)
 
@@ -312,3 +322,225 @@ def install_primitives(
         journal_path,
         by=install_vehicle,
     )
+
+    # Outcome-named entry points: write one slash stub per declared
+    # verb across every installed operation primitive (spec
+    # ``docs/specs/outcome-named-entry-points/spec.md`` §Outputs §2).
+    # Walks ``all_installed`` rather than ``to_install`` so a
+    # ``wiki add`` of a non-outcome-declaring primitive does not
+    # drop stubs for the already-installed outcome-declaring ones.
+    write_outcome_slash_stubs(
+        primitives=all_installed,
+        sources=sources,
+        journal_path=journal_path,
+        by=install_vehicle,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Outcome-named entry points — slash-stub writer and SKILL-fragment validator
+#
+# Spec: ``docs/specs/outcome-named-entry-points/spec.md`` §Outputs §2 +
+# §Inputs §3. Both functions are shared between the init/add path
+# (``install_primitives``) and the upgrade path
+# (``upgrade.upgrade_primitives``); the SKILL validator is called by
+# the CLI handlers BEFORE their ``journal.use_journal_cache`` scope
+# opens so a missing-verb failure leaves zero side effects.
+# ---------------------------------------------------------------------------
+
+
+_SLASH_STUB_TEMPLATE = (
+    "---\n"
+    "description: Invoke the {operation} operation (alias: /{verb}).\n"
+    "---\n"
+    "Run the `{skill}` skill from this vault. See the SKILL's own\n"
+    "`when to load` section for inputs.\n"
+)
+
+
+def _resolved_skill_name(contract: OperationContract) -> str:
+    """Return the skill name with ``contract.skill or contract.name`` fallback.
+
+    Matches ``_cmd_run``'s resolution (``run.py:508``) and PR-4's
+    ``installed_outcome_verbs`` so the on-disk stub and the
+    discovery surface stay consistent for an operation that omits
+    ``skill:``.
+    """
+
+    return contract.skill or contract.name
+
+
+def write_outcome_slash_stubs(
+    *,
+    primitives: Sequence[Primitive],
+    sources: Mapping[str, Path],
+    journal_path: Path,
+    by: str,
+) -> None:
+    """Write one slash stub per declared outcome verb in ``primitives``.
+
+    For each operation-kind primitive whose ``contract.yaml``
+    declares one or more outcomes, write
+    ``<vault>/.claude/commands/<verb>.md`` via :func:`safe_write`.
+    The stub body is the fixed-body template from spec §Outputs §2
+    with ``{operation}``, ``{verb}``, and ``{skill}`` substituted.
+
+    Walks ``primitives`` in the order given — callers pass
+    ``all_installed`` (topologically sorted) so the on-disk write
+    order is reproducible.
+
+    ``by`` is the calling vehicle (``INSTALL_VEHICLE_INIT``,
+    ``INSTALL_VEHICLE_ADD``, ``UPGRADE_VEHICLE``) — stubs attribute
+    to their caller, not a stub-specific vehicle constant (plan
+    §PR-3 step 3 "no new vehicle constant"). The same primitive's
+    region-aggregator writes share this convention.
+    """
+
+    vault_root = journal_path.parent.parent
+    for primitive in primitives:
+        if primitive.kind is not PrimitiveKind.OPERATION:
+            continue
+        source = sources.get(primitive.name)
+        if source is None:
+            continue
+        contract = load_operation_contract(source)
+        if contract is None or not contract.outcomes:
+            continue
+        skill = _resolved_skill_name(contract)
+        for verb in contract.outcomes:
+            body = _SLASH_STUB_TEMPLATE.format(
+                operation=primitive.name,
+                verb=verb,
+                skill=skill,
+            )
+            safe_write(
+                path=vault_root / ".claude" / "commands" / f"{verb}.md",
+                content=body,
+                by=by,
+                journal_path=journal_path,
+            )
+
+
+def _read_skill_description(
+    *,
+    primitive_name: str,
+    contract_path: Path,
+    skill_md_path: Path,
+) -> str:
+    """Read the SKILL.md frontmatter ``description:`` field, or raise.
+
+    Three distinct failure modes get distinct ``WikiError`` messages
+    so a primitive author hits the actual root cause rather than the
+    misleading "verb missing" surface:
+
+    1. SKILL.md not on disk — likely a wrong ``skill:`` value in the
+       contract.
+    2. SKILL.md has no YAML frontmatter — file is structurally wrong.
+    3. Frontmatter parses but ``description:`` is missing or non-string.
+
+    Malformed YAML inside the frontmatter still raises with the
+    SKILL.md path, since the parser's own message is the
+    user-actionable detail. The validator below catches the
+    "frontmatter parses but verb absent" case separately.
+    """
+
+    if not skill_md_path.is_file():
+        raise WikiError(
+            f"operation '{primitive_name}' declares outcomes but its "
+            f"SKILL.md is missing.\n"
+            f"  contract.yaml: {contract_path}\n"
+            f"  expected SKILL.md: {skill_md_path}\n"
+            "Check the contract's `skill:` value matches the on-disk "
+            "skill directory name."
+        )
+    text = skill_md_path.read_text(encoding="utf-8")
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        raise WikiError(
+            f"operation '{primitive_name}' declares outcomes but its "
+            f"SKILL.md has no YAML frontmatter.\n"
+            f"  SKILL.md: {skill_md_path}\n"
+            "Add a `--- ... ---` frontmatter block with a "
+            "`description:` field naming the verb."
+        )
+    try:
+        meta = yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError as exc:
+        raise WikiError(
+            f"operation '{primitive_name}' SKILL.md frontmatter is "
+            f"malformed YAML.\n"
+            f"  SKILL.md: {skill_md_path}\n"
+            f"  parser:   {exc}"
+        ) from exc
+    description = meta.get("description")
+    if not isinstance(description, str):
+        raise WikiError(
+            f"operation '{primitive_name}' SKILL.md frontmatter has no "
+            f"string `description:` field.\n"
+            f"  SKILL.md: {skill_md_path}\n"
+            "Add `description: <natural-language sentence naming the "
+            "verb>` to the frontmatter."
+        )
+    if not description.strip():
+        raise WikiError(
+            f"operation '{primitive_name}' SKILL.md frontmatter "
+            f"`description:` field is empty.\n"
+            f"  SKILL.md: {skill_md_path}\n"
+            "Add natural-language text naming the outcome verb so the "
+            "SKILL describes when to load itself."
+        )
+    return description
+
+
+def validate_outcome_skill_fragments(
+    *,
+    primitives: Sequence[Primitive],
+    sources: Mapping[str, Path],
+) -> None:
+    """Refuse the install if any declared verb is missing from its SKILL.md.
+
+    Pre-flight validator called by ``_cmd_init`` / ``_cmd_add`` /
+    ``_cmd_upgrade`` BEFORE their ``journal.use_journal_cache``
+    scope opens — same call site as :func:`validate_contributions`.
+    Reads each operation primitive's ``contract.yaml`` and the
+    matching ``files/skills/<skill>/SKILL.md`` from the source tree
+    (not the vault); raises :class:`WikiError` naming both files on
+    the first verb that is not present as a whole word (``\\b<verb>\\b``)
+    in the SKILL's frontmatter ``description``.
+
+    Verbs are ASCII-only by spec §Inputs §2 rule 2, so the regex is
+    safe in Python's default Unicode-aware mode. Note that ``\\b``
+    fires at hyphen-to-letter transitions, so a verb like
+    ``prep-digest`` *would* technically match inside ``re-prep-digest``;
+    this is a known loose-boundary behaviour. No realistic SKILL.md
+    description triggers it, but a future spec amendment can tighten
+    to ``(?<![\\w-])<verb>(?![\\w-])`` if needed.
+    """
+
+    for primitive in primitives:
+        if primitive.kind is not PrimitiveKind.OPERATION:
+            continue
+        source = sources.get(primitive.name)
+        if source is None:
+            continue
+        contract = load_operation_contract(source)
+        if contract is None or not contract.outcomes:
+            continue
+        skill = _resolved_skill_name(contract)
+        skill_md_path = source / "files" / "skills" / skill / "SKILL.md"
+        description = _read_skill_description(
+            primitive_name=primitive.name,
+            contract_path=source / "contract.yaml",
+            skill_md_path=skill_md_path,
+        )
+        for verb in contract.outcomes:
+            if not re.search(rf"\b{re.escape(verb)}\b", description):
+                raise WikiError(
+                    f"operation '{primitive.name}' declares outcome verb "
+                    f"'{verb}' but the SKILL.md description does not "
+                    f"contain it as a whole word.\n"
+                    f"  contract.yaml: {source / 'contract.yaml'}\n"
+                    f"  SKILL.md:      {skill_md_path}\n"
+                    "Add the verb to the SKILL's frontmatter "
+                    "`description:` field (spec §Inputs §3)."
+                )

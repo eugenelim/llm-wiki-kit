@@ -1,0 +1,7 @@
+name: fixture-skill-missing
+kind: operation
+version: 0.1.0
+description: >-
+  Synthetic operation primitive whose SKILL description deliberately
+  omits the declared outcome verb. Used by PR-3's negative-path
+  SKILL-fragment validator tests.

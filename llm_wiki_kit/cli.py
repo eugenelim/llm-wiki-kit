@@ -41,7 +41,12 @@ from llm_wiki_kit.doctor import format_issue, run_doctor
 from llm_wiki_kit.errors import JournalCorruptError, WikiError
 from llm_wiki_kit.git_init import initialize_git
 from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
-from llm_wiki_kit.install import install_primitives, validate_contributions
+from llm_wiki_kit.install import (
+    install_primitives,
+    validate_contributions,
+    validate_outcome_skill_fragments,
+    write_outcome_slash_stubs,
+)
 from llm_wiki_kit.journal import (
     LockUnavailableError,
     _release_persisted_fd,
@@ -82,7 +87,7 @@ from llm_wiki_kit.primitives import (
     resolve_dependencies,
 )
 from llm_wiki_kit.recipes import CORE_PRIMITIVE_NAME, load_recipe, resolve_recipe_primitives
-from llm_wiki_kit.upgrade import plan_upgrade, upgrade_primitives
+from llm_wiki_kit.upgrade import UPGRADE_VEHICLE, plan_upgrade, upgrade_primitives
 
 INSTALL_VEHICLE_INIT = "wiki-init"
 INSTALL_VEHICLE_ADD = "wiki-add"
@@ -318,6 +323,13 @@ def _cmd_init(args: argparse.Namespace) -> int:
     }
     for primitive in ordered:
         validate_contributions(primitive, sources[primitive.name])
+    # Outcome-verb SKILL-fragment pre-flight (spec
+    # ``docs/specs/outcome-named-entry-points/spec.md`` §Inputs §3):
+    # refuse the install if any declared verb is missing from its
+    # SKILL.md. Runs BEFORE ``target.mkdir`` and the journal-cache
+    # scope so a missing-verb failure leaves zero side effects on
+    # disk (no half-init journal, no kit-owned directories).
+    validate_outcome_skill_fragments(primitives=ordered, sources=sources)
 
     target.mkdir(parents=True, exist_ok=True)
     journal_path = target / ".wiki.journal" / "journal.jsonl"
@@ -502,6 +514,12 @@ def _cmd_add(args: argparse.Namespace) -> int:
     # (ADR-0006 §Mechanics step 6).
     for primitive in to_install:
         validate_contributions(primitive, sources[primitive.name])
+    # Outcome-verb SKILL-fragment pre-flight (spec
+    # ``docs/specs/outcome-named-entry-points/spec.md`` §Inputs §3).
+    # Walks ``all_installed_ordered`` so a malformed already-
+    # installed primitive surfaces on ``wiki add`` too — even if
+    # the new primitive is verb-free.
+    validate_outcome_skill_fragments(primitives=all_installed_ordered, sources=sources)
 
     recipe = load_recipe(recipes_dir / f"{state.recipe}.yaml")
     context = _build_context(recipe, state.vault_name)
@@ -574,15 +592,6 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    if not plan.to_upgrade:
-        if plan.no_op_target is not None:
-            name, version = plan.no_op_target
-            print(f"wiki upgrade: primitive '{name}' is already at version {version}.")
-        else:
-            print("wiki upgrade: nothing to upgrade.")
-        _print_not_in_catalog_hint()
-        return 0
-
     sources: dict[str, Path] = {
         primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
         for primitive in plan.all_installed
@@ -593,6 +602,39 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
     # primitive's ``regions/`` snippets.
     for primitive in plan.all_installed:
         validate_contributions(primitive, sources[primitive.name])
+    # Outcome-verb SKILL-fragment pre-flight (spec
+    # ``docs/specs/outcome-named-entry-points/spec.md`` §Inputs §3).
+    # Walks ``plan.all_installed`` so a catalog migration that adds
+    # ``outcomes:`` to an already-installed (version-unchanged)
+    # operation surfaces a missing-verb here, before the upgrade
+    # opens its journal-cache scope.
+    validate_outcome_skill_fragments(primitives=plan.all_installed, sources=sources)
+
+    if not plan.to_upgrade:
+        # No version bump, but declared ``outcomes:`` may have been
+        # added to an installed operation's contract — spec AC
+        # "Backwards compatibility" requires those stubs to land via
+        # ``wiki upgrade`` even when the no-op short-circuit fires.
+        # The writer is a no-op for vaults whose installed operations
+        # declare no outcomes (no operation primitives in
+        # ``plan.all_installed``, or none declare ``outcomes:``), so
+        # the pre-spec ``test_upgrade_no_changes_prints_nothing_to_upgrade``
+        # contract holds: zero journal events on a true no-op.
+        with journal.use_journal_cache(journal_path):
+            write_outcome_slash_stubs(
+                primitives=plan.all_installed,
+                sources=sources,
+                journal_path=journal_path,
+                by=UPGRADE_VEHICLE,
+            )
+
+        if plan.no_op_target is not None:
+            name, version = plan.no_op_target
+            print(f"wiki upgrade: primitive '{name}' is already at version {version}.")
+        else:
+            print("wiki upgrade: nothing to upgrade.")
+        _print_not_in_catalog_hint()
+        return 0
 
     recipe = load_recipe(recipes_dir / f"{state.recipe}.yaml")
     context = _build_context(recipe, state.vault_name)

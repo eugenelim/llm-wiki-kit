@@ -483,7 +483,7 @@ non-default catalog root.
        `install_primitives` itself does not open the cache
        scope; its callers do.
    - **Approach:** new helper
-     `install._validate_outcome_skill_fragments(primitives:
+     `install.validate_outcome_skill_fragments(primitives:
      Sequence[Primitive], sources: Mapping[str, Path]) -> None`,
      called from `_cmd_init`, `_cmd_add`, and `_cmd_upgrade`
      BEFORE their `journal.use_journal_cache` scope opens —
