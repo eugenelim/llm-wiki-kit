@@ -150,12 +150,23 @@ class OperationInputSpec(_StrictModel):
 
 
 class OperationContract(_StrictModel):
-    """The schema of an operation primitive's ``contract.yaml``."""
+    """The schema of an operation primitive's ``contract.yaml``.
+
+    ``outcomes`` declares human-readable verbs that map back to this
+    operation (per ``docs/specs/outcome-named-entry-points/spec.md``
+    §Inputs §1). Each verb is validated by
+    :func:`llm_wiki_kit.primitives.is_well_formed_outcome_verb` at
+    catalog-load time and surfaces via three derived surfaces (CLI
+    alias, Claude Code slash stub, SKILL trigger fragment). An
+    omitted or empty ``outcomes:`` field is the v2.0.0 baseline —
+    the operation is reachable only through ``wiki run <name>``.
+    """
 
     name: str = Field(pattern=NAME_PATTERN)
     description: str
     period: str | None = None
     skill: str | None = None
+    outcomes: list[str] = Field(default_factory=list)
     inputs: dict[str, OperationInputSpec] = Field(default_factory=dict)
     outputs: dict[str, object] = Field(default_factory=dict)
 

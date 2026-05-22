@@ -37,13 +37,15 @@ honest in CI fixtures.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from pathlib import Path
 
 import yaml
 from pydantic import ValidationError as PydanticValidationError
 
-from llm_wiki_kit.errors import PrimitiveError, ValidationError
-from llm_wiki_kit.models import Primitive
+from llm_wiki_kit.errors import PrimitiveError, ValidationError, WikiError
+from llm_wiki_kit.models import OperationContract, Primitive
 
 # Catalog directory names per ``docs/architecture/overview.md``. The kit ships
 # the kind subdirectories pluralized (``ontologies/`` for the ``ontology``
@@ -59,6 +61,201 @@ _CATALOG_DIRS: frozenset[str] = frozenset(
         "infrastructure",
     ]
 )
+
+
+# ---------------------------------------------------------------------------
+# Outcome-named entry points (per
+# ``docs/specs/outcome-named-entry-points/spec.md`` §Inputs §2).
+#
+# Constants live in ``primitives.py`` rather than ``cli.py`` because the
+# validator below reads them and the kit's dependency graph is
+# ``cli.py -> primitives.py``; reversing the direction would introduce a
+# circular import. The *enumeration source* — which subcommands are
+# reserved — is ``cli.build_parser()``;
+# ``tests/unit/test_outcome_verbs.py::test_reserved_outcome_verbs_matches_subcommand_set``
+# pins the two against each other so a new subcommand added to
+# ``cli.py`` without an update here trips CI.
+# ---------------------------------------------------------------------------
+
+#: Verbs an outcome may never equal. Matches the set of registered
+#: top-level ``wiki`` subcommands plus standard discovery aliases.
+#: ``tests/unit/test_outcome_verbs.py::test_reserved_outcome_verbs_matches_subcommand_set``
+#: pins this set against ``cli.build_parser()`` so a new subcommand
+#: added in `cli.py` without an update here trips the test.
+RESERVED_OUTCOME_VERBS: frozenset[str] = frozenset(
+    {
+        "init",
+        "add",
+        "upgrade",
+        "doctor",
+        "ingest",
+        "resolve",
+        "lock",
+        "run",
+        "research",
+        "search",
+        "journal",
+        # Discovery aliases — never registered as subparsers but
+        # reserved so a primitive cannot claim them.
+        "help",
+        "version",
+        "outcomes",
+    }
+)
+
+
+#: Permitted verb stems. A well-formed verb either equals a bare-verb
+#: entry (no trailing hyphen) outright, OR starts with one of the
+#: prefix entries (trailing hyphen) followed by ``<object>``. Extend
+#: this set in the same PR that adds an operation needing a new stem.
+OUTCOME_VERB_STEMS: frozenset[str] = frozenset(
+    {
+        # Bare verbs.
+        "digest",
+        "roll-up",
+        # Prefix forms (``<stem>-<object>``).
+        "plan-",
+        "refresh-",
+        "log-",
+        "summarize-",
+        "prep-",
+        "review-",
+        "track-",
+        "synthesize-",
+        "pack-",
+        "remind-",
+        "map-",
+    }
+)
+
+
+_OUTCOME_VERB_SHAPE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+
+
+def is_well_formed_outcome_verb(verb: str) -> None:
+    """Raise :class:`WikiError` if ``verb`` violates any naming rule.
+
+    Returns ``None`` on success. Encodes spec §Inputs §2 rules 1, 2,
+    3, 4, and 6 (rule 5 — catalog uniqueness — needs the full catalog
+    and lives in :func:`check_outcome_verb_uniqueness`). Each rejection
+    message names the rule that triggered it so the eventual
+    error renders something the primitive author can act on.
+    """
+
+    # Rule 1 (length) and rule 2 (ASCII / locale). Length comes first
+    # because the shape regex assumes a non-empty value.
+    if not 3 <= len(verb) <= 24:
+        raise WikiError(
+            f"outcome verb '{verb}' length {len(verb)} is outside the "
+            "3-24 character range (spec §Inputs §2 rule 1)"
+        )
+    if not verb.isascii():
+        raise WikiError(
+            f"outcome verb '{verb}' contains non-ASCII characters; "
+            "outcome verbs are English-only ASCII per spec §Inputs §2 "
+            "rule 2"
+        )
+
+    # Rule 1 (shape).
+    if not _OUTCOME_VERB_SHAPE.fullmatch(verb):
+        if any(ch.isupper() for ch in verb):
+            raise WikiError(
+                f"outcome verb '{verb}' must be ASCII lowercase "
+                "kebab-case matching ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ "
+                "(spec §Inputs §2 rule 1)"
+            )
+        if "--" in verb:
+            raise WikiError(
+                f"outcome verb '{verb}' contains consecutive hyphens (spec §Inputs §2 rule 1)"
+            )
+        if verb.endswith("-"):
+            raise WikiError(f"outcome verb '{verb}' has a trailing hyphen (spec §Inputs §2 rule 1)")
+        if verb[:1].isdigit():
+            raise WikiError(
+                f"outcome verb '{verb}' starts with a digit; verbs "
+                "must start with [a-z] (spec §Inputs §2 rule 1, "
+                "leading digit)"
+            )
+        raise WikiError(
+            f"outcome verb '{verb}' does not match the kebab-case "
+            "shape ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ (spec §Inputs §2 "
+            "rule 1)"
+        )
+
+    # Rule 6 — belt-and-braces ``wiki-`` prefix block (rule 4 already
+    # rejects it because no `wiki-` stem is allowlisted, but a future
+    # maintainer adding a `wiki-` stem to ``OUTCOME_VERB_STEMS`` would
+    # bypass that check).
+    if verb.startswith("wiki-"):
+        raise WikiError(
+            f"outcome verb '{verb}' starts with the reserved 'wiki-' "
+            "prefix (spec §Inputs §2 rule 6)"
+        )
+
+    # Rule 3 — reserved-word block.
+    if verb in RESERVED_OUTCOME_VERBS:
+        raise WikiError(
+            f"outcome verb '{verb}' collides with a reserved wiki "
+            "subcommand (spec §Inputs §2 rule 3)"
+        )
+
+    # Rule 4 — verb-form. Either the whole verb is a bare-verb entry,
+    # or it starts with an allowlisted prefix entry (``<stem>-``)
+    # followed by a non-empty ``<object>``.
+    if verb in OUTCOME_VERB_STEMS:
+        return
+    for stem in OUTCOME_VERB_STEMS:
+        if stem.endswith("-") and verb.startswith(stem) and len(verb) > len(stem):
+            return
+    raise WikiError(
+        f"outcome verb '{verb}' does not start with an allowlisted "
+        "verb-stem from primitives.OUTCOME_VERB_STEMS (spec §Inputs "
+        "§2 rule 4); extend the constant in the same PR that needs a "
+        "new stem"
+    )
+
+
+def check_outcome_verb_uniqueness(contracts: Iterable[OperationContract]) -> None:
+    """Raise :class:`WikiError` on catalog-level outcome-verb collisions.
+
+    Two passes over ``contracts``:
+
+    1. **Verb uniqueness** (spec §Inputs §2 rule 5) — a verb appears at
+       most once across every operation primitive.
+    2. **Verb-vs-operation-name disjointness** (spec Invariants 8 +
+       Acceptance criterion "Verb does not shadow any operation
+       name") — a verb may not equal any operation's ``name``,
+       including the declaring operation's own name.
+
+    The function consumes the iterable once, so callers passing a
+    one-shot generator do not need to materialize it twice.
+    """
+
+    contracts_list = list(contracts)
+    operation_names: set[str] = {contract.name for contract in contracts_list}
+
+    seen_verbs: dict[str, str] = {}
+    for contract in contracts_list:
+        for verb in contract.outcomes:
+            # Pass 1: verb uniqueness across the catalog.
+            owner = seen_verbs.get(verb)
+            if owner is not None:
+                raise WikiError(
+                    f"outcome verb '{verb}' is declared by both "
+                    f"'{owner}' and '{contract.name}'; verbs must be "
+                    "unique across the operation catalog (spec "
+                    "§Inputs §2 rule 5)"
+                )
+            seen_verbs[verb] = contract.name
+
+            # Pass 2: verb-vs-operation-name shadow.
+            if verb in operation_names:
+                raise WikiError(
+                    f"outcome verb '{verb}' declared by "
+                    f"'{contract.name}' shadows the operation name "
+                    f"'{verb}'; outcome verbs and operation names "
+                    "must occupy disjoint sets (spec Invariant 8)"
+                )
 
 
 def load_primitive(path: Path) -> Primitive:
