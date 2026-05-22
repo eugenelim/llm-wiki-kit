@@ -18,6 +18,15 @@ Post-v2.0 commits use the
 [conventional-commits format from `docs/CONVENTIONS.md` § Commit messages](../../CONVENTIONS.md#commit-messages)
 (`feat(schedule):`, `fix(schedule):`, etc.).
 
+**Steps 2 and 3 ship bundled** as one PR (`feat(schedule): events +
+default_time + DSL + emitter Protocol (PR-2+3 of 8)`). PR-3 directly
+consumes PR-2's `OperationContract.default_time` field, and the same PR
+hoists the `_Emitter` Protocol into `schedule/_emitter.py` so the three
+per-OS emitter PRs (steps 4, 6, 7) can import it without colliding on
+shared init-module state. Once that bundled PR lands, steps 4, 6, and 7
+become `Depends on: none` from a supervisor's POV and can ship in
+parallel from a single round.
+
 Why this order: every per-OS emitter consumes the DSL parser, the
 module API, and the new `write_helper` exemption, so those land first;
 macOS is the only end-to-end testable target, so it sets the
@@ -99,14 +108,24 @@ the OS invokes it independently of how it was authored).
      `resolve_default(contract: OperationContract) -> ResolvedCadence`,
      `to_systemd_oncalendar(cadence: ResolvedCadence) -> str`,
      `to_launchd_calendar_interval(cadence: ResolvedCadence) ->
-     dict[str, int]`, `to_task_scheduler_trigger(cadence:
-     ResolvedCadence) -> ET.Element`.
+     list[dict[str, int]]` (list so the launchd emitter can hand a
+     quarterly cadence's four-month fan-out straight to plistlib
+     without re-computing it),
+     `to_task_scheduler_trigger(cadence: ResolvedCadence) -> ET.Element`.
 
 4. **macOS launchd emitter — file emission + activation.**
-   - **Depends on:** Step 1, Step 3.
+   - **Depends on:** PR-1 (`write_helper.write_os_artifact()`) and the
+     bundled PR-2+3 (events + `default_time` + DSL + `_Emitter`
+     Protocol). Once both have merged, this step is `Depends on: none`
+     from the round-3 supervisor's POV.
    - **Tests:** new `tests/unit/test_schedule_launchd.py`:
      - `render_plist()` golden-string assertions for each cadence
        kind (CT-2 derivable from these);
+     - **for a `quarterly` cadence, the rendered plist's
+       `StartCalendarInterval` value is a four-element array of dicts
+       whose `Month` keys are `(1, 4, 7, 10)`** (pins that the
+       emitter handed the full `to_launchd_calendar_interval(...)`
+       list to `plistlib`, not just `intervals[0]`);
      - argv-block contents pin `wiki run --exec <op>` shape;
      - `inspect()` returns each of the four states given fixture
        `launchctl print` outputs (mocked via subprocess monkeypatch).
@@ -141,11 +160,19 @@ the OS invokes it independently of how it was authored).
      + emitter + journal + state-replay together. Install sequence
      **write → activate → journal** per spec §"install happy path"
      step 8 (no rollback; activation failure unlinks the artifact and
-     skips the journal append). systemd / Task Scheduler emitters
-     present as `NotImplementedError` stubs.
+     skips the journal append). PR-5 may land in parallel with PR-6
+     and PR-7 (per the round-3 plan); if PR-6 or PR-7 has not yet
+     merged when PR-5 ships, the missing emitter's slot in the
+     platform-dispatch table raises `NotImplementedError` for that
+     OS until its PR lands. If all three emitter PRs have merged
+     first, PR-5's tests pin against the real emitter return values
+     and there are no stubs at any point.
 
 6. **Linux systemd emitter — file emission only.**
-   - **Depends on:** Step 5.
+   - **Depends on:** PR-1 (`write_helper.write_os_artifact()`) and the
+     bundled PR-2+3 (events + `default_time` + DSL + `_Emitter`
+     Protocol). Once both have merged, this step is `Depends on: none`
+     from the round-3 supervisor's POV.
    - **Tests:** new `tests/unit/test_schedule_systemd.py`:
      - golden-string assertions for `.service` + `.timer` per cadence
        kind, including the OnCalendar string;
@@ -160,7 +187,10 @@ the OS invokes it independently of how it was authored).
      round-trip cleanly through stdlib `configparser`).
 
 7. **Windows Task Scheduler emitter — file emission only.**
-   - **Depends on:** Step 5.
+   - **Depends on:** PR-1 (`write_helper.write_os_artifact()`) and the
+     bundled PR-2+3 (events + `default_time` + DSL + `_Emitter`
+     Protocol). Once both have merged, this step is `Depends on: none`
+     from the round-3 supervisor's POV.
    - **Tests:** new `tests/unit/test_schedule_taskscheduler.py`:
      - golden-XML assertions per cadence kind;
      - the XML round-trips through `xml.etree.ElementTree` parsing

@@ -42,6 +42,8 @@ from llm_wiki_kit.models import (
     PrimitiveRemoveEvent,
     PrimitiveUpgradeEvent,
     ResearchQueryEvent,
+    ScheduleInstalledEvent,
+    ScheduleUninstalledEvent,
     SourceIngestEvent,
     VaultGitInitializedEvent,
     VaultInitEvent,
@@ -657,6 +659,26 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
         {},
         "reason=(none)",
     ),
+    (
+        ScheduleInstalledEvent,
+        {
+            "operation": "weekly-digest",
+            "machine_id": "tower.local",
+            "cadence_dsl": "SUN 09:00",
+            "os_artifact_path": "/Users/me/Library/LaunchAgents/x.plist",
+            "exec_command": ["/usr/local/bin/wiki", "run", "--exec", "weekly-digest"],
+        },
+        "operation=weekly-digest machine=tower.local cadence=SUN 09:00",
+    ),
+    (
+        ScheduleUninstalledEvent,
+        {
+            "operation": "weekly-digest",
+            "machine_id": "tower.local",
+            "removed_artifact": True,
+        },
+        "operation=weekly-digest machine=tower.local removed=True",
+    ),
 ]
 
 
@@ -668,7 +690,17 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
 def test_format_event_line_summary_matches_spec(
     event_class: type, extra_kwargs: dict[str, object], expected_summary: str
 ) -> None:
-    """Every spec §Outputs row produces exactly the documented summary string."""
+    """Each row in this fixture pins the exact summary string the formatter emits.
+
+    Most rows correspond 1:1 to a row in
+    ``docs/specs/wiki-journal-readers/spec.md`` §Outputs (the
+    "Summary fields" table); a few pre-existing event classes
+    (``page.adopted``, ``managed_region.adopted``) carry summary rows
+    here and in ``_EVENT_SUMMARY_FIELDS`` without yet appearing in the
+    spec table — known drift documented elsewhere. The job of this
+    test is the format-stability pin: a refactor that re-orders fields
+    or relabels a key fails here loudly.
+    """
 
     event = event_class(timestamp=NOW, by="test", **extra_kwargs)
     line = _format_event_line(1, event)
@@ -827,6 +859,18 @@ def _build_instance(cls: type) -> typing.Any:
         ConfigSetEvent: {"key": "k", "value": "v"},
         LockAcquiredEvent: {},
         LockReleasedEvent: {},
+        ScheduleInstalledEvent: {
+            "operation": "weekly-digest",
+            "machine_id": "tower.local",
+            "cadence_dsl": "SUN 09:00",
+            "os_artifact_path": "/Users/me/Library/LaunchAgents/x.plist",
+            "exec_command": ["/usr/local/bin/wiki", "run", "--exec", "weekly-digest"],
+        },
+        ScheduleUninstalledEvent: {
+            "operation": "weekly-digest",
+            "machine_id": "tower.local",
+            "removed_artifact": True,
+        },
     }
     kwargs.update(extras_by_class[cls])
     return cls(**kwargs)

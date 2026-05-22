@@ -453,8 +453,9 @@ mirrors RFC-0003 §"Cadence vocabulary":
     -> list[ScheduleStatus]`
   Inner submodules: `schedule/dsl.py` (parser + default-fill table),
   `schedule/launchd.py`, `schedule/systemd.py`, `schedule/taskscheduler.py`,
-  `schedule/emitter.py` (dispatch by `platform.system()`).
-- **`_Emitter` protocol** (defined in `schedule/emitter.py`, implemented
+  `schedule/_emitter.py` (the `_Emitter` Protocol; dispatch by
+  `platform.system()` lives in `schedule/__init__.py`).
+- **`_Emitter` protocol** (defined in `schedule/_emitter.py`, implemented
   by `launchd.py`, `systemd.py`, `taskscheduler.py`):
   ```python
   class _Emitter(Protocol):

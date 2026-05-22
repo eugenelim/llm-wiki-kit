@@ -95,6 +95,8 @@ side effects").
   | `config.set` | `key=<key>` |
   | `lock.acquired` | `reason=<reason-or-(none)>` |
   | `lock.released` | `reason=<reason-or-(none)>` |
+  | `schedule.installed` | `operation=<operation> machine=<machine_id> cadence=<cadence_dsl>` |
+  | `schedule.uninstalled` | `operation=<operation> machine=<machine_id> removed=<removed_artifact>` |
 
   Each field's value renders as `str(value)`, with `None`
   substituted by the literal `(none)`. None of the rows above carry

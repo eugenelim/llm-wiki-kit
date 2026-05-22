@@ -169,6 +169,13 @@ class OperationContract(_StrictModel):
     outcomes: list[str] = Field(default_factory=list)
     inputs: dict[str, OperationInputSpec] = Field(default_factory=dict)
     outputs: dict[str, object] = Field(default_factory=dict)
+    # Optional per-contract default fire time for the wiki-schedule verb's
+    # default cadence (see ``docs/specs/wiki-schedule/spec.md`` §Inputs).
+    # Zero-padded HH:MM, 00:00-23:59. ``None`` falls back to the
+    # ``DEFAULT_TIME_BY_PERIOD`` table in ``schedule/dsl.py``. Additive per
+    # ADR-0002 §Negative — existing contracts that omit the field validate
+    # unchanged.
+    default_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +470,38 @@ class ConfigSetEvent(_EventBase):
     value: str
 
 
+class ScheduleInstalledEvent(_EventBase):
+    """Recorded by ``wiki schedule install`` after the OS-side artifact is
+    written and activation returns success.
+
+    Field shapes pinned in ``docs/specs/wiki-schedule/spec.md`` §"Journal
+    events" / §"Contracts with other modules". Additive per ADR-0002 — older
+    journal lines (no ``schedule.*`` events) replay unchanged.
+    """
+
+    type: Literal["schedule.installed"] = "schedule.installed"
+    operation: str
+    machine_id: str
+    cadence_dsl: str
+    os_artifact_path: str
+    exec_command: list[str]
+
+
+class ScheduleUninstalledEvent(_EventBase):
+    """Recorded by ``wiki schedule uninstall``.
+
+    ``removed_artifact`` records whether the kit successfully deleted the
+    OS-side file (``True``) or found it already missing/drifted (``False``);
+    both cases append exactly one event and exit ``0``. See
+    ``docs/specs/wiki-schedule/spec.md`` §Outputs ``uninstall``.
+    """
+
+    type: Literal["schedule.uninstalled"] = "schedule.uninstalled"
+    operation: str
+    machine_id: str
+    removed_artifact: bool
+
+
 class LockAcquiredEvent(_EventBase):
     """Recorded when a multi-event operation takes the journal-wide lock.
 
@@ -509,7 +548,9 @@ Event = Annotated[
     | LintRunEvent
     | ConfigSetEvent
     | LockAcquiredEvent
-    | LockReleasedEvent,
+    | LockReleasedEvent
+    | ScheduleInstalledEvent
+    | ScheduleUninstalledEvent,
     Field(discriminator="type"),
 ]
 
