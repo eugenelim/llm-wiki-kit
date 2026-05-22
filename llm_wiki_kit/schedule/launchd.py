@@ -98,14 +98,20 @@ class LaunchdEmitter:
         ``WikiError`` on non-zero exit; the message names the OS verb,
         the artifact path, the numeric exit code, and stderr — all
         operationally useful when a user needs to look up the failure
-        in launchctl docs.
+        in launchctl docs.  Also raises ``WikiError`` on timeout.
         """
         uid = os.getuid()
-        result = subprocess.run(
-            ["launchctl", "bootstrap", f"gui/{uid}", str(artifact_path)],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["launchctl", "bootstrap", f"gui/{uid}", str(artifact_path)],
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WikiError(
+                f"launchctl bootstrap gui/{uid} {artifact_path} timed out after 10s"
+            ) from exc
         if result.returncode != 0:
             stderr = result.stderr.strip() or "<no stderr>"
             raise WikiError(
@@ -119,17 +125,27 @@ class LaunchdEmitter:
         Runs ``launchctl bootout gui/<uid> <plist>``. Non-zero exit is
         logged to stderr but does not raise — the journal still records
         the user's uninstall intent (``_emitter.py`` style convention).
+        Timeout is also logged to stderr and does not raise.
         """
         uid = os.getuid()
-        result = subprocess.run(
-            ["launchctl", "bootout", f"gui/{uid}", str(artifact_path)],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["launchctl", "bootout", f"gui/{uid}", str(artifact_path)],
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+        except subprocess.TimeoutExpired:
+            print(
+                f"wiki schedule: warning: launchctl bootout gui/{uid} {artifact_path}"
+                " timed out after 10s",
+                file=sys.stderr,
+            )
+            return
         if result.returncode != 0:
             stderr = result.stderr.strip()
             print(
-                f"warning: launchctl bootout gui/{uid} {artifact_path} returned"
+                f"wiki schedule: warning: launchctl bootout gui/{uid} {artifact_path} returned"
                 f" {result.returncode}" + (f": {stderr}" if stderr else ""),
                 file=sys.stderr,
             )
@@ -167,11 +183,15 @@ class LaunchdEmitter:
         # Derive the service label from the plist filename (sans ``.plist``).
         label = artifact_path.stem
         uid = os.getuid()
-        result = subprocess.run(
-            ["launchctl", "print", f"gui/{uid}/{label}"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["launchctl", "print", f"gui/{uid}/{label}"],
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+        except subprocess.TimeoutExpired:
+            return "not-loaded"
         if result.returncode == 0:
             return "loaded"
         return "not-loaded"

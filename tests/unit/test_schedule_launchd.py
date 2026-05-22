@@ -417,44 +417,32 @@ def test_inspect_loaded_when_launchctl_print_succeeds(
     assert result == "loaded"
 
 
+@pytest.mark.parametrize(
+    "returncode,stderr",
+    [
+        (
+            113,
+            'Could not find service "com.llm-wiki-kit.abcdef123456.test-op" in domain for port\n',
+        ),
+        (1, ""),
+    ],
+    ids=["post-bootout-exit-113", "system-restart-exit-1"],
+)
 def test_inspect_not_loaded_when_launchctl_print_fails(
+    returncode: int,
+    stderr: str,
     emitter: LaunchdEmitter,
     artifact_file: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``"not-loaded"`` when ``launchctl print`` exits non-zero.
-
-    This covers the post-bootout state where the plist file is still on
-    disk but launchd no longer has the service registered.
-    """
+    """``"not-loaded"`` when ``launchctl print`` exits non-zero, regardless of message."""
 
     def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
             args=cmd,
-            returncode=113,
+            returncode=returncode,
             stdout="",
-            stderr="Could not find service "
-            '"com.llm-wiki-kit.abcdef123456.test-op" in domain for port\n',
-        )
-
-    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
-    result = emitter.inspect(artifact_file)
-    assert result == "not-loaded"
-
-
-def test_inspect_not_loaded_covers_system_restart_state(
-    emitter: LaunchdEmitter,
-    artifact_file: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Non-zero from ``launchctl print`` maps to ``"not-loaded"`` regardless of message."""
-
-    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=cmd,
-            returncode=1,
-            stdout="",
-            stderr="",
+            stderr=stderr,
         )
 
     monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
@@ -619,3 +607,154 @@ def test_activate_raises_wiki_error_with_no_stderr_fallback(
     msg = str(exc_info.value)
     assert "(exit code 1):" in msg
     assert "<no stderr>" in msg
+
+
+# ---------------------------------------------------------------------------
+# C1. Timeout handling — all three subprocess.run calls
+# ---------------------------------------------------------------------------
+
+
+def test_activate_raises_wiki_error_on_timeout(
+    emitter: LaunchdEmitter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``activate()`` raises ``WikiError`` whose message mentions 'timed out' on timeout."""
+    from llm_wiki_kit.errors import WikiError
+
+    plist_path = tmp_path / "com.llm-wiki-kit.abc123.my-op.plist"
+
+    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
+
+    with pytest.raises(WikiError) as exc_info:
+        emitter.activate(plist_path)
+
+    msg = str(exc_info.value)
+    assert "launchctl bootstrap" in msg
+    assert str(plist_path) in msg
+    assert "timed out" in msg
+
+
+def test_deactivate_logs_but_does_not_raise_on_timeout(
+    emitter: LaunchdEmitter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``deactivate()`` logs to stderr but does not raise on timeout."""
+    plist_path = tmp_path / "com.llm-wiki-kit.abc123.my-op.plist"
+
+    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
+
+    emitter.deactivate(plist_path)  # must not raise
+
+    captured = capsys.readouterr()
+    assert "launchctl bootout" in captured.err
+    assert str(plist_path) in captured.err
+
+
+def test_inspect_returns_not_loaded_on_timeout(
+    emitter: LaunchdEmitter,
+    artifact_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``inspect()`` returns ``"not-loaded"`` when ``launchctl print`` times out."""
+
+    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
+    result = emitter.inspect(artifact_file)
+    assert result == "not-loaded"
+
+
+# ---------------------------------------------------------------------------
+# C2. deactivate() non-zero path — logs stderr, does not raise
+# ---------------------------------------------------------------------------
+
+
+def test_deactivate_logs_but_does_not_raise_on_nonzero(
+    emitter: LaunchdEmitter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``deactivate()`` logs to stderr but does not raise on non-zero exit.
+
+    The orchestrator (PR-5) relies on this contract — uninstall intent is
+    always recorded in the journal regardless of launchctl exit code.
+    """
+    plist_path = tmp_path / "com.llm-wiki-kit.abc123.my-op.plist"
+
+    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=1,
+            stdout="",
+            stderr="bootout failure",
+        )
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
+
+    emitter.deactivate(plist_path)  # must not raise
+
+    captured = capsys.readouterr()
+    assert "launchctl bootout" in captured.err
+    assert str(plist_path) in captured.err
+
+
+# ---------------------------------------------------------------------------
+# C3. inspect() never returns "not-inspectable"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "returncode,stdout,stderr,raises_timeout",
+    [
+        (0, "active count = 1\n", "", False),
+        (113, "", "Could not find service\n", False),
+        (1, "", "", False),
+        (0, "", "", True),  # timeout branch — raises_timeout=True
+    ],
+    ids=["loaded", "not-loaded-exit-113", "not-loaded-exit-1", "timeout"],
+)
+def test_inspect_never_returns_not_inspectable(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    raises_timeout: bool,
+    emitter: LaunchdEmitter,
+    artifact_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``inspect()`` always returns one of the three macOS-reachable states.
+
+    ``"not-inspectable"`` is the Windows v1 fallback and must never appear
+    from this implementation.
+    """
+    valid_results = {"loaded", "not-loaded", "missing-file"}
+
+    if raises_timeout:
+
+        def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    else:
+
+        def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
+    result = emitter.inspect(artifact_file)
+    assert result in valid_results, f"inspect() returned unexpected {result!r}"
