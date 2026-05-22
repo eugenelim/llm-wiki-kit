@@ -45,7 +45,7 @@ import yaml
 from pydantic import ValidationError as PydanticValidationError
 
 from llm_wiki_kit.errors import PrimitiveError, ValidationError, WikiError
-from llm_wiki_kit.models import OperationContract, Primitive
+from llm_wiki_kit.models import OperationContract, Primitive, PrimitiveKind
 
 # Catalog directory names per ``docs/architecture/overview.md``. The kit ships
 # the kind subdirectories pluralized (``ontologies/`` for the ``ontology``
@@ -298,6 +298,56 @@ def load_primitive(path: Path) -> Primitive:
         raise ValidationError(f"primitive.yaml at {path}", exc) from exc
 
 
+def _load_operation_contract(primitive_dir: Path) -> OperationContract | None:
+    """Load ``<primitive_dir>/contract.yaml`` if present; else ``None``.
+
+    **Return-None on missing file is intentional**, not an oversight.
+    The spec's catalog-time-failures invariant (Invariant 5) covers
+    *verb naming rules* — it does not require that every operation
+    primitive ship a ``contract.yaml`` at catalog-load time. Two
+    behaviors depend on this:
+
+    1. ``tests/unit/test_primitives.py::test_discover_primitives_walks_kind_subdirectories``
+       constructs an operation primitive without a contract to
+       verify the kind-subdirectory walk; tightening here would
+       break that contract.
+    2. ``wiki run`` raises a dedicated ``WikiError`` against the
+       missing file at its own boundary (``run.py:225``:
+       ``raise WikiError(f"operation {operation!r}: no contract.yaml at {path}")``)
+       with the absolute path included, which is the user-actionable
+       message — the catalog-load path duplicating it would be noise.
+
+    Pydantic schema errors and YAML parse errors are still fatal
+    (mirroring :func:`load_primitive`'s handling of ``primitive.yaml``
+    failures) — a typo in a contract that *is* on disk does not
+    silently degrade.
+    """
+
+    contract_path = primitive_dir / "contract.yaml"
+    if not contract_path.is_file():
+        return None
+
+    try:
+        raw = contract_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PrimitiveError(f"cannot read {contract_path}: {exc}") from exc
+
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise PrimitiveError(f"malformed YAML in {contract_path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise PrimitiveError(
+            f"{contract_path} must contain a YAML mapping, got {type(data).__name__}"
+        )
+
+    try:
+        return OperationContract.model_validate(data)
+    except PydanticValidationError as exc:
+        raise ValidationError(f"contract.yaml at {primitive_dir}", exc) from exc
+
+
 def discover_primitives(templates_dir: Path) -> list[Primitive]:
     """Walk ``templates_dir/<kind>/<name>/`` and load every primitive.
 
@@ -314,12 +364,24 @@ def discover_primitives(templates_dir: Path) -> list[Primitive]:
     ``primitive.yaml`` would otherwise hide the primitive from every
     recipe that depends on it, which is exactly the failure mode Pydantic
     is meant to catch.
+
+    **Outcome-verb catalog gate** (per
+    ``docs/specs/outcome-named-entry-points/spec.md``): for every
+    operation-kind primitive whose ``contract.yaml`` is present, each
+    declared ``outcomes`` verb runs through
+    :func:`is_well_formed_outcome_verb`. After the walk completes,
+    :func:`check_outcome_verb_uniqueness` runs across every loaded
+    operation contract so the spec's
+    "the catalog is the namespace" invariant fires before any
+    user vault sees a primitive. Both checks raise :class:`WikiError`
+    directly, matching the spec's "primitive-load-time error" framing.
     """
 
     if not templates_dir.exists():
         return []
 
     primitives: list[Primitive] = []
+    operation_contracts: list[OperationContract] = []
     for kind_dir in sorted(templates_dir.iterdir()):
         if not kind_dir.is_dir() or kind_dir.name not in _CATALOG_DIRS:
             continue
@@ -328,7 +390,17 @@ def discover_primitives(templates_dir: Path) -> list[Primitive]:
                 continue
             if not (primitive_dir / "primitive.yaml").exists():
                 continue
-            primitives.append(load_primitive(primitive_dir))
+            primitive = load_primitive(primitive_dir)
+            primitives.append(primitive)
+            if primitive.kind is PrimitiveKind.OPERATION:
+                contract = _load_operation_contract(primitive_dir)
+                if contract is None:
+                    continue
+                for verb in contract.outcomes:
+                    is_well_formed_outcome_verb(verb)
+                operation_contracts.append(contract)
+
+    check_outcome_verb_uniqueness(operation_contracts)
 
     primitives.sort(key=lambda p: p.name)
     return primitives
