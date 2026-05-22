@@ -137,7 +137,10 @@ class TaskSchedulerEmitter:
         _el_with_text("Enabled", "true", settings)
 
         # <Actions>
-        assert exec_command, "exec_command must be non-empty per _Emitter contract"
+        # exec_command is preconditioned non-empty per orchestrator contract
+        # (the caller must pass at least the wiki executable path).
+        if not exec_command:
+            raise ValueError("exec_command must be non-empty per _Emitter contract")
         actions = _el("Actions", root)
         actions.set("Context", "Author")
         exec_el = _el("Exec", actions)
@@ -188,6 +191,11 @@ class TaskSchedulerEmitter:
 # ---------------------------------------------------------------------------
 # Public format helpers — called by the PR-5 orchestrator to compose the
 # stdout summary block. These return strings; they never spawn a subprocess.
+#
+# C3 DEFERRED (PR-5's call): these are module-level for v1. If PR-5's
+# orchestrator finds the Windows-specific branch awkward, consider lifting
+# ``post_install_instruction`` / ``post_uninstall_instruction`` to the
+# ``_Emitter`` Protocol with ``None``-default impls on launchd/systemd.
 # ---------------------------------------------------------------------------
 
 

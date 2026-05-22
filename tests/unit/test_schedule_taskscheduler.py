@@ -320,9 +320,15 @@ def test_render_artifact_round_trips_through_xml_parse(
     """
     rendered = _render(cadence)
 
+    # N5: pin UTF-16 LE BOM — Task Scheduler requires UTF-16 LE encoding.
+    assert rendered[:2] == b"\xff\xfe", f"[{label}] expected UTF-16 LE BOM"
+
     s1 = ET.tostring(
         ET.fromstring(rendered.decode("utf-16")), encoding="utf-16", xml_declaration=True
     )
+    # C2: pin that the first parse/serialise is byte-for-byte identical to
+    # the original rendered output (not just that two round-trips agree).
+    assert s1 == rendered, f"[{label}] first round-trip differs from rendered output"
     s2 = ET.tostring(ET.fromstring(s1.decode("utf-16")), encoding="utf-16", xml_declaration=True)
     assert s1 == s2, f"[{label}] XML is not byte-for-byte stable across round-trips"
 
@@ -495,3 +501,53 @@ def test_artifact_path_stem_format(monkeypatch: pytest.MonkeyPatch) -> None:
     path = TaskSchedulerEmitter().artifact_path("deadbeef1234", "meal-planning")
     assert path.stem == "deadbeef1234-meal-planning"
     assert path.suffix == ".xml"
+
+
+# ---------------------------------------------------------------------------
+# C1 — exec_command guard raises ValueError (not stripped under python -O).
+# ---------------------------------------------------------------------------
+
+
+def test_render_artifact_raises_value_error_for_empty_exec_command() -> None:
+    """Empty ``exec_command`` must raise ``ValueError``, not be silently skipped.
+
+    The guard was previously an ``assert`` statement, which is stripped under
+    ``python -O``. The ``ValueError`` fires in all interpreter modes.
+    """
+    emitter = TaskSchedulerEmitter()
+    with pytest.raises(ValueError, match="exec_command must be non-empty"):
+        emitter.render_artifact(
+            operation=OPERATION,
+            vault_root=VAULT_ROOT,
+            vault_id=VAULT_ID,
+            cadence=_DAILY,
+            exec_command=[],
+        )
+
+
+# ---------------------------------------------------------------------------
+# C4 — task-name cross-function invariant: <URI> matches /TN token.
+# ---------------------------------------------------------------------------
+
+
+def test_uri_task_name_matches_activation_instruction_tn_token() -> None:
+    """``<URI>`` task name must equal the ``/TN`` argument in the activation instruction.
+
+    If a future change renames one side but not the other, ``schtasks /Create``
+    would register the task under a different name than what's in the XML,
+    silently breaking scheduling. This test pins the cross-function invariant.
+    """
+    rendered = _render(_DAILY)
+    root = _parse(rendered)
+    uri = _find(root, "URI")
+    assert uri.text is not None
+    embedded_task_name = uri.text
+
+    artifact_path = TaskSchedulerEmitter().artifact_path(VAULT_ID, OPERATION)
+    activation_line = format_activation_instruction(artifact_path)
+
+    # The /TN token is the last quoted argument: /TN "<task-name>"
+    assert f'/TN "{embedded_task_name}"' in activation_line, (
+        f"Task name mismatch: <URI> has {embedded_task_name!r} "
+        f"but activation instruction is: {activation_line!r}"
+    )
