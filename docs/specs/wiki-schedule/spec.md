@@ -577,9 +577,12 @@ without reading the implementation.
       </array>
       <key>WorkingDirectory</key><string><vault-root></string>
       <key>StartCalendarInterval</key>
-      <dict>
-        <!-- one or more of Hour/Minute/Day/Weekday/Month per DSL -->
-      </dict>
+      <array>
+        <dict>
+          <!-- one or more of Hour/Minute/Day/Weekday/Month per DSL -->
+        </dict>
+        <!-- quarterly cadences emit four <dict> entries, one per quarter-month -->
+      </array>
       <key>StandardOutPath</key><string><vault-root>/.wiki.journal/exec-logs/launchd-stdout.log</string>
       <key>StandardErrorPath</key><string><vault-root>/.wiki.journal/exec-logs/launchd-stderr.log</string>
       <key>RunAtLoad</key><false/>
