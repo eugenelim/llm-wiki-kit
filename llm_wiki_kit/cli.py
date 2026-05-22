@@ -86,7 +86,12 @@ from llm_wiki_kit.primitives import (
     load_primitive,
     resolve_dependencies,
 )
-from llm_wiki_kit.recipes import CORE_PRIMITIVE_NAME, load_recipe, resolve_recipe_primitives
+from llm_wiki_kit.recipes import (
+    CORE_PRIMITIVE_NAME,
+    installed_outcome_verbs,
+    load_recipe,
+    resolve_recipe_primitives,
+)
 from llm_wiki_kit.upgrade import UPGRADE_VEHICLE, plan_upgrade, upgrade_primitives
 
 INSTALL_VEHICLE_INIT = "wiki-init"
@@ -381,6 +386,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 journal_path=journal_path,
                 _now=now,
             )
+
+    # Post-install discovery hint: mention `wiki outcomes` when at least
+    # one installed operation declares an outcome verb (spec §Outputs §4
+    # and §"wiki init post-install message").
+    kit_root_resolved = args.kit_root if args.kit_root is not None else _kit_root()
+    if installed_outcome_verbs(target, kit_root_resolved):
+        print("Run `wiki outcomes` to see this vault's operation verbs.")
+
     return 0
 
 
@@ -692,6 +705,47 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print(format_issue(issue))
 
     return DOCTOR_ISSUES_EXIT if issues else 0
+
+
+def _cmd_outcomes(args: argparse.Namespace) -> int:
+    """Print the installed verb table sorted by verb, two-space column gutter.
+
+    Reads the active vault's journal to discover which operations are
+    installed, then looks up each operation's ``contract.yaml`` for its
+    declared ``outcomes:`` verbs.  Output is plain text with columns
+    auto-sized to the widest entry per column and a two-space gutter
+    between columns.  Empty vault (or vault with no declared verbs)
+    produces empty stdout.
+
+    Errors with :class:`WikiError` when run outside a vault directory
+    (matching the same vault-scoping rule ``wiki doctor`` uses).
+    """
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
+
+    kit_root = args.kit_root if args.kit_root is not None else _kit_root()
+    verbs = installed_outcome_verbs(vault_root, kit_root)
+
+    if not verbs:
+        return 0
+
+    # Sort rows by verb.
+    rows = sorted(
+        ((verb, op, skill) for verb, (op, skill) in verbs.items()),
+        key=lambda r: r[0],
+    )
+
+    # Auto-size columns to the widest entry per column.
+    w_verb = max(len(r[0]) for r in rows)
+    w_op = max(len(r[1]) for r in rows)
+
+    for verb, op, skill in rows:
+        print(f"{verb:<{w_verb}}  {op:<{w_op}}  {skill}")
+
+    return 0
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
@@ -1787,6 +1841,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wiki",
         description="Build and maintain an LLM-readable markdown wiki.",
+        epilog="Run `wiki outcomes` to see this vault's operation verbs.",
         parents=[verbose_parent],
     )
     parser.add_argument(
@@ -1846,6 +1901,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate vault state against the journal.",
     )
     doctor.set_defaults(func=_cmd_doctor)
+
+    outcomes = subparsers.add_parser(
+        "outcomes",
+        parents=[verbose_parent],
+        help="List installed outcome verbs (verb → operation → skill).",
+    )
+    outcomes.set_defaults(func=_cmd_outcomes)
 
     ingest = subparsers.add_parser(
         "ingest",
