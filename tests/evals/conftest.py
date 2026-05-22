@@ -101,6 +101,44 @@ def build_weekly_digest_vault(kit_root: Path, parent: Path) -> Path:
     return vault
 
 
+def build_meal_planning_vault(kit_root: Path, parent: Path) -> Path:
+    """Seed for the `plan-meals` outcome-verb trigger eval.
+
+    Installs the family-subset needed to surface the
+    `meal-planning` operation: the `recipe` content-type
+    (which transitively pulls in the `food` ontology) plus
+    the `meal-planning` operation itself. Matches the
+    `weekly-digest` seed's shape — explicit content-type
+    plus explicit operation — so a maintainer scanning the
+    factories sees the same pattern per family.
+    """
+
+    return build_vault(
+        kit_root,
+        parent,
+        "content-type:recipe",
+        "operation:meal-planning",
+    )
+
+
+def build_stakeholder_map_refresh_vault(kit_root: Path, parent: Path) -> Path:
+    """Seed for the `refresh-stakeholders` outcome-verb trigger eval.
+
+    Installs the work-os subset needed to surface the
+    `stakeholder-map-refresh` operation: the
+    `stakeholder-update` content-type (which transitively
+    pulls in the `people` and `projects` ontologies) plus
+    the operation itself.
+    """
+
+    return build_vault(
+        kit_root,
+        parent,
+        "content-type:stakeholder-update",
+        "operation:stakeholder-map-refresh",
+    )
+
+
 RESEARCH_CITED_DOC = """\
 ---
 provider: perplexity
@@ -291,4 +329,42 @@ def _seed_research_dispatch(tmp_path_factory: pytest.TempPathFactory, eval_kit_r
 def research_dispatch_vault(tmp_path: Path, _seed_research_dispatch: Path) -> Path:
     dest = tmp_path / "vault"
     shutil.copytree(_seed_research_dispatch, dest)
+    return dest
+
+
+# ---------------------------------------------------------------------------
+# Family 6: meal-planning (outcome-verb trigger eval — `plan-meals`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _seed_meal_planning(tmp_path_factory: pytest.TempPathFactory, eval_kit_root: Path) -> Path:
+    return build_meal_planning_vault(eval_kit_root, tmp_path_factory.mktemp("seed-meal-planning"))
+
+
+@pytest.fixture
+def meal_planning_vault(tmp_path: Path, _seed_meal_planning: Path) -> Path:
+    dest = tmp_path / "vault"
+    shutil.copytree(_seed_meal_planning, dest)
+    return dest
+
+
+# ---------------------------------------------------------------------------
+# Family 7: stakeholder-map-refresh (outcome-verb trigger eval — `refresh-stakeholders`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _seed_stakeholder_map_refresh(
+    tmp_path_factory: pytest.TempPathFactory, eval_kit_root: Path
+) -> Path:
+    return build_stakeholder_map_refresh_vault(
+        eval_kit_root, tmp_path_factory.mktemp("seed-stakeholder-map-refresh")
+    )
+
+
+@pytest.fixture
+def stakeholder_map_refresh_vault(tmp_path: Path, _seed_stakeholder_map_refresh: Path) -> Path:
+    dest = tmp_path / "vault"
+    shutil.copytree(_seed_stakeholder_map_refresh, dest)
     return dest

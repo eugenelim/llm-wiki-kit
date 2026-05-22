@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec
 > and code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/cli.py`, `llm_wiki_kit/models.py`,
   `llm_wiki_kit/recipes.py`, `llm_wiki_kit/install.py`, plus the
   catalog under `templates/operations/*/contract.yaml` and each
@@ -149,8 +149,10 @@ outputs: { ... }
 that omits the field, or sets it to `[]`, is reachable only via
 `wiki run <operation>` and through its existing SKILL description —
 no CLI alias, no slash stub. The field is purely additive against
-the v2.0.0 baseline (currently tagged); vaults that predate this
-spec gain new surfaces on `wiki upgrade` and lose nothing.
+the post-v2-development baseline on `origin/main` (no `v2*` tag
+exists in the repo yet — the pre-spec snapshot is PR-1's parent
+commit); vaults that predate this spec gain new surfaces on
+`wiki upgrade` and lose nothing.
 
 ### 2. Naming contract — what makes a verb well-formed
 
@@ -481,9 +483,9 @@ These translate directly into tests. A reviewer should be able to
 read this list and write the test file from it without re-reading
 the rest of the spec.
 
-- [ ] **Schema** — `OperationContract` accepts `outcomes:
+- [x] **Schema** — `OperationContract` accepts `outcomes:
   list[str]` and rejects unknown extra keys. Unit test.
-- [ ] **Well-formed verb** — every verb matches
+- [x] **Well-formed verb** — every verb matches
   `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` (no consecutive hyphens, no
   trailing hyphen, no leading digit, no uppercase), total length
   3–24 characters, ASCII only, starts with an allowlisted verb
@@ -492,72 +494,72 @@ the rest of the spec.
   the negative cases at minimum: `a--b`, `ab-`, `1ab`, `Ab`, `ab`
   (too short), `<25-char string>`, `wiki-foo`, `meals` (bare
   noun), `weekly-summary` (adjective-noun, no verb stem).
-- [ ] **Catalog uniqueness** — declaring the same verb on two
+- [x] **Catalog uniqueness** — declaring the same verb on two
   operation primitives fails `check_outcome_verb_uniqueness` with
   a `WikiError` naming both. Unit test.
-- [ ] **SKILL-fragment presence** — declaring `outcomes:
+- [x] **SKILL-fragment presence** — declaring `outcomes:
   [<verb>]` without the verb appearing in the matching SKILL.md
   description fails install with a `WikiError` naming both files.
   Integration test against a fixture vault.
-- [ ] **CLI alias** — in a vault with `weekly-digest` installed
+- [x] **CLI alias** — in a vault with `weekly-digest` installed
   and `outcomes: [digest]`, `wiki digest --window 2026-W18`
   runs the same code path as `wiki run weekly-digest --window
   2026-W18`. Integration test.
-- [ ] **CLI alias outside vault** — `wiki digest` from `~/`
+- [x] **CLI alias outside vault** — `wiki digest` from `~/`
   errors with the vault-scoped message. Integration test.
-- [ ] **Slash stub written** — install writes
+- [x] **Slash stub written** — install writes
   `.claude/commands/<verb>.md` for every declared verb, via
   `safe_write`, with the template body fixed by this spec.
   Integration test.
-- [ ] **Slash stub drift** — a user edit to
+- [x] **Slash stub drift** — a user edit to
   `.claude/commands/<verb>.md` is preserved as `.proposed` on the
   next `wiki upgrade`. Integration test.
-- [ ] **`wiki outcomes`** — output is sorted by verb, prints
+- [x] **`wiki outcomes`** — output is sorted by verb, prints
   every installed verb, prints empty output for a vault with no
   declared outcomes. Integration test.
-- [ ] **`wiki --help` epilog** — output names `wiki outcomes` so a
+- [x] **`wiki --help` epilog** — output names `wiki outcomes` so a
   first-time reader can discover the verb table. Integration test
   (string match on `--help`).
-- [ ] **`wiki init` post-install message** — mentions `wiki
+- [x] **`wiki init` post-install message** — mentions `wiki
   outcomes` when the resolved recipe ships at least one operation
   with a declared verb. Integration test.
-- [ ] **`wiki <verb> --help`** — prints the same body as `wiki run
+- [x] **`wiki <verb> --help`** — prints the same body as `wiki run
   <operation> --help` with a one-line alias preamble. Integration
   test.
-- [ ] **Argument forwarding** — `wiki digest --window 2026-W18
+- [x] **Argument forwarding** — `wiki digest --window 2026-W18
   --theme "easy"` reaches `_cmd_run` with the same `argparse`
   namespace as `wiki run weekly-digest --window 2026-W18 --theme
   "easy"`. Integration test.
-- [ ] **Operation names are not implicit verbs** — `wiki
+- [x] **Operation names are not implicit verbs** — `wiki
   weekly-digest` (without `weekly-digest` declared as an outcome)
   fails with the standard argparse "invalid choice" error.
   Integration test.
-- [ ] **Verb does not shadow any operation name** —
+- [x] **Verb does not shadow any operation name** —
   catalog-load rejects an outcome verb whose value equals any
   operation's `name:` field, including the declaring operation's
   own name (e.g. operation `weekly-digest` declaring `outcomes:
   [weekly-digest]`). Unit test against a fixture catalog covering
   both the cross-operation and own-name cases.
-- [ ] **`wiki doctor` flags orphan stubs** — after removing an
+- [x] **`wiki doctor` flags orphan stubs** — after removing an
   operation (or shrinking its outcomes list), `wiki doctor`
   reports the orphan stub at `.claude/commands/<verb>.md` and
   names the dropped verb. Integration test.
-- [ ] **`wiki doctor` clean on a verb-enabled vault** — with
+- [x] **`wiki doctor` clean on a verb-enabled vault** — with
   declared verbs and no user edits, `wiki doctor` reports zero
   drift. Integration test.
-- [ ] **Catalog-time uniqueness gate** — `tests/unit/test_outcome_verbs.py`
+- [x] **Catalog-time uniqueness gate** — `tests/unit/test_outcome_verbs.py`
   walks every shipped `templates/operations/*/contract.yaml` and
   fails if any catalog-level rule is violated (shape, locale,
   reserved-word, verb-form, uniqueness, no-`wiki`-prefix). Gate
   for the standard `pytest -m 'not slow'` CI matrix.
-- [ ] **Wheel-acceptance SKILL-fragment gate** — the slow
+- [x] **Wheel-acceptance SKILL-fragment gate** — the slow
   wheel-acceptance suite (`pytest -m slow`) installs the wheel and
   asserts that for every shipped operation in the wheel's
   `_assets/templates/operations/`, every declared outcome verb
   appears in the matching `SKILL.md` description. Pins the
   "no malformed verb reaches a user" invariant to a CI gate before
   any release.
-- [ ] **Eval trigger** — for each operation declaring verbs, the
+- [x] **Eval trigger** — for each operation declaring verbs, the
   parametrized eval prompts Claude with an outcome-shaped
   natural-language ask and asserts the matching SKILL loads. The
   prompt must not name the SKILL or the `wiki run` command. The
@@ -568,10 +570,15 @@ the rest of the spec.
 
   New verbs added to the catalog must add a matching prompt
   fixture in the same PR.
-- [ ] **Backwards compatibility** — vaults built before this spec
+- [x] **Backwards compatibility** — vaults built before this spec
   are upgraded by `wiki upgrade` to the new state (stubs written,
   CLI router enabled) with no journal-replay errors. Integration
-  test using a `v2.0.0` baseline fixture.
+  test using a fixture catalog with `outcomes:` stripped from its
+  contract.yaml to simulate a pre-spec primitive version
+  (`tests/integration/test_wiki_upgrade_outcomes.py`). No `v2*`
+  tag exists in the repo yet (only `pre-coauthor-rewrite-backup`);
+  the pre-spec baseline is "the post-v2-development baseline on
+  `origin/main` at PR-1's parent commit."
 
 ## Three concrete worked examples, one per shipped recipe
 

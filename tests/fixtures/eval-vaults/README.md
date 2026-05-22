@@ -23,3 +23,12 @@ shape.
 - `research-dispatch/` — core + research + research-perplexity,
   for the dispatch-contract scenario (5e) and live Perplexity
   scenario (5f).
+- `meal-planning/` — core + recipe content-type (transitively
+  pulls in the `food` ontology) + meal-planning operation, for
+  the `plan-meals` outcome-verb trigger eval. See
+  `docs/specs/outcome-named-entry-points/spec.md` §Acceptance
+  criterion "Eval trigger".
+- `stakeholder-map-refresh/` — core + stakeholder-update
+  content-type (transitively pulls in `people` + `projects`
+  ontologies) + stakeholder-map-refresh operation, for the
+  `refresh-stakeholders` outcome-verb trigger eval.
