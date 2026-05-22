@@ -655,6 +655,7 @@ def test_deactivate_logs_but_does_not_raise_on_timeout(
     emitter.deactivate(plist_path)  # must not raise
 
     captured = capsys.readouterr()
+    assert "wiki schedule: warning:" in captured.err
     assert "launchctl bootout" in captured.err
     assert str(plist_path) in captured.err
 
@@ -705,6 +706,7 @@ def test_deactivate_logs_but_does_not_raise_on_nonzero(
     emitter.deactivate(plist_path)  # must not raise
 
     captured = capsys.readouterr()
+    assert "wiki schedule: warning:" in captured.err
     assert "launchctl bootout" in captured.err
     assert str(plist_path) in captured.err
 
