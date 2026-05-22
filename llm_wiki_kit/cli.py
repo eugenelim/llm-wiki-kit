@@ -80,6 +80,8 @@ from llm_wiki_kit.models import (
     PrimitiveUpgradeEvent,
     Recipe,
     ResearchQueryEvent,
+    ScheduleInstalledEvent,
+    ScheduleUninstalledEvent,
     SourceIngestEvent,
     VaultGitInitializedEvent,
     VaultInitEvent,
@@ -1801,6 +1803,22 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
     ConfigSetEvent: (("key", "key", False),),
     LockAcquiredEvent: (("reason", "reason", False),),
     LockReleasedEvent: (("reason", "reason", False),),
+    # Schedule events from the wiki-schedule PR series. Summary shape pins
+    # the (operation, machine_id) pair plus the human-meaningful payload
+    # (cadence_dsl on install, removed_artifact on uninstall) so a tail
+    # row is self-explanatory without an extra ``explain`` call. Adding
+    # these alongside the model classes keeps the "every concrete event
+    # class has a summary mapping" invariant intact.
+    ScheduleInstalledEvent: (
+        ("operation", "operation", False),
+        ("machine_id", "machine", False),
+        ("cadence_dsl", "cadence", False),
+    ),
+    ScheduleUninstalledEvent: (
+        ("operation", "operation", False),
+        ("machine_id", "machine", False),
+        ("removed_artifact", "removed", False),
+    ),
 }
 
 
