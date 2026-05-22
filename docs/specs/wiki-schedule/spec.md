@@ -121,7 +121,7 @@ mirrors RFC-0003 §"Cadence vocabulary":
   Artifact paths:
   - macOS: `~/Library/LaunchAgents/com.llm-wiki-kit.<vault-id>.<operation>.plist`
   - Linux: `~/.config/systemd/user/llm-wiki-kit-<vault-id>-<operation>.service`
-    and `…@.timer` (two files).
+    and `…<operation>.timer` (two files).
   - Windows: `%LOCALAPPDATA%/llm-wiki-kit/schedules/<vault-id>-<operation>.xml`
     (Task Scheduler XML; activation via `schtasks /Create /XML` is the
     user's last step until Windows end-to-end ships — see RFC-0003
