@@ -308,14 +308,18 @@ def test_wiki_verbose_position_invariant_for_verbs(
 ) -> None:
     """``--verbose`` must precede the outcome verb token.
 
-    ``wiki --verbose prep-digest`` succeeds (or at least reaches ``_cmd_run``).
-    ``wiki prep-digest --verbose`` — the post-verb form — forwards ``--verbose``
-    into ``op_args`` (argparse.REMAINDER capture), which _cmd_run passes to
-    ``dispatch`` as an unknown arg. The test asserts this form still reaches
-    the dispatch path (exit 0 is acceptable) OR exits with a clear error that
-    does NOT mention "vault-scoped" (it should be a dispatch-level rejection,
-    not a CLI-routing failure). Pins that the pre-verb form reaches the run
-    handler.
+    Two forms exercised, both reaching ``_cmd_run`` (i.e. the dispatcher
+    does NOT treat post-verb ``--verbose`` as a routing failure):
+
+    - ``wiki --verbose prep-digest`` (pre-verb) — exits 0; ``--verbose``
+      lands on the top-level parser.
+    - ``wiki prep-digest --verbose`` (post-verb) — ``--verbose`` is
+      captured by ``_cmd_run``'s ``argparse.REMAINDER`` as part of
+      ``op_args``; ``dispatch`` rejects it as an unknown operation
+      argument (``--verbose`` isn't an input on this contract). Exits
+      with ``WIKI_ERROR_EXIT`` and stderr names ``--verbose`` /
+      "unknown argument" — pin the dispatch-level rejection so a
+      future regression that silently swallows the flag is caught.
     """
     kit = _build_kit(tmp_path)
     vault = _seed_vault_from_events(tmp_path, kit)
@@ -327,14 +331,22 @@ def test_wiki_verbose_position_invariant_for_verbs(
     capsys.readouterr()
 
     # Post-verb --verbose is forwarded as op_args; the dispatcher must not
-    # treat it as a routing failure (no "vault-scoped" message).
+    # treat it as a routing failure. ``_cmd_run`` captures ``--verbose`` via
+    # ``argparse.REMAINDER`` and then ``dispatch`` rejects it as an unknown
+    # operation argument (the operation contract has no ``verbose`` input).
+    # Pin that exact contract: exit code is WIKI_ERROR_EXIT and stderr names
+    # the dispatch-level rejection, not the CLI-routing rejection.
     rc_post = cli.main(["prep-digest", "--verbose"], kit_root=kit)
     err = capsys.readouterr().err
-    # The "outcome verbs are vault-scoped" message must NOT appear — the
-    # dispatcher reached _cmd_run regardless of where --verbose landed.
+    assert rc_post == cli.WIKI_ERROR_EXIT, (
+        f"post-verb --verbose should exit with WIKI_ERROR_EXIT, got {rc_post}"
+    )
+    # Routing path was NOT taken.
     assert "outcome verbs are vault-scoped" not in err
-    # Either succeeds or fails with a dispatch-level message, not a routing one.
-    assert rc_post in (0, cli.WIKI_ERROR_EXIT)
+    # Dispatch-level rejection: the operation's argument list doesn't
+    # know about --verbose.
+    assert "--verbose" in err
+    assert "unknown argument" in err
 
 
 # -------------------------------------------------------------------------

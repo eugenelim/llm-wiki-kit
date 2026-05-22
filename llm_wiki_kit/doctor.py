@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_wiki_kit import managed_regions
-from llm_wiki_kit.errors import ManagedRegionError
+from llm_wiki_kit.errors import JournalCorruptError, ManagedRegionError
 from llm_wiki_kit.journal import read_events_lenient, replay_state
 from llm_wiki_kit.models import Event, ManagedRegionWriteEvent, PageWriteEvent, VaultState
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
@@ -445,11 +445,12 @@ def _check_outcome_orphan_stubs(state: VaultState, vault_root: Path, kit_root: P
 
     try:
         installed = installed_outcome_verbs(vault_root, kit_root)
-    except Exception:
-        # Guard against ``JournalCorruptError`` or any other error in the
-        # helper. ``run_doctor`` already surfaced the corruption as a
+    except JournalCorruptError:
+        # ``run_doctor`` already surfaced the corruption as a
         # ``journal-corrupt`` issue; skip the orphan check gracefully
-        # rather than masking the existing issue or crashing.
+        # rather than masking the existing issue. Other exceptions
+        # (e.g. malformed ``contract.yaml``) are propagated — a
+        # silent-swallow would mask programming errors.
         return []
 
     issues: list[Issue] = []

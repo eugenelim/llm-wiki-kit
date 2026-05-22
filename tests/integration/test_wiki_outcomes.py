@@ -160,16 +160,23 @@ def test_wiki_outcomes_renders_table_sorted_by_verb(
     assert lines[0].startswith("log-entry")
     assert lines[1].startswith("prep-digest")
 
-    # Each line must have a two-space gutter between columns.
-    for line in lines:
-        # The gutter is exactly two spaces separating each column.
-        assert "  " in line, f"expected two-space gutter in: {line!r}"
-
-    # Verify the gutter is exactly two spaces (not one, not three).
-    for line in lines:
-        # Split on two-space sequences; every cell should be non-empty.
-        parts = [p.strip() for p in line.split("  ") if p.strip()]
-        assert len(parts) >= 2, f"expected at least 2 columns in line: {line!r}"
+    # Spec §Outputs §4 contracts a two-space gutter between columns.
+    # Column widths auto-size to the widest entry; padding fills each
+    # column to its width, then a literal two-space sequence separates
+    # the next column. The combined "gutter" a casual reader sees can
+    # therefore be more than two spaces — that's padding + gutter, not
+    # the gutter alone. Pin the bytes of each row against the expected
+    # padded form so a regression to one-space or four-space gutters
+    # fails loudly.
+    expected_data = [
+        ("log-entry", "fixture-track", "fixture-track"),
+        ("prep-digest", "fixture-digest", "fixture-digest"),
+    ]
+    w_verb = max(len(v) for v, _, _ in expected_data)
+    w_op = max(len(o) for _, o, _ in expected_data)
+    for (verb, op, skill), line in zip(expected_data, lines, strict=True):
+        expected = f"{verb:<{w_verb}}  {op:<{w_op}}  {skill}"
+        assert line == expected, f"row mismatch — expected exactly {expected!r}, got {line!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +216,11 @@ def test_wiki_outcomes_takes_no_flags(tmp_path: Path) -> None:
         cwd=str(tmp_path),
     )
     assert result.returncode != 0
-    # argparse prints "error: unrecognized arguments: --anything" to stderr
-    assert "unrecognized" in result.stderr.lower() or "error" in result.stderr.lower()
+    # argparse's standard rejection: "error: unrecognized arguments: --anything".
+    # Pin both the rejection class AND the offending token so a regression
+    # that, e.g., silently accepts an unknown flag is caught.
+    assert "unrecognized arguments" in result.stderr
+    assert "--anything" in result.stderr
 
 
 # ---------------------------------------------------------------------------

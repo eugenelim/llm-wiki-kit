@@ -388,12 +388,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 _now=now,
             )
 
-    # Post-install discovery hint: mention `wiki outcomes` when at least
-    # one installed operation declares an outcome verb (spec §Outputs §4
-    # and §"wiki init post-install message").
-    kit_root_resolved = args.kit_root if args.kit_root is not None else _kit_root()
-    if installed_outcome_verbs(target, kit_root_resolved):
-        print("Run `wiki outcomes` to see this vault's operation verbs.")
+        # Post-install discovery hint: mention `wiki outcomes` when at
+        # least one installed operation declares an outcome verb (spec
+        # §Outputs §4 and §"wiki init post-install message"). The check
+        # runs INSIDE the journal-cache scope so it amortizes against
+        # the fresh in-memory event list rather than triggering a
+        # second on-disk read.
+        kit_root_resolved = args.kit_root if args.kit_root is not None else _kit_root()
+        if installed_outcome_verbs(target, kit_root_resolved):
+            print("Run `wiki outcomes` to see this vault's operation verbs.")
 
     return 0
 
@@ -1832,13 +1835,18 @@ class _VerbAwareParser(argparse.ArgumentParser):
     fall through to ``super().error()`` unchanged — preserving the spec's
     "argparse's standard … error fires" contract verbatim.
 
-    ``_kit_root_override`` is set by ``main`` after construction (default
-    ``None``) so the resolver is available without coupling the parser
-    constructor to runtime state.
+    ``_kit_root_override`` is an instance attribute set in ``__init__``
+    (default ``None``) and may be re-pointed by ``main`` after
+    construction. Using an instance attribute (vs. a class-level
+    default) means a stray ``error()`` call before ``main`` had a
+    chance to inject the override resolves to the lazy ``_kit_root()``
+    on the parser it was actually built with, not on a sibling parser
+    that happened to overwrite the class attribute.
     """
 
-    # Set by ``main`` before ``parse_args`` is called.
-    _kit_root_override: Path | None = None
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self._kit_root_override: Path | None = None
 
     def error(self, message: str) -> None:  # type: ignore[override]
         """Append installed-verb list to top-level "invalid choice" errors."""
@@ -1870,6 +1878,15 @@ def build_parser() -> argparse.ArgumentParser:
     # namespace — the classic "shared flag erased by subparser default"
     # argparse footgun. ``_is_verbose`` reads with ``getattr(..., False)``
     # so the unset case stays clean.
+    # ``verbose_parent`` only donates actions via ``parents=[...]``;
+    # argparse never invokes ``error()`` on a parent parser, so the
+    # ``_VerbAwareParser`` override does not fire from this instance.
+    # The class is ``_VerbAwareParser`` rather than ``ArgumentParser``
+    # because mypy's generic-class inference on subparser
+    # ``add_parser(parents=[...])`` requires the parent list to be
+    # ``list[_VerbAwareParser]`` once the top-level ``parser`` below
+    # is a ``_VerbAwareParser``. Behaviourally identical to the base
+    # class for this instance; the typing constraint is what binds.
     verbose_parent = _VerbAwareParser(add_help=False)
     verbose_parent.add_argument(
         "--verbose",
