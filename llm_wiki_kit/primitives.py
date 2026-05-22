@@ -298,7 +298,7 @@ def load_primitive(path: Path) -> Primitive:
         raise ValidationError(f"primitive.yaml at {path}", exc) from exc
 
 
-def _load_operation_contract(primitive_dir: Path) -> OperationContract | None:
+def load_operation_contract(primitive_dir: Path) -> OperationContract | None:
     """Load ``<primitive_dir>/contract.yaml`` if present; else ``None``.
 
     **Return-None on missing file is intentional**, not an oversight.
@@ -393,7 +393,7 @@ def discover_primitives(templates_dir: Path) -> list[Primitive]:
             primitive = load_primitive(primitive_dir)
             primitives.append(primitive)
             if primitive.kind is PrimitiveKind.OPERATION:
-                contract = _load_operation_contract(primitive_dir)
+                contract = load_operation_contract(primitive_dir)
                 if contract is None:
                     continue
                 for verb in contract.outcomes:
