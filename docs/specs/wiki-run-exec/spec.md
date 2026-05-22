@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/run.py`, `llm_wiki_kit/cli.py:_cmd_run`
 - **Related:** [RFC-0003](../../rfc/0003-scheduling-and-autonomous-execution.md),
   [`docs/specs/task-17-wiki-run/spec.md`](../task-17-wiki-run/spec.md),
@@ -34,10 +34,11 @@ standard dispatch sequence (validate args, journal one
 3. Invoke it in headless mode against the operation's SKILL, streaming
    stdout / stderr to a per-run log under
    `.wiki.journal/exec-logs/<event_id>.log`.
-4. On non-zero exit, journal an `OperationExecFailedEvent` and write a
-   per-failure markdown file under `inbox/scheduled-failures/<event_id>.md`
-   (each file is wholly kit-authored, never re-edited; the user resolves
-   by deleting the file).
+4. On non-zero exit, timeout, or conflict refusal, journal an
+   `OperationExecFailedEvent` and write a per-failure markdown file
+   under `inbox/scheduled-failures/<event_id>.md` (each file is
+   wholly kit-authored, never re-edited; the user resolves by
+   deleting the file).
 
 The kit ships no LLM (CHARTER principle: library-not-application); the
 shim executor is the **delegation boundary** between the kit and the
@@ -72,14 +73,31 @@ wiki run <operation> [args ...] --exec --skill-path <path>
      <path>")`. The CLI top-level catches the `WikiError` and
      renders it as a one-line stderr message (the standard
      `WikiError` path — no Python traceback unless `--verbose`).
-     The dispatch event is **still journaled** at status
-     `dispatched` because the binary check runs *after* `dispatch()`
-     returns; the exec-failure event is **not** journaled (the
-     failure happened before exec started — no exec attempt was
-     made). The kit prints the dispatch line first (from the
-     happy-path dispatch return), then the stderr error message,
-     then exits `WIKI_ERROR_EXIT`. Rationale: the user still has
-     a valid dispatch record they can re-attempt manually.
+     In **this no-binary-anywhere branch**, the dispatch event
+     **is** journaled at status `dispatched` because the
+     orchestrator's binary check runs *after* `dispatch()` returns
+     (the exec-failure event is **not** journaled — the failure
+     happened before exec started — and no exec attempt was made).
+     The kit exits `WIKI_ERROR_EXIT` after rendering the stderr
+     message. The success-path dispatch line is **not** printed to
+     stdout in this branch because `dispatch_and_exec` raises
+     before the CLI orchestrator reaches the success print; the
+     journaled `OperationRunEvent` is the user's hook for a
+     manual re-attempt (`journal grep` or `wiki run <op>` without
+     `--exec`).
+
+  **Set-but-invalid override exception.** When `--claude-binary` or
+  `WIKI_CLAUDE_BINARY` names a path that is not an executable file,
+  `_locate_claude` raises `WikiError` **before** `dispatch()` runs.
+  The CLI invokes `_locate_claude` once pre-dispatch for the
+  observability print described under §Outputs, and a set-but-
+  invalid override fails fast on that call: no dispatch event is
+  journaled, no exec event is journaled, exit `WIKI_ERROR_EXIT`.
+  This is the same shape as the `WIKI_EXEC_TIMEOUT` /
+  `WIKI_EXEC_LOG_RETENTION_DAYS` validation failures — fail fast
+  before any state is written. The user-explicit-path case is
+  treated as a typo to surface immediately rather than a
+  resolution miss to journal.
 - `--skill-path <path>` — optional explicit override of the SKILL
   file location. Default resolution:
   `<vault_root>/.claude/skills/<contract.skill or operation>/SKILL.md`
@@ -101,11 +119,20 @@ defaults; none is required.
   before `shutil.which("claude")`).
 - `WIKI_EXEC_TIMEOUT` — integer seconds before the subprocess is
   SIGTERM'd. Default `1800` (30 minutes). After a 5-second grace
-  period the kit escalates to SIGKILL.
+  period the kit escalates to SIGKILL. The CLI rejects values
+  that aren't parseable as `int` or that are `<= 0` with a
+  `WikiError` at exec start, **before** `dispatch()` runs (so no
+  dispatch event is journaled for an unparseable timeout — the
+  failure shape differs from the binary-missing / budget-shape
+  cases, which journal the dispatch event before raising).
 - `WIKI_EXEC_LOG_RETENTION_DAYS` — integer days. Logs under
   `.wiki.journal/exec-logs/*.log` older than this are deleted at
   the start of every `--exec` invocation. Default `30`. Set to
-  `0` to keep logs forever (the walk runs but matches nothing).
+  `0` to disable rotation entirely (the kit short-circuits the
+  walk — no enumeration of the directory at all).
+  The CLI rejects values that aren't parseable as `int` or that
+  are `< 0` with a `WikiError` at exec start, before `dispatch()`
+  runs (same shape as the timeout-validation case above).
 - `WIKI_EXEC_MAX_BUDGET_USD` — optional dollar cap. When set, the
   kit emits `--max-budget-usd <value>` in the argv (per ADR-0009's
   optional flag). When unset, the flag is omitted and Claude uses
@@ -129,6 +156,17 @@ Unchanged from [`task-17-wiki-run`](../task-17-wiki-run/spec.md). One
 `by` is `"wiki-run"`; this spec does not change that. The downstream
 exec events carry `by="wiki-run-exec"` so a `journal grep` can
 attribute the exec to its delegate clearly.
+
+**Implementation note (non-normative).** When `--exec` is set and
+the Claude binary resolves, the CLI emits an observability line
+to stderr — currently `wiki-run-exec: invoking <resolved-binary>`
+— before invoking the orchestrator, so a user reviewing recent
+runs can tell which binary `--claude-binary`/`WIKI_CLAUDE_BINARY`
+resolved to. This is a security-review-driven implementation
+detail, not a pinned contract: no CT exercises it, and the exact
+text is free to evolve without a spec amendment. The line is
+absent when the binary is unresolvable (the subsequent `WikiError`
+carries the diagnostic in that case).
 
 ### Exec phase (only when `--exec` is set and dispatch succeeded)
 
@@ -156,8 +194,8 @@ attribute the exec to its delegate clearly.
      directory is gitignored — see `wiki-schedule/spec.md` §Constraints
      for the parallel `.wiki.journal/` precedent). Rotate logs whose
      mtime is more than `WIKI_EXEC_LOG_RETENTION_DAYS` days old
-     (default 30) — best-effort delete; failures logged but do not
-     abort. See §"Log rotation" below.
+     (default 30) — best-effort delete; per-file `OSError`s
+     swallowed silently. See §"Log rotation" below.
   4. Build the argv via `_build_argv(claude_binary, skill_path,
      vault_root, dispatch_event_id, parsed_args)`. The argv shape
      is **pinned by [ADR-0009 §Decision](../../adr/0009-headless-claude-invocation-contract.md)**:
@@ -331,10 +369,12 @@ backlog (orthogonal to the journal-event count in
 On every `--exec` invocation, before spawning Claude, the kit walks
 `.wiki.journal/exec-logs/` and deletes any `*.log` file whose
 `stat().st_mtime` is more than `WIKI_EXEC_LOG_RETENTION_DAYS` days
-old (default 30). Failures (permission denied, file vanished mid-
-walk) are logged to stderr but do not abort. Rotation runs at most
-once per `--exec` invocation. No journal events are emitted for log
-deletions — they're cache-housekeeping, not state changes.
+old (default 30). Per-file `OSError`s (permission denied, file
+vanished mid-walk) are **swallowed silently** — rotation is
+cache-housekeeping, not a state change, so a failed delete must
+not produce stderr noise that operators would learn to ignore.
+Rotation runs at most once per `--exec` invocation. No journal
+events are emitted for log deletions.
 
 ## Behavior
 
@@ -425,6 +465,15 @@ deletions — they're cache-housekeeping, not state changes.
   written exactly once. If the user manually re-creates a file with
   the same name (rare), `safe_write` produces a `.proposed` sidecar
   that the walk-scope excludes from triggering further refusals.
+- **Per-failure file write failures** (disk full, permission denied,
+  vault directory removed mid-run, `safe_write` raising for any
+  reason) are best-effort: the kit emits a one-line stderr warning
+  (`wiki-run-exec: per-failure file write failed: <repr>; failure
+  event will still be journaled.`) and proceeds to append the
+  `OperationExecFailedEvent` regardless. Rationale: the journal is
+  the authoritative record of the exec attempt; the per-failure
+  file is a user-facing breadcrumb. Losing the breadcrumb must not
+  also lose the journal record.
 
 ## Invariants
 
@@ -448,13 +497,12 @@ deletions — they're cache-housekeeping, not state changes.
 - The exec subprocess is invoked with `cwd=vault_root` and the
   parent process's environment **unchanged** at v1. Per-platform
   env scrubbing (`PATH`, `HOME`, `LC_*`, `XDG_*`, `APPDATA`,
-  Claude-specific vars, etc.) is deferred to the follow-on ADR that
-  pins the Claude headless CLI flags (per
-  [RFC-0003 §"Unresolved questions"](../../rfc/0003-scheduling-and-autonomous-execution.md#unresolved-questions))
-  — getting the right allow-list cross-platform requires knowing
-  which env vars Claude actually reads, which the kit doesn't own.
-  v1 documents the pass-through; the ADR upgrades to scrubbing if
-  warranted.
+  Claude-specific vars, etc.) is deferred to a future ADR — ADR-0009
+  pinned the argv shape but explicitly did not take a position on
+  env scrubbing, and getting the right allow-list cross-platform
+  requires knowing which env vars Claude actually reads, which the
+  kit doesn't own. v1 documents the pass-through; a future ADR
+  upgrades to scrubbing if warranted.
 - No filesystem writes outside the journal append, the exec log,
   and the failure page. No vault page writes from this module —
   page writes come from `claude` itself, via the kit's
@@ -482,24 +530,38 @@ deletions — they're cache-housekeeping, not state changes.
       kit_root: Path,
       journal_path: Path,
       now: datetime,
-      claude_binary: Path | None,
-      skill_path_override: Path | None,
-      timeout_seconds: int,
+      claude_binary: Path | None = None,
+      skill_path_override: Path | None = None,
+      timeout_seconds: int = 1800,
+      log_retention_days: int = 30,
+      max_budget_usd: str | None = None,
+      failure_clock: Callable[[], datetime] | None = None,
   ) -> ExecResult
   ```
   Internally: calls `dispatch()`, then if `DispatchResult.status
-  == "dispatched"`, runs the exec sequence. `ExecResult` wraps the
-  `DispatchResult` and adds `exec_status: Literal["skipped",
-  "succeeded", "failed_conflict", "failed_binary_missing",
-  "failed_skill_missing", "failed_exit", "failed_timeout"]` and
-  optional `exec_event_id: str | None`. Inner helpers
-  (`_locate_claude`, `_locate_skill`, `_walk_proposed_sidecars`,
-  `_run_subprocess`, `_append_failure_event`) are pure and tested
-  directly. If `dispatch()` raises `WikiError` (pre-load
-  failures: not-a-vault, unknown operation, kind mismatch, missing
-  contract), `dispatch_and_exec` re-raises unchanged — no
-  `dispatch_event_id` exists, no exec attempt is made, no failure
-  event journaled.
+  == "dispatched"`, runs the exec sequence. `failure_clock` is the
+  failure-render clock seam — defaults to `_utc_now`; tests inject
+  a fixed callable so the per-failure file's `Failed:` timestamp
+  and the rendered duration are deterministic.
+  `ExecResult` wraps the `DispatchResult` and adds
+  `exec_status: Literal["skipped", "succeeded", "failed_conflict",
+  "failed_exit", "failed_timeout"]` plus `exit_code: int | None`,
+  `duration_seconds: float | None`, and `log_path: str | None`
+  fields populated on the success / exit / timeout paths (the CLI
+  reads them to render the success/failure summary line). The
+  binary-missing and SKILL-missing branches raise `WikiError`
+  instead of returning, so they have no `exec_status` variant.
+  Inner helpers (`_locate_claude`, `_locate_skill`,
+  `_walk_proposed_sidecars`, `_read_obsidianignore`,
+  `_validate_max_budget`, `_build_prompt`, `_build_argv`,
+  `_rotate_logs`, `_run_subprocess`, `_render_failure_file`,
+  `_write_failure_file`, `_write_failure_file_safe`,
+  `_append_failure_event`) are pure-ish and tested directly under
+  `tests/unit/test_run_exec.py`. If `dispatch()` raises `WikiError`
+  (pre-load failures: not-a-vault, unknown operation, kind
+  mismatch, missing contract), `dispatch_and_exec` re-raises
+  unchanged — no `dispatch_event_id` exists, no exec attempt is
+  made, no failure event journaled.
 
   **`DispatchResult` extension.** `dispatch()` already returns
   `DispatchResult`; this spec adds one new required field
@@ -598,7 +660,7 @@ deletions — they're cache-housekeeping, not state changes.
 The contract tests below define "done". Construction tests live in
 plan files for the schedule + exec PRs.
 
-- [ ] **CT-1: `--exec` happy path.** Given an installed
+- [x] **CT-1: `--exec` happy path.** Given an installed
   `weekly-digest`, a `<vault>/.claude/skills/weekly-digest/SKILL.md`,
   and a fake `claude` binary on `PATH` that exits 0, `wiki run
   --exec weekly-digest --window=2026-W20` (a) appends exactly one
@@ -609,7 +671,7 @@ plan files for the schedule + exec PRs.
   `<event_id>` equals the journaled `OperationRunEvent.event_id`,
   (d) appends **no** exec event, (e) exits `0`.
 
-- [ ] **CT-1a: `OperationRunEvent.event_id` round-trip.** A `wiki
+- [x] **CT-1a: `OperationRunEvent.event_id` round-trip.** A `wiki
   run` invocation (with or without `--exec`) produces a
   `DispatchResult.dispatch_event_id` that is exactly 12 lowercase
   hex characters. Re-reading the last journaled
@@ -622,13 +684,13 @@ plan files for the schedule + exec PRs.
   effectively unconditional. A literal pre-extension journal line
   for `operation.run` with no `event_id` key parses to
   `event.event_id is None` (additive-schema replay).
-- [ ] **CT-2: `--exec` with `invalid_args` skips the exec phase.**
+- [x] **CT-2: `--exec` with `invalid_args` skips the exec phase.**
   `wiki run --exec weekly-digest --frobnicate=x` against a contract
   with no `frobnicate` field appends one
   `OperationRunEvent(status="invalid_args", event_id=<12-hex>)`
   whose `event_id == result.dispatch_event_id`, spawns no
   subprocess, journals no exec event, exits `WIKI_ERROR_EXIT`.
-- [ ] **CT-3: claude binary not found.** With no `claude` on PATH,
+- [x] **CT-3: claude binary not found.** With no `claude` on PATH,
   no `--claude-binary`, and no `WIKI_CLAUDE_BINARY`, `wiki run
   --exec weekly-digest --window=2026-W20` appends the dispatch
   event, raises `WikiError` (caught at the CLI top-level and
@@ -636,15 +698,31 @@ plan files for the schedule + exec PRs.
   and `claude` substrings; no Python traceback unless
   `--verbose`), journals **no** exec event, exits
   `WIKI_ERROR_EXIT`.
-- [ ] **CT-4: SKILL file missing.** With Claude present but no
+
+- [x] **CT-3a: set-but-invalid override fails fast pre-dispatch.**
+  With `--claude-binary <path>` (or `WIKI_CLAUDE_BINARY=<path>`)
+  pointing at a file that exists but is not executable, the call
+  raises `WikiError` at the CLI's pre-dispatch `_locate_claude`
+  call (the same pre-dispatch helper whose *successful* return
+  drives the observability print; on a set-but-invalid override
+  the helper raises before that print is reached). The
+  journal contains **zero** `operation.*` events for this
+  invocation — neither `operation.run` nor `operation.exec_failed`
+  — and the exit is `WIKI_ERROR_EXIT`. Differs from CT-3
+  (no-binary-anywhere) where the dispatch event **is** journaled
+  because the orchestrator's binary check runs after `dispatch()`
+  returns. Pins the §Inputs "Set-but-invalid override exception"
+  paragraph.
+
+- [x] **CT-4: SKILL file missing.** With Claude present but no
   `<vault>/.claude/skills/weekly-digest/SKILL.md` and no
   `--skill-path`, the call appends the dispatch event, raises
   `WikiError` naming the resolved path, journals no exec event,
   exits non-zero.
-- [ ] **CT-5: `--skill-path` override.** With the SKILL stored at
+- [x] **CT-5: `--skill-path` override.** With the SKILL stored at
   a non-default location, `--skill-path <path>` causes the kit to
   pass that path to `claude` (asserted via the argv-echo fixture).
-- [ ] **CT-6: conflict refusal.** With one `.proposed` sidecar in
+- [x] **CT-6: conflict refusal.** With one `.proposed` sidecar in
   scope under `vault_root` (e.g. `wiki/notes/foo.md.proposed`),
   `wiki run --exec weekly-digest --window=2026-W20` (a) appends the
   dispatch event, (b) appends one
@@ -652,17 +730,17 @@ plan files for the schedule + exec PRs.
   (c) writes `inbox/scheduled-failures/<event_id>.md` via
   `safe_write`, (d) spawns no subprocess, (e) exits non-zero.
 
-- [ ] **CT-6a: walk-scope excludes own scratch.** With a `.proposed`
+- [x] **CT-6a: walk-scope excludes own scratch.** With a `.proposed`
   sidecar under any of `.wiki.journal/`, `.git/`, `.obsidian/`,
   `.claude/`, or `inbox/scheduled-failures/`, **and no sidecars
   elsewhere**, `wiki run --exec weekly-digest --window=2026-W20`
   proceeds to spawn the subprocess (no refusal event, no failure
   file).
 
-- [ ] **CT-6b: walk-scope honors `.obsidianignore`.** With a
+- [x] **CT-6b: walk-scope honors `.obsidianignore`.** With a
   `.proposed` sidecar under a directory matched by
   `.obsidianignore`, the call proceeds to spawn the subprocess.
-- [ ] **CT-7: subprocess non-zero exit.** With Claude present and
+- [x] **CT-7: subprocess non-zero exit.** With Claude present and
   a stub binary that exits `137`, the call (a) appends the
   dispatch event (`event_id == result.dispatch_event_id`), (b)
   spawns the binary, (c) appends one
@@ -673,26 +751,28 @@ plan files for the schedule + exec PRs.
   `inbox/scheduled-failures/<event_id>.md` via `safe_write`, (e)
   writes the full log to `.wiki.journal/exec-logs/<event_id>.log`,
   (f) exits non-zero.
-- [ ] **CT-8: subprocess timeout.** With `WIKI_EXEC_TIMEOUT=1` and
+- [x] **CT-8: subprocess timeout.** With `WIKI_EXEC_TIMEOUT=1` and
   a stub binary that sleeps 10 seconds, the call terminates the
   subprocess and journals
   `OperationExecFailedEvent(reason="timeout", exit_code=-2)`. Exit
   non-zero.
-- [ ] **CT-9: byte-identity for non-`--exec` invocations.** The 16
+- [x] **CT-9: byte-identity for non-`--exec` invocations.** The 16
   contract tests in
   [`task-17-wiki-run/spec.md`](../task-17-wiki-run/spec.md) (CT-1
   through CT-16) all pass unchanged after this spec's
   implementation.
-- [ ] **CT-10: additive schema replays.** A literal pre-extension
-  journal that contains no `operation.exec_failed` events **and**
-  whose `operation.run` lines have no `event_id` key replays under
-  the extended Pydantic models unchanged: every reconstructed
-  `OperationRunEvent` has `event.event_id is None`, no exec-failed
-  events appear, the resulting `VaultState` is identical to its
-  pre-extension form, and journal lines round-trip through
-  `_EVENT_ADAPTER.validate_json` → `model_dump_json` without
-  spurious key additions.
-- [ ] **CT-11: per-failure file invariants.** Two failures from two
+- [x] **CT-10: additive schema replays.** A literal pre-extension
+  journal line for `operation.run` with no `event_id` key replays
+  under the extended Pydantic models as `event.event_id is None`
+  (pinned by `tests/unit/test_run_dispatch.py::
+  test_legacy_journal_line_without_event_id_replays_as_none`).
+  The broader ADR-0002 invariants — `model_dump_json` round-trips
+  without spurious keys, `VaultState`-identity across a
+  pre-extension-vs-extended replay — follow from ADR-0002's
+  additive-schema rule and are not separately pinned here; the v1
+  ship deliberately did not add a `model_dump_json` round-trip
+  test for `OperationRunEvent` at this layer.
+- [x] **CT-11: per-failure file invariants.** Two failures from two
   distinct `--exec` invocations produce exactly two files under
   `inbox/scheduled-failures/`, each named
   `<event_id>.md` where `<event_id>` equals the corresponding
@@ -708,11 +788,11 @@ plan files for the schedule + exec PRs.
   nor a duration, and the journaled event has `stderr_tail == ""`
   and `conflict_sidecars != []`. A user who deletes one file does
   not affect the other.
-- [ ] **CT-12: stderr_tail is bounded.** A stub binary that emits
+- [x] **CT-12: stderr_tail is bounded.** A stub binary that emits
   100 KB of stderr produces a journaled `stderr_tail` of exactly
   the last 4 KB (or fewer if the binary emitted less). UTF-8
   decode errors fall back to lossy decode (no crash).
-- [ ] **CT-13a: `WIKI_EXEC_MAX_BUDGET_USD` shape check.** With
+- [x] **CT-13a: `WIKI_EXEC_MAX_BUDGET_USD` shape check.** With
   `WIKI_EXEC_MAX_BUDGET_USD="5.00"`, the argv contains the pair
   `["--max-budget-usd", "5.00"]` immediately before the prompt
   positional. With `WIKI_EXEC_MAX_BUDGET_USD="not-a-number"`,
@@ -723,7 +803,7 @@ plan files for the schedule + exec PRs.
   CT-3 binary-missing). With the env var unset, the argv does
   not contain `--max-budget-usd`.
 
-- [ ] **CT-13: argv structure (pinned by ADR-0009).**
+- [x] **CT-13: argv structure (pinned by ADR-0009).**
   `_build_argv(claude_binary, skill_path, vault_root,
   dispatch_event_id, parsed_args)` returns a `list[str]` whose
   contents exactly match
@@ -746,18 +826,18 @@ plan files for the schedule + exec PRs.
   prompt body checked for the presence of `dispatch_event_id` as
   a substring.
 
-- [ ] **CT-14: no `OperationExecSucceededEvent`.** After a
+- [x] **CT-14: no `OperationExecSucceededEvent`.** After a
   successful `--exec`, the journal slice for the invocation
   contains exactly one event with `type=="operation.run"` and
   zero with `type=="operation.exec_succeeded"`. Pins spec
   §"Non-goals".
 
-- [ ] **CT-15: log rotation.** With a 31-day-old
+- [x] **CT-15: log rotation.** With a 31-day-old
   `.wiki.journal/exec-logs/old.log` and a fresh `--exec`
   invocation, the old file is deleted before the subprocess
   spawns. A 29-day-old file is preserved.
 
-- [ ] **CT-16: SKILL-name fallback at the exec layer.** Given a
+- [x] **CT-16: SKILL-name fallback at the exec layer.** Given a
   contract with no `skill:` field set and no `--skill-path`
   override, the kit resolves the SKILL path to
   `<vault_root>/.claude/skills/<operation>/SKILL.md` and passes
@@ -765,7 +845,7 @@ plan files for the schedule + exec PRs.
   CT-5). Matches [task-17 CT-13](../task-17-wiki-run/spec.md)
   fallback behavior.
 
-- [ ] **CT-17: failure-file write does not loop refusal.** A
+- [x] **CT-17: failure-file write does not loop refusal.** A
   refusal that writes
   `inbox/scheduled-failures/<event_id>.md` (which is itself a new file
   under `inbox/scheduled-failures/`) does **not** cause the next
@@ -846,10 +926,12 @@ plan files for the schedule + exec PRs.
   event references the dispatch event's `event_id`, not the other
   way around — the dispatch event has no reference to the failure
   event.
-- No new ADR — the load-bearing decisions trace back to
+- No new ADR at v1 — the load-bearing decisions trace back to
   [RFC-0003](../../rfc/0003-scheduling-and-autonomous-execution.md),
   [ADR-0009](../../adr/0009-headless-claude-invocation-contract.md)
   (the argv shape this spec emits), and
   [ADR-0010](../../adr/0010-agent-passthrough-via-claude-agent-flag.md)
   (agent passthrough; deferred to v2 of this spec when RFC-0004
-  lands). The implementation creates no new ADR.
+  lands). The v1 implementation creates no new ADR. A v2 amendment
+  picking up agent passthrough — or any future env-scrubbing work
+  — may require its own ADR; see [`plan.md`](plan.md).

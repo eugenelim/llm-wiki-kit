@@ -756,11 +756,16 @@ def _exec_log_dir(vault_root: Path) -> Path:
 def _rotate_logs(*, vault_root: Path, retention_days: int, now: datetime) -> None:
     """Delete ``exec-logs/*.log`` older than ``retention_days``.
 
-    Best-effort: failures (permission denied, file vanished mid-walk)
-    are swallowed silently — the spec calls this cache housekeeping,
-    not a state change. ``retention_days == 0`` disables rotation
-    entirely (per spec §"Environment variables": "Set to `0` to keep
-    logs forever").
+    Best-effort: per-file ``OSError``s (permission denied, file
+    vanished mid-walk) are swallowed silently — the spec calls this
+    cache housekeeping, not a state change.
+    ``retention_days <= 0`` disables rotation entirely and
+    short-circuits before enumerating the directory; the CLI
+    rejects negative values upstream, so this is the
+    ``retention_days == 0`` user-facing case the spec
+    §"Environment variables" blesses. The ``< 0`` branch is
+    defence-in-depth — callers from outside the CLI seam can
+    still hit it.
     """
 
     if retention_days <= 0:
