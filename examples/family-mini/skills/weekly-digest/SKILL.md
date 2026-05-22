@@ -1,6 +1,6 @@
 ---
 name: weekly-digest
-description: "Produce one weekly digest page summarizing meetings (and later, other content-types) inside an ISO-week window. Load when the user asks for a weekly summary, when `wiki run weekly-digest` invokes you, or on a scheduled sweep. Writes one page to `outputs/digests/<window>.md`; idempotent for a given window — re-running overwrites the same page rather than producing a new one."
+description: "Produce one weekly digest page summarizing meetings (and later, other content-types) inside an ISO-week window. Load when the user asks for \"the digest\", \"last week's summary\", or \"what happened this week\", when `wiki run weekly-digest` invokes you, when `/digest` fires from Claude Code's slash palette, or on a scheduled sweep. Writes one page to `outputs/digests/<window>.md`; idempotent for a given window — re-running overwrites the same page rather than producing a new one."
 license: MIT
 ---
 

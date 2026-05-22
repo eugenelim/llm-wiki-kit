@@ -5,6 +5,8 @@ description: >-
   recent meal plan for repetition avoidance.
 period: weekly
 skill: meal-planning
+outcomes:
+  - plan-meals
 inputs:
   window:
     type: iso_week

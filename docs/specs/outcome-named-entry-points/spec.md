@@ -650,12 +650,19 @@ User surfaces:
 - Claude Code: `/digest`
 - Natural language: "give me last week's digest"
 
-`digest` is the same verb across all three recipes that install
-`weekly-digest`. There is no collision because the verb is owned
-by the operation, not by the recipe — every recipe that installs
-`weekly-digest` gets `digest` as the canonical verb. Two different
-operations cannot both claim `digest`; the catalog uniqueness
-check enforces that.
+The personal recipe also installs `meal-planning`, so personal
+users receive `/plan-meals` (and `wiki plan-meals` / "plan our
+meals" NL) alongside `/digest`. Spec §Invariant 1 ("one
+declaration, every surface") explains why: the verb is owned by
+the operation, not the recipe. Any recipe that installs a given
+operation inherits its verbs.
+
+`digest` is the same verb across every recipe that installs
+`weekly-digest` (today: `family` and `personal`). The shipped
+`work-os` recipe does not include `weekly-digest`; future recipes
+that adopt the operation inherit the same `digest` verb without
+re-declaring it. Two different operations cannot both claim
+`digest`; the catalog uniqueness check enforces that.
 
 ## Non-goals
 

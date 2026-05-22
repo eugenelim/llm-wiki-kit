@@ -1,6 +1,6 @@
 ---
 name: meal-planning
-description: "Produce a weekly family meal plan with shopping list, reading the recipe library under `wiki/food/`, dietary notes, last week's plan, and family calendar context if available. Load when the user asks for a weekly plan, when `wiki run meal-planning` invokes you, or on a scheduled Sunday sweep. Writes one page to `outputs/meal-plans/<window>.md`; idempotent for a given window. For ad-hoc \"what's for dinner tonight?\" use a recipe recommendation skill instead — this operation is the weekly cadence."
+description: "Produce a weekly family meal plan with shopping list, reading the recipe library under `wiki/food/`, dietary notes, last week's plan, and family calendar context if available. Load when the user asks for a weekly plan or to plan-meals, when `wiki run meal-planning` invokes you, when `/plan-meals` fires from Claude Code's slash palette, or on a scheduled Sunday sweep. Writes one page to `outputs/meal-plans/<window>.md`; idempotent for a given window. For ad-hoc \"what's for dinner tonight?\" use a recipe recommendation skill instead — this operation is the weekly cadence."
 license: MIT
 ---
 

@@ -5,6 +5,8 @@ description: >-
   later versions widen to other content-types.
 period: weekly
 skill: weekly-digest
+outcomes:
+  - digest
 inputs:
   window:
     type: iso_week
