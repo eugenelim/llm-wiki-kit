@@ -28,6 +28,7 @@ import hashlib
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from llm_wiki_kit import journal, managed_regions
 from llm_wiki_kit.errors import ManagedRegionError, WikiError
@@ -96,19 +97,36 @@ def safe_write(
     or ``page-drift`` (event durable, on-disk hash diverges). See
     ``docs/specs/safe-write-ordering/spec.md`` for the full contract.
 
-    Three branches by ``(baseline_hash, file_present, on_disk_hash)``:
+    Five branches by ``(latest_kind, baseline_hash, file_present, on_disk_hash)``:
 
-    1. **Direct write** — no history and no file (fresh path), or
-       history with a matching on-disk hash (no drift), or history with
-       the file absent (crash-recovery retry).
-    2. **Adopt fast-path** — no history, file exists, bytes already
-       match. Re-reads the file once to shrink the adopt-then-not race
-       window, then journals the baseline without touching the file
-       (preserves inode for Obsidian / inotify consumers).
-    3. **Proposal** — everything else: a user-edited file diverging
-       from the journaled baseline (classic drift), or a user file the
-       kit has never seen whose bytes differ from the kit's proposed
-       content (the qC6 case the spec inverted).
+    1. **Adopt-match no-rewrite** — latest baseline is
+       :class:`PageAdoptedEvent` and ``new_hash == baseline_hash ==
+       on_disk_hash``. Supersedes the adopt baseline with a fresh
+       :class:`PageWriteEvent` and does NOT touch the file (inode +
+       mtime preserved). ADR-0008 §Decision sub-choice 3 disjunct 1.
+    2. **Adopt-differ proposal** — latest baseline is
+       :class:`PageAdoptedEvent` and the kit's content differs from
+       the adopted baseline (or the on-disk bytes have moved off
+       baseline since the adopt walk). Routes to the proposal branch
+       even when ``on_disk_hash == baseline_hash`` — the silent
+       overwrite this disjunct exists to prevent. ADR-0008 §Decision
+       sub-choice 3 disjunct 2.
+    3. **Direct write** — no history and no file (fresh path), or
+       history with a matching on-disk hash (no drift), or history
+       with the file absent (crash-recovery retry). Suppressed when
+       the latest baseline is an adopt event (see disjunct 2).
+    4. **Adopt fast-path** — no history, file exists, bytes already
+       match. Re-reads the file once to shrink the adopt-then-not
+       race window, then journals the baseline without touching the
+       file (preserves inode for Obsidian / inotify consumers). Only
+       reachable when no journaled baseline exists (otherwise
+       ``no_history`` is False); the journaled-adopt analogue is
+       covered by disjunct 1 above.
+    5. **Proposal** — everything else: a user-edited file diverging
+       from the journaled baseline (classic drift), or a user file
+       the kit has never seen whose bytes differ from the kit's
+       proposed content (the qC6 case the spec inverted), or the
+       fall-through from disjunct 2.
     """
 
     vault_root = _vault_root(journal_path)
@@ -118,7 +136,12 @@ def safe_write(
     new_bytes = content.encode("utf-8")
     new_hash = _hash(new_bytes)
     on_disk_hash = _hash(abs_path.read_bytes()) if abs_path.exists() else None
-    baseline_hash = _baseline_hash(journal_path, relative_path)
+    # One journal walk for both the latest baseline class AND its hash:
+    # outside the cache scope, every ``_read_events_cached`` call hits
+    # disk, so two separate walks would double the read count per
+    # ``safe_write`` and break the qC4 cache-scope contract pin in
+    # ``test_safe_write_outside_cache_scope_unchanged``.
+    latest_kind, baseline_hash = _latest_page_baseline(journal_path, relative_path)
     # Single timestamp by design — direct-write and proposal are one
     # logical decision at call entry. Only the adopt fast-path
     # recomputes (see below), because the re-read shrinks the race
@@ -129,7 +152,38 @@ def safe_write(
     file_present = abs_path.exists()
     bytes_match = on_disk_hash == new_hash
 
-    direct_write = (
+    # ADR-0008 §Decision sub-choice 3 disjunct 1: adopt-match no-rewrite.
+    # When the latest baseline event for the path is a PageAdoptedEvent
+    # and the kit's content matches both the adopted bytes AND the
+    # current on-disk bytes, supersede the adopt baseline with a fresh
+    # PageWriteEvent and leave the file alone (inode + mtime preserved).
+    if latest_kind == "adopted" and new_hash == baseline_hash and on_disk_hash == baseline_hash:
+        append_event(
+            journal_path,
+            PageWriteEvent(timestamp=now, by=by, path=relative_path, hash=new_hash),
+        )
+        return WriteResult.WRITTEN
+
+    # ADR-0008 §Decision sub-choice 3 disjunct 2: adopt-differ proposal.
+    # When the latest baseline is a PageAdoptedEvent and the kit's
+    # content differs from the adopted baseline (or the user has edited
+    # on-disk away from the baseline since the walk), force the proposal
+    # branch — the existing "no drift" direct-write disjunct below would
+    # otherwise silently overwrite the user's adopted bytes.
+    adopt_force_proposal = latest_kind == "adopted"
+
+    # ``adopt_force_proposal`` suppresses every disjunct below for an
+    # adopt-baseline path; the crash-recovery sub-case (file_absent +
+    # journaled baseline) does NOT fire when the baseline is an adopt
+    # event. Once the kit has claimed user bytes as a baseline, a
+    # subsequent disappearance is treated as drift, not as fresh-write
+    # recovery. This is the conservative read of ADR-0008 §Decision
+    # sub-choice 3 disjunct 2 ("any on_disk_hash") plus the
+    # wiki-init-adopt spec §Edge cases "TOCTOU between adoption walk
+    # and render-phase writes" — both consistent with the no-silent-
+    # overwrites invariant. Pinned by
+    # ``test_safe_write_after_page_adopted_file_absent_routes_to_proposal``.
+    direct_write = not adopt_force_proposal and (
         (no_history and not file_present)  # fresh path
         or (not no_history and on_disk_hash == baseline_hash)  # no drift
         or (not no_history and not file_present)  # crash-recovery (spec §Edge cases sub-case 1)
@@ -312,7 +366,15 @@ def _read_events_cached(journal_path: Path) -> list[Event]:
 
 
 def _known_regions_for_file(journal_path: Path, relative_file: str) -> list[str]:
-    """Return the set of region ids ever written for ``relative_file``.
+    """Return the set of region ids ever journaled for ``relative_file``.
+
+    Walks ``ManagedRegionWriteEvent`` AND ``ManagedRegionAdoptedEvent``
+    (ADR-0008 §Decision sub-choice 3). Adoption seeds a region just
+    like a write, so a host whose only history is adopt events still
+    surfaces its regions here — without this, ``resolve_proposal``
+    against an adopted-then-proposed host emits zero region writes and
+    the region-level sticky-adopt baselines never clear, looping on
+    every subsequent aggregator pass (spec AC16b).
 
     Preserves first-seen order so the emitted ``ManagedRegionWriteEvent``
     sequence is stable across runs.
@@ -320,9 +382,12 @@ def _known_regions_for_file(journal_path: Path, relative_file: str) -> list[str]
 
     seen: list[str] = []
     for event in _read_events_cached(journal_path):
-        if isinstance(event, ManagedRegionWriteEvent) and event.file == relative_file:
-            if event.region not in seen:
-                seen.append(event.region)
+        if (
+            isinstance(event, ManagedRegionWriteEvent | ManagedRegionAdoptedEvent)
+            and event.file == relative_file
+            and event.region not in seen
+        ):
+            seen.append(event.region)
     return seen
 
 
@@ -399,12 +464,51 @@ def safe_write_region(
     # is already in that form), so this canonicalization keeps the
     # baseline comparison valid for Task 18 vaults.
     current_region_hash = _hash(managed_regions.canonical_region_body(current_regions[region_id]))
-    baseline_hash = _managed_region_baseline_hash(journal_path, relative_path, region_id)
+    # One journal walk for both the latest region baseline class AND its
+    # hash — mirrors the page-level pin in ``safe_write``; outside the
+    # cache scope, two walks would double the read count per call and
+    # break the cache-scope contract for ``safe_write_region``.
+    latest_kind, baseline_hash = _latest_managed_region_baseline(
+        journal_path, relative_path, region_id
+    )
     new_region_hash = _hash(managed_regions.canonical_region_body(new_content))
     rewritten = managed_regions.update(on_disk_text, region_id, new_content)
     now = _now()
 
-    if baseline_hash is None or current_region_hash == baseline_hash:
+    # ADR-0008 §Decision sub-choice 3 (region equivalent): adopt-match
+    # no-rewrite. When the latest baseline for ``(file, region)`` is a
+    # ManagedRegionAdoptedEvent and the kit's region body matches both
+    # the adopt baseline AND the current on-disk region body, supersede
+    # the adopt baseline with a fresh ManagedRegionWriteEvent and leave
+    # the host file's bytes alone — preserves unmanaged user content
+    # byte-for-byte and the host's inode + mtime.
+    if (
+        latest_kind == "adopted"
+        and new_region_hash == baseline_hash
+        and current_region_hash == baseline_hash
+    ):
+        append_event(
+            journal_path,
+            ManagedRegionWriteEvent(
+                timestamp=now,
+                by=by,
+                file=relative_path,
+                region=region_id,
+                content_hash=new_region_hash,
+            ),
+        )
+        return WriteResult.WRITTEN
+
+    # ADR-0008 §Decision sub-choice 3 (region equivalent): adopt-differ
+    # proposal. When the latest baseline is a
+    # ManagedRegionAdoptedEvent and the kit's body differs (or the
+    # on-disk body has moved off baseline since the walk), force the
+    # proposal branch — the existing "no prior event OR current matches
+    # baseline" direct-write disjunct below would otherwise silently
+    # overwrite the user's adopted region body.
+    adopt_force_proposal = latest_kind == "adopted"
+
+    if not adopt_force_proposal and (baseline_hash is None or current_region_hash == baseline_hash):
         append_event(
             journal_path,
             ManagedRegionWriteEvent(
@@ -440,21 +544,16 @@ def _managed_region_baseline_hash(
 ) -> str | None:
     """Return the latest region-level baseline ``content_hash`` for ``(relative_file, region_id)``.
 
-    Walks ``ManagedRegionWriteEvent`` AND ``ManagedRegionAdoptedEvent``
-    (ADR-0008 §Decision sub-choice 3). Adoption seeds a region
-    baseline just like a write, so an aggregator pass over a host
-    whose only history is an adopt answers "no drift" when the
-    canonicalised on-disk region body still matches.
+    Delegates to :func:`_latest_managed_region_baseline` so the
+    walk-both-classes invariant (ADR-0008 §Decision sub-choice 3) is
+    single-sourced; PR-A's tests for this helper now pin the shared
+    walker indirectly. Adoption seeds a region baseline just like a
+    write, so an aggregator pass over a host whose only history is an
+    adopt answers "no drift" when the canonicalised on-disk region
+    body still matches.
     """
 
-    for event in reversed(_read_events_cached(journal_path)):
-        if (
-            isinstance(event, ManagedRegionWriteEvent | ManagedRegionAdoptedEvent)
-            and event.file == relative_file
-            and event.region == region_id
-        ):
-            return event.content_hash
-    return None
+    return _latest_managed_region_baseline(journal_path, relative_file, region_id)[1]
 
 
 def _vault_root(journal_path: Path) -> Path:
@@ -505,30 +604,119 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _baseline_hash(journal_path: Path, relative_path: str) -> str | None:
-    """Return the hash of the most recent page-level baseline event for ``relative_path``.
+def _latest_page_baseline(
+    journal_path: Path, relative_path: str
+) -> tuple[Literal["write", "adopted", "none"], str | None]:
+    """Return ``(kind, hash)`` of the latest page-level baseline event for ``relative_path``.
 
-    Walks ``PageWriteEvent`` AND ``PageAdoptedEvent`` (ADR-0008
-    §Decision sub-choice 3): adoption seeds a baseline just like a
-    write, so a journal whose latest event for the path is an adopt
-    answers "no drift" for byte-identical on-disk content.
-    ``PageConflictResolvedEvent`` remains audit-only here;
-    ``resolve_proposal`` re-establishes the baseline by emitting its
-    own ``PageWriteEvent`` alongside the audit event (ADR-0004
-    §Mechanics step 6).
+    Single walk over ``reversed(_read_events_cached(journal_path))``:
+    on the first :class:`PageWriteEvent` whose path matches, returns
+    ``("write", event.hash)``; on the first :class:`PageAdoptedEvent`
+    whose path matches, returns ``("adopted", event.hash)``; otherwise
+    ``("none", None)``.
 
-    Returning the hash regardless of class is correct because PR-A's
-    contract is just "what hash should I compare new content against?"
-    The adopt-aware predicate landing in PR-B will dispatch on the
-    latest baseline's *class*, not just its hash, to route
-    differing-content writes to the proposal branch — see
-    ``docs/specs/wiki-init-adopt/plan.md`` PR-B.
+    Single source of truth for the walk-both-classes invariant
+    (ADR-0008 §Decision sub-choice 3). ``safe_write`` calls this once
+    per invocation and uses the kind for predicate dispatch and the
+    hash for drift comparison from one read, satisfying the
+    once-per-call read budget pinned by
+    ``test_safe_write_outside_cache_scope_unchanged``.
+    :func:`_latest_baseline_event_kind` (the ADR-named API) and
+    :func:`_baseline_hash` (retained for PR-A's test-contract surface)
+    both delegate here so a future change to "which event classes count
+    as a baseline" lands in one place.
+
+    ``PageConflictResolvedEvent`` is audit-only and never returned
+    here; ``resolve_proposal`` emits a fresh :class:`PageWriteEvent`
+    alongside the audit event so the next ``safe_write`` call sees
+    ``"write"``, clearing any sticky-adopt state (spec AC16).
     """
 
     for event in reversed(_read_events_cached(journal_path)):
-        if isinstance(event, PageWriteEvent | PageAdoptedEvent) and event.path == relative_path:
-            return event.hash
-    return None
+        if isinstance(event, PageWriteEvent) and event.path == relative_path:
+            return "write", event.hash
+        if isinstance(event, PageAdoptedEvent) and event.path == relative_path:
+            return "adopted", event.hash
+    return "none", None
+
+
+def _latest_baseline_event_kind(
+    journal_path: Path, relative_path: str
+) -> Literal["write", "adopted", "none"]:
+    """Return the discriminator of the latest page-level baseline event for ``relative_path``.
+
+    Thin wrapper around :func:`_latest_page_baseline` — exists so the
+    ADR-0008 §Decision sub-choice 3 contract ("dispatch on the literal
+    returned by ``_latest_baseline_event_kind``") names a function with
+    that signature. ``safe_write`` calls :func:`_latest_page_baseline`
+    directly so the single walk also yields the baseline hash without
+    a second journal read.
+    """
+
+    return _latest_page_baseline(journal_path, relative_path)[0]
+
+
+def _latest_managed_region_baseline(
+    journal_path: Path, relative_file: str, region_id: str
+) -> tuple[Literal["write", "adopted", "none"], str | None]:
+    """Return ``(kind, hash)`` of the latest region-level baseline event.
+
+    Region-scoped equivalent of :func:`_latest_page_baseline`. Same
+    single-walk-shares-with-hash-lookup rationale; the qC4 cache-scope
+    contract for ``safe_write_region`` would otherwise see twice the
+    reads per call.
+    """
+
+    for event in reversed(_read_events_cached(journal_path)):
+        if (
+            isinstance(event, ManagedRegionWriteEvent)
+            and event.file == relative_file
+            and event.region == region_id
+        ):
+            return "write", event.content_hash
+        if (
+            isinstance(event, ManagedRegionAdoptedEvent)
+            and event.file == relative_file
+            and event.region == region_id
+        ):
+            return "adopted", event.content_hash
+    return "none", None
+
+
+def _latest_managed_region_event_kind(
+    journal_path: Path, relative_file: str, region_id: str
+) -> Literal["write", "adopted", "none"]:
+    """Return the discriminator of the latest region-level baseline event.
+
+    Thin wrapper around :func:`_latest_managed_region_baseline` — same
+    rationale as :func:`_latest_baseline_event_kind` versus
+    :func:`_latest_page_baseline`.
+    """
+
+    return _latest_managed_region_baseline(journal_path, relative_file, region_id)[0]
+
+
+def _baseline_hash(journal_path: Path, relative_path: str) -> str | None:
+    """Return the hash of the most recent page-level baseline event for ``relative_path``.
+
+    Delegates to :func:`_latest_page_baseline` so the walk-both-classes
+    invariant (ADR-0008 §Decision sub-choice 3) is single-sourced.
+    Adoption seeds a baseline just like a write, so a journal whose
+    latest event for the path is an adopt answers "no drift" for
+    byte-identical on-disk content. ``PageConflictResolvedEvent``
+    remains audit-only here; ``resolve_proposal`` re-establishes the
+    baseline by emitting its own ``PageWriteEvent`` alongside the audit
+    event (ADR-0004 §Mechanics step 6).
+
+    Returning the hash regardless of class is correct because PR-A's
+    contract is just "what hash should I compare new content against?"
+    The adopt-aware predicate landed in PR-B dispatches on the latest
+    baseline's *class* via :func:`_latest_baseline_event_kind` to route
+    differing-content writes to the proposal branch — see
+    ``docs/specs/wiki-init-adopt/spec.md`` AC13/AC14.
+    """
+
+    return _latest_page_baseline(journal_path, relative_path)[1]
 
 
 def _ensure_obsidianignore(vault_root: Path) -> None:
