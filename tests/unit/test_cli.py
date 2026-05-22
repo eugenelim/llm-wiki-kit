@@ -114,8 +114,10 @@ def test_verbose_flag_default_is_off() -> None:
     """No --verbose anywhere → ``getattr(args, "verbose", False)`` is False.
 
     The parser uses ``default=argparse.SUPPRESS`` so the attribute is
-    absent unless the flag is passed; ``_is_verbose`` reads via getattr
-    with a False fallback.
+    absent unless the flag is passed; ``main``'s argv-level verbose
+    sniff bypasses the namespace, but this getattr-with-fallback
+    shape stays the safest pattern for any future caller that wants
+    to read it off the namespace.
     """
 
     args = build_parser().parse_args(["doctor"])

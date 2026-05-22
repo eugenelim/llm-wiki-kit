@@ -1842,6 +1842,16 @@ class _VerbAwareParser(argparse.ArgumentParser):
     chance to inject the override resolves to the lazy ``_kit_root()``
     on the parser it was actually built with, not on a sibling parser
     that happened to overwrite the class attribute.
+
+    **Test-author note.** Code that calls :func:`build_parser` directly
+    — bypassing ``main`` — does NOT inherit the override-injection
+    step ``main`` performs (``_parser._kit_root_override = kit_root``
+    at ``cli.main``'s top). The error() override therefore falls back
+    to the lazy ``_kit_root()`` resolver, which points at the
+    bundled-asset prefix rather than at any synthetic kit the test
+    built in a tmp dir. To exercise this override against a synthetic
+    catalog, set ``parser._kit_root_override = <kit_root>`` yourself
+    after construction, mirroring what ``main`` does.
     """
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -1872,12 +1882,11 @@ def build_parser() -> argparse.ArgumentParser:
     # ``--verbose`` lives on a parent parser so it appears in both
     # ``wiki --help`` and every ``wiki <cmd> --help``, and so it works
     # either side of the subcommand (``wiki --verbose init …`` or
-    # ``wiki init --verbose …``). ``default=argparse.SUPPRESS`` is the
-    # critical bit: without it, the subparser's argparse-default would
-    # overwrite a True value the top-level parser had already set on the
-    # namespace — the classic "shared flag erased by subparser default"
-    # argparse footgun. ``_is_verbose`` reads with ``getattr(..., False)``
-    # so the unset case stays clean.
+    # ``wiki init --verbose …``). ``default=argparse.SUPPRESS`` keeps
+    # the namespace clean (no spurious ``verbose=False`` attribute) —
+    # the verbose check in ``main`` reads from raw argv rather than
+    # the namespace, so SUPPRESS is the right shape and a subparser
+    # default could no longer overwrite the parent's value either way.
     # ``verbose_parent`` only donates actions via ``parents=[...]``;
     # argparse never invokes ``error()`` on a parent parser, so the
     # ``_VerbAwareParser`` override does not fire from this instance.
@@ -2236,23 +2245,6 @@ def build_parser() -> argparse.ArgumentParser:
 _WIKI_DEBUG_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 
 
-def _is_verbose(args: argparse.Namespace) -> bool:
-    """Return True if the user asked for tracebacks on error.
-
-    Either ``--verbose`` on the command line OR ``WIKI_DEBUG`` set to one
-    of the documented truthy spellings — ``1``, ``true``, ``yes``, ``on``
-    (case-insensitive, whitespace-trimmed). Anything else — ``0``, the
-    empty string, ``false``, ``no``, ``off``, an unrecognised word — reads
-    as off. We allow-list rather than deny-list so a wrapper script that
-    spells "disabled" as ``WIKI_DEBUG=false`` gets the obvious meaning
-    instead of the opposite.
-    """
-
-    if getattr(args, "verbose", False):
-        return True
-    return os.environ.get("WIKI_DEBUG", "").strip().lower() in _WIKI_DEBUG_TRUTHY
-
-
 def main(argv: Sequence[str] | None = None, *, kit_root: Path | None = None) -> int:
     """Entry point. ``kit_root`` overrides the bundled-asset resolver.
 
@@ -2305,68 +2297,104 @@ def main(argv: Sequence[str] | None = None, *, kit_root: Path | None = None) -> 
             verb_candidate_idx = _i
             break
 
-    if verb_candidate is not None:
-        # Derive static subcommands from the parser so this check stays
-        # in sync without a hardcoded list.
-        subparser_action = next(
-            (a for a in parser._actions if hasattr(a, "choices") and a.choices),
-            None,
-        )
-        raw_choices = (
-            getattr(subparser_action, "choices", None) if subparser_action is not None else None
-        )
-        static_subcommands: set[str] = (
-            set(raw_choices.keys()) if isinstance(raw_choices, dict) else set()
-        )
+    # One ``WikiError`` boundary wrapping both the pre-argparse
+    # dispatcher (which may raise per spec §Outputs §1: "outcome verbs
+    # are vault-scoped") and the post-argparse handler call (which
+    # routes ``WikiError`` from every subcommand). The boundary uses
+    # an argv-level verbose sniff so the same traceback contract
+    # applies whether the error fires before or after argparse runs.
+    #
+    # Side effect of the widened ``try``: any ``WikiError`` subclass
+    # raised during the dispatcher's ``installed_outcome_verbs(...)``
+    # call (e.g. ``ValidationError`` from a malformed ``contract.yaml``)
+    # also hits this boundary, except ``JournalCorruptError`` which
+    # the inner ``try/except`` below handles locally so the dispatcher
+    # can emit the user-facing "history file damaged" hint before
+    # falling through to argparse. Previously those non-corrupt
+    # ``WikiError`` subclasses would have produced a raw traceback to
+    # the user; the widened behavior matches the spec's intent that
+    # catalog-time problems surface as one-line stderr messages.
+    cli_verbose = "--verbose" in argv_list or (
+        os.environ.get("WIKI_DEBUG", "").strip().lower() in _WIKI_DEBUG_TRUTHY
+    )
+    try:
+        if verb_candidate is not None:
+            # Derive static subcommands from the parser so this check stays
+            # in sync without a hardcoded list.
+            subparser_action = next(
+                (a for a in parser._actions if hasattr(a, "choices") and a.choices),
+                None,
+            )
+            raw_choices = (
+                getattr(subparser_action, "choices", None) if subparser_action is not None else None
+            )
+            static_subcommands: set[str] = (
+                set(raw_choices.keys()) if isinstance(raw_choices, dict) else set()
+            )
 
-        if verb_candidate not in static_subcommands and _OUTCOME_VERB_RE.match(verb_candidate):
-            # verb-shaped token — check the vault
-            vault_root = Path.cwd().resolve()
-            journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+            if verb_candidate not in static_subcommands and _OUTCOME_VERB_RE.match(verb_candidate):
+                # verb-shaped token — check the vault
+                vault_root = Path.cwd().resolve()
+                journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
 
-            if not journal_path.is_file():
-                # Outside a vault: surface the spec §Outputs §1 contract message.
-                print(
-                    "outcome verbs are vault-scoped; run inside a vault or use "
-                    "'wiki run <operation>'",
-                    file=sys.stderr,
-                )
-                return WIKI_ERROR_EXIT
+                if not journal_path.is_file():
+                    # Outside a vault: route through the ``WikiError``
+                    # boundary (spec §Outputs §1) so ``--verbose`` prints
+                    # a traceback and a future programmatic caller can
+                    # ``except WikiError``.
+                    raise WikiError(
+                        "outcome verbs are vault-scoped; run inside a vault or use "
+                        "'wiki run <operation>'"
+                    )
 
-            # Inside a vault: look up the verb map.
-            effective_kit_root = kit_root if kit_root is not None else _kit_root()
-            try:
-                verb_map = installed_outcome_verbs(vault_root, effective_kit_root)
-            except JournalCorruptError:
-                # Strict read failed; fall through to argparse without rewrite.
-                verb_map = {}
+                # Inside a vault: look up the verb map.
+                effective_kit_root = kit_root if kit_root is not None else _kit_root()
+                try:
+                    verb_map = installed_outcome_verbs(vault_root, effective_kit_root)
+                except JournalCorruptError:
+                    # Strict read failed. Drop the user a one-line
+                    # pointer at ``wiki doctor`` before falling through
+                    # to argparse — otherwise they see only argparse's
+                    # generic "invalid choice" and have no reason to
+                    # suspect the journal. Phrasing avoids kit-internal
+                    # jargon (AGENTS.md flags the audience as
+                    # non-engineers): "history file is damaged" rather
+                    # than "outcome-verb dispatch disabled."
+                    print(
+                        f"note: the wiki's history file at {journal_path} is "
+                        f"damaged — run 'wiki doctor' to check the vault; "
+                        f"the '{verb_candidate}' shortcut will not work "
+                        "until this is fixed.",
+                        file=sys.stderr,
+                    )
+                    verb_map = {}
 
-            if verb_candidate in verb_map:
-                operation, _skill = verb_map[verb_candidate]
-                # Build the rewritten argv: flags before the verb stay as-is
-                # (e.g. ``--verbose``), then ``run <operation>``, then the
-                # remaining tokens after the verb.
-                prefix_flags = argv_list[:verb_candidate_idx]
-                rest = argv_list[verb_candidate_idx + 1 :]
-                if any(t in RUN_HELP_TOKENS for t in rest):
-                    # Print the alias preamble, then re-dispatch with --help.
-                    print(f"(alias for `wiki run {operation}`)")
+                if verb_candidate in verb_map:
+                    operation, _skill = verb_map[verb_candidate]
+                    # Build the rewritten argv: flags before the verb stay
+                    # as-is (e.g. ``--verbose``), then ``run <operation>``,
+                    # then the remaining tokens after the verb.
+                    prefix_flags = argv_list[:verb_candidate_idx]
+                    rest = argv_list[verb_candidate_idx + 1 :]
+                    if any(t in RUN_HELP_TOKENS for t in rest):
+                        # Print the alias preamble, then re-dispatch with --help.
+                        print(f"(alias for `wiki run {operation}`)")
+                        return main(
+                            [*prefix_flags, "run", operation, "--help"],
+                            kit_root=kit_root,
+                        )
                     return main(
-                        [*prefix_flags, "run", operation, "--help"],
+                        [*prefix_flags, "run", operation, *rest],
                         kit_root=kit_root,
                     )
-                return main(
-                    [*prefix_flags, "run", operation, *rest],
-                    kit_root=kit_root,
-                )
-            # verb-shaped but not in map: fall through to argparse, whose
-            # _VerbAwareParser.error override will append the verb list.
+                # verb-shaped but not in map: fall through to argparse,
+                # whose ``_VerbAwareParser.error`` override appends the
+                # verb list.
 
-    # --- Normal argparse path ---
-    args = parser.parse_args(argv_list)
-    args.kit_root = kit_root
-    func = args.func
-    try:
+        # --- Normal argparse path ---
+        args = parser.parse_args(argv_list)
+        args.kit_root = kit_root
+        func = args.func
         return int(func(args))
     except WikiError as exc:
         # The CLI boundary: one human-readable line on stderr by default,
@@ -2375,7 +2403,7 @@ def main(argv: Sequence[str] | None = None, *, kit_root: Path | None = None) -> 
         # subcommand can't forget the contract — every handler is free
         # to ``raise WikiError(...)`` and the message lands here.
         print(str(exc), file=sys.stderr)
-        if _is_verbose(args):
+        if cli_verbose:
             traceback.print_exc(file=sys.stderr)
         return WIKI_ERROR_EXIT
 
