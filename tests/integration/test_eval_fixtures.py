@@ -28,8 +28,10 @@ from tests.evals.conftest import (
     CONFLICT_FIXTURE_PATH,
     build_conflict_pending_vault,
     build_eval_kit,
+    build_meal_planning_vault,
     build_research_cited_vault,
     build_research_dispatch_vault,
+    build_stakeholder_map_refresh_vault,
     build_vault,
     build_weekly_digest_vault,
 )
@@ -61,6 +63,16 @@ def test_weekly_digest_seed_has_meeting_and_operation(tmp_path: Path, kit_root: 
     # The digest output does NOT exist yet — the outcome eval pins this.
     digest = vault / "outputs" / "digests" / "2026-W20.md"
     assert not digest.exists()
+    # The `digest` outcome-verb trigger eval relies on a peer
+    # SKILL existing alongside the `weekly-digest` operation SKILL
+    # (the set-membership relaxation in
+    # `tests/evals/trigger/test_outcome_verbs_trigger.py` is
+    # load-bearing on this). The `meeting` content-type ships an
+    # `ingest-meeting` SKILL — pin both directories so a refactor
+    # that drops the peer fails this test loudly rather than
+    # silently weakening the eval.
+    assert _operation_skill_dir(vault, "weekly-digest").is_dir()
+    assert _operation_skill_dir(vault, "ingest-meeting").is_dir()
 
 
 def test_research_cited_seed_installs_research_stack(tmp_path: Path, kit_root: Path) -> None:
@@ -105,3 +117,40 @@ def test_research_dispatch_seed_installs_research_stack(tmp_path: Path, kit_root
     installed = _installed_primitives(vault)
     assert {"core", "research", "research-perplexity"} <= installed
     assert (vault / "research-providers.yaml").is_file()
+
+
+def _operation_skill_dir(vault: Path, name: str) -> Path:
+    return vault / "skills" / name
+
+
+def test_meal_planning_seed_ships_operation_and_peer_ingest_skills(
+    tmp_path: Path, kit_root: Path
+) -> None:
+    """Outcome-verb trigger eval depends on a peer ingest SKILL existing.
+
+    The eval's set-membership assertion (matching SKILL was loaded
+    at some point, not first-touch) is justified by the fact the
+    vault carries peer SKILLs. This integration test pins that
+    invariant: if a future refactor changes the seeded primitive
+    set to install only the operation, the trigger eval's
+    relaxation is no longer load-bearing — and this test fails
+    loudly so the prompt-table docstring contract stays honest.
+    """
+
+    vault = build_meal_planning_vault(kit_root, tmp_path)
+    installed = _installed_primitives(vault)
+    assert {"core", "recipe", "meal-planning"} <= installed
+    # `recipe` ships an ingester skill alongside the `meal-planning`
+    # operation skill — confirms peer SKILLs exist for the eval.
+    assert _operation_skill_dir(vault, "meal-planning").is_dir()
+    assert _operation_skill_dir(vault, "ingest-recipe").is_dir()
+
+
+def test_stakeholder_map_refresh_seed_ships_operation_and_peer_ingest_skills(
+    tmp_path: Path, kit_root: Path
+) -> None:
+    vault = build_stakeholder_map_refresh_vault(kit_root, tmp_path)
+    installed = _installed_primitives(vault)
+    assert {"core", "stakeholder-update", "stakeholder-map-refresh"} <= installed
+    assert _operation_skill_dir(vault, "stakeholder-map-refresh").is_dir()
+    assert _operation_skill_dir(vault, "ingest-stakeholder-update").is_dir()

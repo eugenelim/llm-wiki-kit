@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*;
 > the plan says *how, in what order, with what verification*.
 
-- **Status:** Drafting
+- **Status:** Done
 - **Spec:** [`docs/specs/outcome-named-entry-points/spec.md`](spec.md)
 - **Owner:** maintainer
 
@@ -1098,10 +1098,12 @@ non-default catalog root.
    - **Tests** (new file
      `tests/integration/test_wheel_acceptance_outcomes.py`,
      marked `@pytest.mark.slow`):
-     - Build the wheel, install into a temporary venv, walk
-       the installed `_assets/templates/operations/*` tree,
-       assert every contract's declared `outcomes:` appear
-       in the matching SKILL.md description. Mirrors PR-3's
+     - Build the wheel, install into a tmp `pip install
+       --target <prefix>` location (mirroring
+       `test_wheel_install_end_to_end`), walk the installed
+       `_assets/templates/operations/*` tree, assert every
+       contract's declared `outcomes:` appear in the
+       matching SKILL.md description. Mirrors PR-3's
        fail-fast validator but against the *built and
        installed* wheel — pins the wheel-bundling spec
        (`docs/specs/wheel-bundled-assets/spec.md`) hasn't
@@ -1140,7 +1142,7 @@ release-cut workflow.
 
 End-to-end verification (post PR-9):
 
-- All 18 acceptance criteria from `spec.md` pass.
+- All 21 acceptance criteria from `spec.md` pass.
 - `wiki init --recipe family <tmp>` produces a vault with
   `.claude/commands/digest.md` and `.claude/commands/plan-meals.md`
   on disk; `wiki outcomes` lists both verbs; `wiki digest --help`
