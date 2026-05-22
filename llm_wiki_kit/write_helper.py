@@ -25,6 +25,8 @@ disk, so Pydantic would buy nothing here.
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -749,3 +751,104 @@ def _ensure_obsidianignore(vault_root: Path) -> None:
     if existing and not existing.endswith("\n"):
         existing += "\n"
     ignore.write_text(existing + OBSIDIAN_IGNORE_PROPOSED_PATTERN + "\n", encoding="utf-8")
+
+
+def write_os_artifact(
+    path: Path,
+    content: str | bytes,
+    *,
+    vault_root: Path,
+) -> None:
+    """Atomically write a kit-owned artifact to a path *outside* the vault.
+
+    The schedule module's ``_Emitter`` implementations materialise files
+    in OS-managed directories — launchd plists under
+    ``~/Library/LaunchAgents/``, systemd units under
+    ``~/.config/systemd/user/``, Task Scheduler XML under
+    ``%LOCALAPPDATA%/llm-wiki-kit/schedules/``. Those paths are outside
+    the vault by design (the OS scheduler reads them), so :func:`safe_write`
+    refuses them via :func:`_relative_to_vault`. ``write_os_artifact`` is
+    the kit's blessed out-of-vault writer for that case.
+
+    The artifact has no journal baseline — it is wholly kit-owned and
+    lives outside the vault, so user edits aren't the kit's concern.
+    Recovery from out-of-band deletion goes through
+    ``wiki schedule install`` + ``wiki doctor``, not through drift
+    detection.
+
+    **Documented exemption from the safe-write rule.** The kit-side
+    write rule (``AGENTS.md`` §"Check before acting") covers in-vault
+    writes: ``resolve_proposal`` and ``_ensure_obsidianignore`` are its
+    two named bypasses, both writing inside the vault. This helper is a
+    third blessed channel for kit writes — but for paths *outside* the
+    vault, where ``safe_write`` does not apply. AGENTS.md names it in
+    the same carve-out for discoverability.
+
+    The write is atomic on POSIX (and on Windows when the destination
+    exists): the helper opens a ``NamedTemporaryFile`` in ``path.parent``,
+    writes the content, fsyncs, closes, then ``os.replace``\\ s the
+    tempfile into place. A crash mid-write leaves either the previous
+    file (if any) or no file — never partial bytes. **Overwrite is
+    intentional**: a re-install with the same cadence must produce the
+    same artifact byte-identical (``schedule.install`` enforces the
+    journal-side "no-op when already installed" check before calling
+    here, per ``docs/specs/wiki-schedule/spec.md`` §"install happy path"
+    and §Invariants).
+
+    Refuses, raising :class:`WikiError`, when ``path`` resolves inside
+    ``vault_root``. The caller should route in-vault writes through
+    :func:`safe_write` instead. The check resolves both sides
+    (``Path.resolve`` defaults to non-strict, so the artifact's
+    not-yet-existing final component is fine) and catches a ``..``
+    lexical escape that lands back in the vault.
+
+    Filesystem errors (permission denied on the artifact directory, disk
+    full, etc.) propagate as :class:`OSError`. The helper does not
+    swallow them — ``schedule.install`` relies on the exception to abort
+    the install before journaling. On any failure between tempfile open
+    and ``os.replace``, the helper unlinks the tempfile before
+    re-raising so retry loops do not accumulate ``.tmp`` debris in
+    OS-managed directories.
+    """
+
+    resolved_vault = vault_root.resolve()
+    # ``Path.resolve`` defaults to non-strict, so the artifact's
+    # not-yet-existing final component resolves fine; intermediate
+    # directories still resolve symlinks normally.
+    resolved_path = path.resolve()
+    if resolved_path == resolved_vault or resolved_vault in resolved_path.parents:
+        raise WikiError(
+            f"write_os_artifact refuses in-vault path {path!s} "
+            f"(vault_root={vault_root!s}); route through safe_write instead"
+        )
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+    data: bytes = content.encode("utf-8") if isinstance(content, str) else content
+
+    # ``delete=False`` so the success path can ``os.replace`` the
+    # tempfile into place; the failure path explicitly unlinks before
+    # re-raising so a retry loop does not accumulate ``.<name>.<rand>.tmp``
+    # debris next to the artifact.
+    tmp_handle = tempfile.NamedTemporaryFile(
+        mode="wb",
+        dir=resolved_path.parent,
+        prefix=f".{resolved_path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    tmp_path = Path(tmp_handle.name)
+    try:
+        with tmp_handle as tmp:
+            tmp.write(data)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, resolved_path)
+    except BaseException:
+        # ``missing_ok=True`` is defensive: today, no code path raises
+        # between ``os.replace`` succeeding and the function returning,
+        # so on a successful replace the tempfile is already gone.
+        # Future code added between replace and return must not orphan
+        # a tempfile here.
+        tmp_path.unlink(missing_ok=True)
+        raise

@@ -418,8 +418,13 @@ mirrors RFC-0003 §"Cadence vocabulary":
   `SHA-256(str(vault_root.resolve()))`. Birthday-bound collision
   probability is ~1 in 16M between two vaults on the same host —
   acceptable for v1's one-user audience. The artifact-path-already-
-  exists check in `write_os_artifact()` raises on collision; the
-  user can pick a different vault path. Documented here rather than
+  exists collision check lives in `schedule.install` (which has the
+  journal context to distinguish "same vault, idempotent re-install"
+  from "different vault, vault-id collision"), not in
+  `write_os_artifact()`. The helper overwrites unconditionally —
+  that path keeps it stateless and lets the orchestrator orchestrate.
+  On collision, `schedule.install` raises before calling the helper;
+  the user picks a different vault path. Documented here rather than
   pinned in a CT because the collision case is operationally rare
   and easy to recover from.
 - Default cadence resolution uses one named constant in
