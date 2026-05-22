@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import platform
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,6 +37,42 @@ import pytest
 pytestmark = pytest.mark.slow
 
 _LINUX_WITH_SYSTEMD = platform.system() == "Linux" and shutil.which("systemd-run") is not None
+_SYSTEMD_ANALYZE = shutil.which("systemd-analyze")
+
+# ---------------------------------------------------------------------------
+# C3. systemd-analyze calendar round-trip — one per cadence kind
+# ---------------------------------------------------------------------------
+
+_ONCALENDAR_STRINGS = [
+    ("daily", "*-*-* 07:00:00"),
+    ("weekly-sun", "Sun *-*-* 09:00:00"),
+    ("monthly", "*-*-01 09:00:00"),
+    ("quarterly", "*-01,04,07,10-01 09:00:00"),
+]
+
+
+@pytest.mark.skipif(
+    not _LINUX_WITH_SYSTEMD,
+    reason="requires Linux with systemd-run available",
+)
+@pytest.mark.skipif(
+    _SYSTEMD_ANALYZE is None,
+    reason="systemd-analyze not available",
+)
+@pytest.mark.parametrize(
+    "cadence_id,on_calendar", _ONCALENDAR_STRINGS, ids=[c for c, _ in _ONCALENDAR_STRINGS]
+)
+def test_oncalendar_accepted_by_systemd_analyze(cadence_id: str, on_calendar: str) -> None:
+    """Each OnCalendar string must be accepted by ``systemd-analyze calendar``."""
+    result = subprocess.run(
+        ["systemd-analyze", "calendar", on_calendar],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"systemd-analyze calendar {on_calendar!r} exited {result.returncode}; "
+        f"stderr: {result.stderr.strip()}"
+    )
 
 
 @pytest.mark.skipif(
@@ -109,5 +147,22 @@ def test_systemd_write_activate_inspect_deactivate(tmp_path: Path) -> None:
 
     finally:
         # Step 6 — clean up regardless of test outcome.
+        # Deactivate the timer best-effort so the user session is not left with
+        # residual systemd state if the test body raises mid-way.
+        try:
+            deactivate(timer_path)
+        except Exception as exc:
+            print(f"warning: deactivate during cleanup failed: {exc}", file=sys.stderr)
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "daemon-reload"],
+                capture_output=True,
+                text=True,
+            )
+        except Exception as exc:
+            print(
+                f"warning: daemon-reload during cleanup failed: {exc}",
+                file=sys.stderr,
+            )
         for p in (timer_path, svc_path):
             p.unlink(missing_ok=True)

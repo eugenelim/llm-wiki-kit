@@ -69,8 +69,8 @@ def service_path(timer_path: Path) -> Path:
     """Derive the ``.service`` path from the ``.timer`` path.
 
     Same parent directory and stem; only the suffix changes.  The service
-    unit name must match the timer's ``Unit=`` field so systemd wires the
-    pair correctly.
+    unit name must match the timer's basename stem — systemd's default-pair
+    convention; the timer template omits an explicit ``Unit=`` field.
 
     Example::
 
@@ -146,7 +146,18 @@ def render_service(
     ``exec_command`` is ``list[str]`` of the full argv the unit runs.
     Elements are joined with spaces — systemd's ``ExecStart=`` line takes
     a command string, not a JSON array.
+
+    Precondition: no element of ``exec_command`` may contain whitespace or
+    shell metacharacters.  systemd splits ``ExecStart=`` on whitespace; a
+    path with a space would silently corrupt argv.  A :class:`WikiError` is
+    raised at this boundary if any element violates this constraint.
     """
+
+    bad = [el for el in exec_command if any(c in el for c in " \t\n\r")]
+    if bad:
+        raise WikiError(
+            f"exec_command elements must not contain whitespace; offending element(s): {bad!r}"
+        )
 
     exec_start = " ".join(exec_command)
     return (
@@ -242,7 +253,7 @@ def inspect(timer_path: Path) -> InspectResult:
         capture_output=True,
         text=True,
     )
-    if result.stdout.strip() == "enabled":
+    if result.returncode == 0 and result.stdout.strip() == "enabled":
         return "loaded"
     return "not-loaded"
 
@@ -284,14 +295,14 @@ class SystemdEmitter:
             exec_command=exec_command,
         )
 
-    def activate(self, artifact_path: Path) -> None:
-        activate(artifact_path)
+    def activate(self, timer_path: Path) -> None:
+        activate(timer_path)
 
-    def deactivate(self, artifact_path: Path) -> None:
-        deactivate(artifact_path)
+    def deactivate(self, timer_path: Path) -> None:
+        deactivate(timer_path)
 
-    def inspect(self, artifact_path: Path) -> InspectResult:
-        return inspect(artifact_path)
+    def inspect(self, timer_path: Path) -> InspectResult:
+        return inspect(timer_path)
 
 
 # Singleton for use by the orchestrator's platform-dispatch table.

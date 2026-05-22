@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -63,12 +62,10 @@ _MONTHLY = ResolvedCadence(period="monthly", hour=9, minute=0, day_of_month=1)
 _QUARTERLY = ResolvedCadence(period="quarterly", hour=9, minute=0, day_of_month=1)
 
 
-def _make_completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
-    cp: subprocess.CompletedProcess = MagicMock(spec=subprocess.CompletedProcess)  # type: ignore[type-arg]
-    cp.stdout = stdout
-    cp.stderr = ""
-    cp.returncode = returncode
-    return cp
+def _cp(
+    stdout: str = "", returncode: int = 0, stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +268,7 @@ def test_inspect_returns_loaded_when_is_enabled_stdout_is_enabled(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: _make_completed(stdout="enabled\n", returncode=0),
+        lambda *a, **kw: _cp(stdout="enabled\n", returncode=0),
     )
     assert inspect(timer) == "loaded"
 
@@ -286,7 +283,7 @@ def test_inspect_returns_not_loaded_when_is_enabled_stdout_is_disabled(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: _make_completed(stdout="disabled\n", returncode=1),
+        lambda *a, **kw: _cp(stdout="disabled\n", returncode=1),
     )
     assert inspect(timer) == "not-loaded"
 
@@ -301,7 +298,7 @@ def test_inspect_returns_not_loaded_when_is_enabled_stdout_is_static(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: _make_completed(stdout="static\n", returncode=0),
+        lambda *a, **kw: _cp(stdout="static\n", returncode=0),
     )
     assert inspect(timer) == "not-loaded"
 
@@ -316,7 +313,7 @@ def test_inspect_returns_not_loaded_when_is_enabled_exits_nonzero_empty_stdout(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: _make_completed(stdout="", returncode=4),
+        lambda *a, **kw: _cp(stdout="", returncode=4),
     )
     assert inspect(timer) == "not-loaded"
 
@@ -333,13 +330,9 @@ def test_activate_calls_daemon_reload_then_enable(
     timer = tmp_path / "llm-wiki-kit-abc-op.timer"
     calls: list[list[str]] = []
 
-    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         calls.append(list(cmd))
-        cp: subprocess.CompletedProcess = MagicMock(spec=subprocess.CompletedProcess)  # type: ignore[type-arg]
-        cp.returncode = 0
-        cp.stdout = ""
-        cp.stderr = ""
-        return cp
+        return _cp(returncode=0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -356,12 +349,8 @@ def test_activate_raises_wiki_error_if_daemon_reload_fails(
     """Non-zero exit from daemon-reload → WikiError naming the artifact path."""
     timer = tmp_path / "llm-wiki-kit-abc-op.timer"
 
-    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
-        cp: subprocess.CompletedProcess = MagicMock(spec=subprocess.CompletedProcess)  # type: ignore[type-arg]
-        cp.returncode = 1
-        cp.stdout = ""
-        cp.stderr = "Failed to connect to bus"
-        return cp
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        return _cp(returncode=1, stderr="Failed to connect to bus")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -379,15 +368,13 @@ def test_activate_raises_wiki_error_if_enable_fails(
     timer = tmp_path / "llm-wiki-kit-abc-op.timer"
     call_count = 0
 
-    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         nonlocal call_count
         call_count += 1
-        cp: subprocess.CompletedProcess = MagicMock(spec=subprocess.CompletedProcess)  # type: ignore[type-arg]
         # daemon-reload succeeds; enable --now fails
-        cp.returncode = 0 if call_count == 1 else 1
-        cp.stdout = ""
-        cp.stderr = "" if call_count == 1 else "Unit not found"
-        return cp
+        if call_count == 1:
+            return _cp(returncode=0)
+        return _cp(returncode=1, stderr="Unit not found")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -409,14 +396,9 @@ def test_deactivate_does_not_raise_on_nonzero_exit(
     """Non-zero exit from disable --now must not raise."""
     timer = tmp_path / "llm-wiki-kit-abc-op.timer"
 
-    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
-        cp: subprocess.CompletedProcess = MagicMock(spec=subprocess.CompletedProcess)  # type: ignore[type-arg]
-        cp.returncode = 1
-        cp.stdout = ""
-        cp.stderr = "Unit not loaded"
-        return cp
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: _cp(returncode=1, stderr="Unit not loaded")
+    )
 
     # Must not raise — deactivate is best-effort per spec.
     deactivate(timer)
@@ -427,13 +409,9 @@ def test_deactivate_calls_disable_now(tmp_path: Path, monkeypatch: pytest.Monkey
     timer = tmp_path / "llm-wiki-kit-xyz-op.timer"
     calls: list[list[str]] = []
 
-    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         calls.append(list(cmd))
-        cp: subprocess.CompletedProcess = MagicMock(spec=subprocess.CompletedProcess)  # type: ignore[type-arg]
-        cp.returncode = 0
-        cp.stdout = ""
-        cp.stderr = ""
-        return cp
+        return _cp(returncode=0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -468,3 +446,61 @@ def test_systemd_emitter_render_artifact_delegates() -> None:
         exec_command=_EXEC_CMD,
     )
     assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# 6. C2 — render_service raises WikiError on whitespace in exec_command
+# ---------------------------------------------------------------------------
+
+
+def test_render_service_raises_on_whitespace_in_exec_command() -> None:
+    """exec_command elements with whitespace must raise WikiError at the boundary."""
+    with pytest.raises(WikiError) as exc:
+        render_service(
+            operation=_OPERATION,
+            vault_root=_VAULT_ROOT,
+            vault_id=_VAULT_ID,
+            exec_command=["/usr/local/bin/wiki run", "--exec", _OPERATION],
+        )
+    assert "whitespace" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 7. C4 — inspect returns "not-loaded" when returncode != 0, even if stdout is
+#    "enabled" (inconsistent state guard)
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_returns_not_loaded_when_returncode_nonzero_stdout_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """stdout='enabled' but returncode!=0 must still return ``"not-loaded"``."""
+    timer = tmp_path / "llm-wiki-kit-abc-op.timer"
+    timer.write_text("")
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: _cp(stdout="enabled\n", returncode=1),
+    )
+    assert inspect(timer) == "not-loaded"
+
+
+# ---------------------------------------------------------------------------
+# 8. N8 — deactivate stderr warning contains expected strings
+# ---------------------------------------------------------------------------
+
+
+def test_deactivate_stderr_warning_contains_disable_now_and_timer_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Non-zero exit warning must mention ``disable --now`` and the timer basename."""
+    timer = tmp_path / "llm-wiki-kit-abc-op.timer"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _cp(returncode=2, stderr="some error"))
+
+    deactivate(timer)
+
+    err = capsys.readouterr().err
+    assert "disable --now" in err
+    assert timer.name in err
