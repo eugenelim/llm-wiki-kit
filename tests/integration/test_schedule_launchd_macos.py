@@ -12,10 +12,10 @@ Gate conditions:
 - Platform must be Darwin (macOS).
 - ``launchctl`` must be on PATH (present on all macOS systems since 10.10).
 
-If ``launchctl bootstrap`` fails (e.g. because the test plist label
-collides with an already-loaded service), the test is marked ``xfail``
-rather than failing the suite — environment state outside the test's
-control should not hard-fail the build.
+If ``launchctl bootstrap`` fails because the label is already loaded
+(exit code 17, or stderr matches "service already loaded" / "EEXIST"),
+the test is marked ``xfail`` — that environment state is outside the
+test's control.  Any other bootstrap failure is a real test failure.
 """
 
 from __future__ import annotations
@@ -43,16 +43,14 @@ def vault(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.fixture
-def launchagents_dir(tmp_path: Path) -> Path:
-    """A throwaway LaunchAgents-style directory under tmp_path."""
-    d = tmp_path / "LaunchAgents"
-    d.mkdir()
-    return d
-
-
 def test_bootstrap_inspect_bootout(vault: Path, tmp_path: Path) -> None:
     """Full round-trip: write plist → bootstrap → inspect → bootout.
+
+    Side-effect: this test materialises a real plist under the maintainer's
+    ``~/Library/LaunchAgents/`` directory and bootstraps it into the
+    per-user launchd domain.  The ``finally`` block always runs
+    ``launchctl bootout`` and ``unlink``'s the plist, so the service is
+    removed whether the assertions pass or fail.
 
     Uses a harmless ``echo`` command so the service fires safely if launchd
     decides to run it during the short window the test holds it loaded.
@@ -83,12 +81,21 @@ def test_bootstrap_inspect_bootout(vault: Path, tmp_path: Path) -> None:
     plist_path.write_bytes(rendered)
 
     try:
-        # Bootstrap — if this fails because of an environment collision,
-        # mark xfail so the maintainer is informed without a hard failure.
+        # Bootstrap — only xfail when the failure is the "label already
+        # loaded" class (exit code 17, or stderr contains "service already
+        # loaded" / "EEXIST").  Any other failure is a real regression.
         try:
             emitter.activate(plist_path)
         except Exception as exc:
-            pytest.xfail(f"launchctl bootstrap failed (environment state): {exc}")
+            msg = str(exc)
+            already_loaded = (
+                "exit code 17" in msg
+                or "service already loaded" in msg.lower()
+                or "eexist" in msg.lower()
+            )
+            if already_loaded:
+                pytest.xfail(f"launchctl bootstrap failed (label already loaded): {exc}")
+            raise
 
         # Give launchd a moment to register the service.
         time.sleep(0.5)

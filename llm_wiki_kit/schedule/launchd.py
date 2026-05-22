@@ -136,6 +136,13 @@ class LaunchdEmitter:
     def inspect(self, artifact_path: Path) -> InspectResult:
         """Report the artifact's current launchd liveness.
 
+        ``artifact_path`` must end in ``.plist``; the service label is
+        derived from the filename stem (e.g.
+        ``com.llm-wiki-kit.<vault-id>.<op>.plist`` → label
+        ``com.llm-wiki-kit.<vault-id>.<op>``).  Passing a path without
+        a ``.plist`` suffix raises ``WikiError`` immediately, before any
+        filesystem or subprocess calls.
+
         Outcome mapping:
 
         - ``"missing-file"`` — the plist file is absent on disk.
@@ -149,6 +156,9 @@ class LaunchdEmitter:
         ``"not-inspectable"`` is the Windows v1 fallback and is never
         returned by this implementation.
         """
+        if artifact_path.suffix != ".plist":
+            raise WikiError(f"inspect() requires a .plist path; got {artifact_path!r}")
+
         if not artifact_path.exists():
             return "missing-file"
 

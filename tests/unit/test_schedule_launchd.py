@@ -475,7 +475,7 @@ def test_artifact_path_shape(emitter: LaunchdEmitter) -> None:
     assert path.suffix == ".plist"
 
 
-def test_render_artifact_returns_bytes(emitter: LaunchdEmitter) -> None:
+def test_launchd_chooses_bytes_for_plistlib_xml(emitter: LaunchdEmitter) -> None:
     """render_artifact always returns bytes (Protocol return type is ``str | bytes``)."""
     cadence = ResolvedCadence(period="daily", hour=7, minute=0)
     result = emitter.render_artifact(
@@ -532,3 +532,19 @@ def test_render_run_at_load_is_false(emitter: LaunchdEmitter) -> None:
     )
     parsed = plistlib.loads(result)
     assert parsed["RunAtLoad"] is False
+
+
+def test_inspect_raises_wiki_error_for_non_plist_suffix(
+    emitter: LaunchdEmitter, tmp_path: Path
+) -> None:
+    """``inspect()`` raises ``WikiError`` immediately when given a non-``.plist`` path.
+
+    The label is derived from ``artifact_path.stem``, so a wrong suffix
+    (e.g. ``.xml``, no extension) would silently mis-derive the label.
+    The assertion guards against that before any filesystem or subprocess call.
+    """
+    from llm_wiki_kit.errors import WikiError
+
+    bad_path = tmp_path / "com.llm-wiki-kit.abc123.my-op.xml"
+    with pytest.raises(WikiError, match=r"\.plist"):
+        emitter.inspect(bad_path)
