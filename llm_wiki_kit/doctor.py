@@ -38,6 +38,7 @@ from llm_wiki_kit.errors import ManagedRegionError
 from llm_wiki_kit.journal import read_events_lenient, replay_state
 from llm_wiki_kit.models import Event, ManagedRegionWriteEvent, PageWriteEvent, VaultState
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
+from llm_wiki_kit.recipes import installed_outcome_verbs
 
 # Issue kinds (also serve as the line prefix in the CLI output).
 PAGE_DRIFT = "page-drift"
@@ -286,11 +287,21 @@ def check_orphans(state: VaultState, vault_root: Path) -> list[Issue]:
             if entry.is_file():
                 candidates.append(entry.relative_to(vault_root).as_posix())
 
+    # ``.claude/commands/*.md`` files are handled by
+    # ``_check_outcome_orphan_stubs``, which has precise kit-vs-user
+    # awareness (only flags files the kit previously wrote via
+    # ``safe_write``). Excluding them here prevents ``check_orphans``'s
+    # broad directory-ownership heuristic from flagging user-created
+    # slash commands as orphans (spec §Non-goal 9; plan §PR-7).
+    _outcome_stub_prefix = ".claude/commands/"
+
     issues: list[Issue] = []
     for relative in candidates:
         if relative.endswith(".proposed"):
             continue
         if relative in proposal_sidecars:
+            continue
+        if relative.startswith(_outcome_stub_prefix) and relative.endswith(".md"):
             continue
         if relative not in journaled:
             issues.append(Issue(ORPHAN, relative))
@@ -402,6 +413,64 @@ def check_primitive_missing(state: VaultState, kit_root: Path) -> list[Issue]:
     ]
 
 
+def _check_outcome_orphan_stubs(state: VaultState, vault_root: Path, kit_root: Path) -> list[Issue]:
+    """Slash-stub files whose verb is no longer in the installed-verb set.
+
+    Lists ``.claude/commands/*.md`` files on disk. For each file:
+
+    1. Derives the verb from the filename stem.
+    2. Checks whether the path is in ``state.page_writes`` — only files
+       the kit previously wrote are candidates. User-created files in
+       ``.claude/commands/`` (spec §Non-goal 9) are silently skipped.
+    3. Checks whether the verb is still in the installed-verb set via
+       :func:`recipes.installed_outcome_verbs`. If the verb is absent,
+       emits an ``ORPHAN`` issue naming the file and the dropped verb.
+
+    Uses :func:`recipes.installed_outcome_verbs` with the lenient state
+    already built by ``run_doctor`` to avoid a second journal read.
+    The helper returns ``{}`` when the journal is missing (which never
+    happens here — ``run_doctor`` already opened it), so callers need
+    not guard against that case separately.
+
+    The check uses ``installed_outcome_verbs`` rather than reading the
+    current verb set directly from the catalog, so it correctly handles
+    the case where an operation was removed from the journal entirely
+    (``PrimitiveRemoveEvent``) or the operation's ``outcomes:`` list
+    was shrunk — both collapse to "verb absent from the returned map".
+    """
+
+    commands_dir = vault_root / ".claude" / "commands"
+    if not commands_dir.is_dir():
+        return []
+
+    try:
+        installed = installed_outcome_verbs(vault_root, kit_root)
+    except Exception:
+        # Guard against ``JournalCorruptError`` or any other error in the
+        # helper. ``run_doctor`` already surfaced the corruption as a
+        # ``journal-corrupt`` issue; skip the orphan check gracefully
+        # rather than masking the existing issue or crashing.
+        return []
+
+    issues: list[Issue] = []
+    for stub_path in sorted(commands_dir.glob("*.md")):
+        relative = stub_path.relative_to(vault_root).as_posix()
+        # Only flag files the kit previously wrote (PageWriteEvent present).
+        if relative not in state.page_writes:
+            continue
+        verb = stub_path.stem
+        if verb not in installed:
+            issues.append(
+                Issue(
+                    ORPHAN,
+                    relative,
+                    f"dropped verb '{verb}' — operation no longer installed"
+                    " or no longer declares this outcome",
+                )
+            )
+    return issues
+
+
 def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     """Replay the journal and return every issue, sorted by ``(kind, path)``.
 
@@ -426,5 +495,6 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     issues.extend(check_missing(state, vault_root))
     issues.extend(check_primitive_missing(state, kit_root))
     issues.extend(check_stale_lock(state, _stale_threshold_hours()))
+    issues.extend(_check_outcome_orphan_stubs(state, vault_root, kit_root))
     issues.sort(key=lambda issue: (issue.kind, issue.path, issue.detail))
     return issues
