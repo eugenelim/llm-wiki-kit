@@ -175,7 +175,11 @@ different audience, never mix.
   (Documented exceptions: `write_helper.resolve_proposal` for
   user-mediated merges, `write_helper._ensure_obsidianignore` for the
   additive Obsidian-index config — see
-  `docs/specs/safe-write-ordering/spec.md`.)
+  `docs/specs/safe-write-ordering/spec.md`. Out-of-vault kit writes —
+  the schedule module's OS artifacts under `~/Library/LaunchAgents/`,
+  `~/.config/systemd/user/`, `%LOCALAPPDATA%/llm-wiki-kit/schedules/`
+  — go through `write_helper.write_os_artifact()` and only that
+  helper, per `docs/specs/wiki-schedule/spec.md`.)
 - **Keep kit-side and vault-side skill scopes separate.** Repo-root
   `.claude/` is for the kit's own development; `core/files/skills/`
   and `templates/*/files/skills/` are what `wiki init` copies into a
