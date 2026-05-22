@@ -115,6 +115,107 @@ def test_wiki_init_no_stubs_when_no_outcomes_declared(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# AC: "Catalog uniqueness" — wiki init surfaces the collision error
+# ---------------------------------------------------------------------------
+
+
+def _write_synthetic_operation(
+    kit: Path,
+    *,
+    name: str,
+    verb: str,
+) -> None:
+    """Write a synthetic operation primitive under ``kit/templates/operations/<name>/``.
+
+    Both ``contract.yaml`` and the matching SKILL.md frontmatter are
+    well-formed; the SKILL.md description names the verb so the
+    SKILL-fragment pre-flight passes — the test isolates the
+    catalog-uniqueness gate as the *only* failure mode.
+    """
+
+    op_dir = kit / "templates" / "operations" / name
+    op_dir.mkdir(parents=True)
+    (op_dir / "primitive.yaml").write_text(
+        f"name: {name}\n"
+        "kind: operation\n"
+        "version: 0.1.0\n"
+        f"description: Synthetic operation for catalog-collision integration test.\n",
+        encoding="utf-8",
+    )
+    (op_dir / "contract.yaml").write_text(
+        f"name: {name}\n"
+        f"description: Synthetic op that declares the {verb} outcome verb.\n"
+        f"skill: {name}\n"
+        f"outcomes:\n"
+        f"  - {verb}\n"
+        "inputs: {}\n"
+        "outputs: {}\n",
+        encoding="utf-8",
+    )
+    skill_dir = op_dir / "files" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        f"name: {name}\n"
+        f"description: Synthetic SKILL declaring the {verb} verb.\n"
+        "---\n"
+        f"# {name}\n",
+        encoding="utf-8",
+    )
+
+
+def test_wiki_init_refuses_when_two_operations_declare_same_verb(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``wiki init`` against a catalog with verb-colliding operations fails loudly.
+
+    Spec Invariant 3 ("the verb namespace is the catalog") and
+    Invariant 5 ("catalog-time failures, not user-time failures")
+    contract that ``check_outcome_verb_uniqueness`` fires when the
+    catalog is loaded — long before any vault sees the conflict.
+    The integration shape: ``wiki init`` calls ``discover_primitives``
+    on the synthetic kit; the gate raises ``WikiError``; the CLI
+    boundary renders it on stderr.
+
+    A unit test already exists at
+    ``tests/unit/test_outcome_verbs.py::test_discover_primitives_rejects_collision``;
+    this integration test pins the ``wiki init`` user-facing path
+    specifically (``add`` and ``upgrade`` route through the same
+    ``discover_primitives`` call but aren't parameterized here —
+    catching one entry-point regression is enough to surface a
+    decoupling without paying the matrix cost).
+    """
+
+    kit = _install_kit(tmp_path)  # core, no fixture operations
+    # Two synthetic operations declaring the same verb. Both are
+    # well-formed individually; only the catalog-uniqueness gate
+    # rejects them as a pair.
+    _write_synthetic_operation(kit, name="alpha-op", verb="track-collision")
+    _write_synthetic_operation(kit, name="beta-op", verb="track-collision")
+    vault = tmp_path / "v"
+
+    rc = cli.main(
+        ["init", str(vault), "--no-git", "--recipe", "minimal"],
+        kit_root=kit,
+    )
+    assert rc == 2, "catalog-uniqueness collision must produce WikiError exit code"
+    err = capsys.readouterr().err
+    # The error names both offending operations + the offending verb.
+    assert "track-collision" in err
+    assert "alpha-op" in err
+    assert "beta-op" in err
+    # Catalog-time failure: the vault directory must not have been
+    # created at all. Pin this strictly (not the weaker "no journal")
+    # so a future regression that moved ``target.mkdir()`` ahead of
+    # the catalog gate trips the test rather than passing through the
+    # shorter disjunction.
+    assert not vault.exists(), (
+        "catalog-time failure must leave the filesystem untouched; "
+        f"found vault directory at {vault}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # AC: "SKILL-fragment presence"
 # ---------------------------------------------------------------------------
 

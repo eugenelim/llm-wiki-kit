@@ -430,11 +430,18 @@ def _check_outcome_orphan_stubs(state: VaultState, vault_root: Path, kit_root: P
        :func:`recipes.installed_outcome_verbs`. If the verb is absent,
        emits an ``ORPHAN`` issue naming the file and the dropped verb.
 
-    Uses :func:`recipes.installed_outcome_verbs` with the lenient state
-    already built by ``run_doctor`` to avoid a second journal read.
-    The helper returns ``{}`` when the journal is missing (which never
-    happens here — ``run_doctor`` already opened it), so callers need
-    not guard against that case separately.
+    Calls :func:`recipes.installed_outcome_verbs`, which performs an
+    independent strict journal read; ``wiki doctor`` is interactive
+    and runs once per invocation, so the duplicate IO against the
+    journal that ``run_doctor`` already parsed via
+    :func:`journal.read_events_lenient` is accepted rather than
+    threaded as injected state. The helper returns ``{}``
+    when the journal is missing (never the case here —
+    ``run_doctor`` already opened it) and raises
+    :class:`JournalCorruptError` on mid-journal corruption, which the
+    ``except`` clause below swallows so the orphan check degrades
+    gracefully against the corruption ``run_doctor`` already surfaced
+    as a ``journal-corrupt`` issue.
 
     The check uses ``installed_outcome_verbs`` rather than reading the
     current verb set directly from the catalog, so it correctly handles

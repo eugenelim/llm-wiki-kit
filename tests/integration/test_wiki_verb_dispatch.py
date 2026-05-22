@@ -268,6 +268,76 @@ def test_wiki_verb_invalid_choice_outside_vault(
     assert "wiki run <operation>" in err
 
 
+def test_wiki_verb_corrupt_journal_emits_doctor_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A corrupt journal during verb dispatch prints a ``wiki doctor`` hint.
+
+    Spec §Outputs §1's "argparse falls through" path silently sets
+    ``verb_map = {}`` when ``installed_outcome_verbs`` raises
+    ``JournalCorruptError`` — without this hint the user sees only
+    argparse's generic "invalid choice" and has no reason to suspect
+    the journal. The hint lands on stderr before argparse's error.
+    """
+    from llm_wiki_kit.errors import JournalCorruptError
+
+    kit = _build_kit(tmp_path)
+    vault = _seed_vault_from_events(tmp_path, kit)
+    monkeypatch.chdir(vault)
+
+    def _raise_corrupt(*_a: object, **_kw: object) -> dict[str, tuple[str, str]]:
+        raise JournalCorruptError(line=1, reason="synthetic corruption for the dispatcher test")
+
+    monkeypatch.setattr(cli, "installed_outcome_verbs", _raise_corrupt)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["prep-digest"], kit_root=kit)
+    # Argparse "invalid choice" exit code (the dispatcher fell through).
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    # The dispatcher-emitted hint precedes argparse's error.
+    # Phrasing is user-facing — assert on the actionable noun and
+    # verb the message uses, not on kit-internal terms.
+    assert "history file" in err
+    assert "damaged" in err
+    assert "wiki doctor" in err
+    # The hint names the shortcut the user typed, for context.
+    assert "prep-digest" in err
+    # argparse still complains because the verb-map is empty.
+    assert "invalid choice" in err
+
+
+def test_wiki_verb_outside_vault_with_verbose_prints_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``wiki --verbose <verb>`` outside a vault prints a traceback.
+
+    Pins that the outside-vault path routes through the ``WikiError``
+    boundary at the bottom of ``cli.main`` (spec §Outputs §1
+    contracted a ``WikiError``, not a ``print(...); return``). The
+    observable difference between the two implementations is whether
+    ``--verbose`` produces a traceback — if a future regression
+    silently reverts to ``print(...); return``, the user-visible
+    message stays the same but this test fails.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    rc = cli.main(["--verbose", "prep-digest"], kit_root=None)
+    assert rc == cli.WIKI_ERROR_EXIT
+    err = capsys.readouterr().err
+    assert "outcome verbs are vault-scoped" in err
+    # WikiError boundary in `cli.main` prints `traceback.print_exc()` when
+    # the user asked for debug detail. Pin both the traceback header and
+    # the exception type name to distinguish from an unrelated stderr
+    # line that happens to contain "Traceback".
+    assert "Traceback (most recent call last):" in err
+    assert "WikiError" in err
+
+
 # -------------------------------------------------------------------------
 # AC: non-verb-shaped token outside vault falls through to argparse
 # -------------------------------------------------------------------------
