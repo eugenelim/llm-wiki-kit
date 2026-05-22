@@ -29,6 +29,7 @@ import errno
 import fcntl
 import importlib.resources
 import os
+import re
 import shutil
 import sys
 import traceback
@@ -1816,6 +1817,49 @@ def _cmd_journal_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+# Kebab-case regex for outcome verb shape validation (spec §Inputs §2 rule 1).
+# Matches ``^[a-z][a-z0-9]*(-[a-z0-9]+)*$`` — no leading digit, no consecutive
+# hyphens, no trailing hyphen, lowercase ASCII only.
+_OUTCOME_VERB_RE: re.Pattern[str] = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+
+
+class _VerbAwareParser(argparse.ArgumentParser):
+    """Top-level parser subclass that appends installed outcome verbs to the
+    "invalid choice" error message when the CWD is a wiki vault.
+
+    This override fires *only* for the top-level subcommand "invalid choice"
+    error. All other argparse errors (missing positional, wrong type, etc.)
+    fall through to ``super().error()`` unchanged — preserving the spec's
+    "argparse's standard … error fires" contract verbatim.
+
+    ``_kit_root_override`` is set by ``main`` after construction (default
+    ``None``) so the resolver is available without coupling the parser
+    constructor to runtime state.
+    """
+
+    # Set by ``main`` before ``parse_args`` is called.
+    _kit_root_override: Path | None = None
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        """Append installed-verb list to top-level "invalid choice" errors."""
+
+        if "invalid choice" in message:
+            vault_root = Path.cwd().resolve()
+            journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+            if journal_path.is_file():
+                kit_root = (
+                    self._kit_root_override if self._kit_root_override is not None else _kit_root()
+                )
+                try:
+                    verb_map = installed_outcome_verbs(vault_root, kit_root)
+                except JournalCorruptError:
+                    verb_map = {}
+                if verb_map:
+                    verb_list = ", ".join(sorted(verb_map))
+                    message = f"{message}; installed outcome verbs in this vault: {verb_list}"
+        super().error(message)
+
+
 def build_parser() -> argparse.ArgumentParser:
     # ``--verbose`` lives on a parent parser so it appears in both
     # ``wiki --help`` and every ``wiki <cmd> --help``, and so it works
@@ -1826,7 +1870,7 @@ def build_parser() -> argparse.ArgumentParser:
     # namespace — the classic "shared flag erased by subparser default"
     # argparse footgun. ``_is_verbose`` reads with ``getattr(..., False)``
     # so the unset case stays clean.
-    verbose_parent = argparse.ArgumentParser(add_help=False)
+    verbose_parent = _VerbAwareParser(add_help=False)
     verbose_parent.add_argument(
         "--verbose",
         action="store_true",
@@ -1838,7 +1882,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    parser = argparse.ArgumentParser(
+    parser = _VerbAwareParser(
         prog="wiki",
         description="Build and maintain an LLM-readable markdown wiki.",
         epilog="Run `wiki outcomes` to see this vault's operation verbs.",
@@ -2200,10 +2244,109 @@ def main(argv: Sequence[str] | None = None, *, kit_root: Path | None = None) -> 
     (the console script and ``python -m llm_wiki_kit``) leave it
     ``None``; the lazy resolver fires on first asset-touching call.
     See ``docs/specs/wheel-bundled-assets/spec.md`` §Behavior.
+
+    Before handing off to argparse, ``main`` inspects ``argv[0]`` for a
+    verb-shaped token that might be an installed outcome verb (spec §Outputs
+    §1). The pre-argparse interception is intentionally narrow:
+
+    1. If ``argv[0]`` is a static subcommand (``init``, ``run``, …) or
+       starts with ``-`` (a flag), do nothing — argparse handles it.
+    2. If ``argv[0]`` does not match the kebab-case verb regex
+       (``^[a-z][a-z0-9]*(-[a-z0-9]+)*$``), do nothing — argparse's
+       standard "invalid choice" error fires.
+    3. If ``argv[0]`` is verb-shaped but the CWD has no journal, raise
+       ``WikiError("outcome verbs are vault-scoped …")``.
+    4. If ``argv[0]`` is in the installed verb map, rewrite to
+       ``["run", <operation>, *argv[1:]]`` and re-dispatch via a
+       recursive call (which terminates after one recursion because
+       ``run`` is a static subcommand). ``--help``/``-h`` anywhere in
+       ``argv[1:]`` gets the alias preamble printed first.
+    5. If ``argv[0]`` is verb-shaped but NOT in the verb map, fall
+       through to argparse — the ``_VerbAwareParser.error`` override
+       appends the installed-verb list to the "invalid choice" message.
     """
 
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    argv_list: list[str] = list(argv) if argv is not None else sys.argv[1:]
+
+    _parser = build_parser()
+    assert isinstance(_parser, _VerbAwareParser)
+    # Inject kit_root into the parser's error-override so the verb list
+    # can be resolved from the correct catalog when the override fires.
+    _parser._kit_root_override = kit_root
+    parser: _VerbAwareParser = _parser
+
+    # --- Pre-argparse verb-dispatch interception ---
+    # Find the first non-flag token (skip global flags like ``--verbose``).
+    # The top-level parser has only one global flag (``--verbose``) before
+    # the subcommand positional; scanning past any ``-``-prefixed prefix
+    # tokens is correct and forward-compatible.
+    verb_candidate: str | None = None
+    verb_candidate_idx: int = -1
+    for _i, _tok in enumerate(argv_list):
+        if not _tok.startswith("-"):
+            verb_candidate = _tok
+            verb_candidate_idx = _i
+            break
+
+    if verb_candidate is not None:
+        # Derive static subcommands from the parser so this check stays
+        # in sync without a hardcoded list.
+        subparser_action = next(
+            (a for a in parser._actions if hasattr(a, "choices") and a.choices),
+            None,
+        )
+        raw_choices = (
+            getattr(subparser_action, "choices", None) if subparser_action is not None else None
+        )
+        static_subcommands: set[str] = (
+            set(raw_choices.keys()) if isinstance(raw_choices, dict) else set()
+        )
+
+        if verb_candidate not in static_subcommands and _OUTCOME_VERB_RE.match(verb_candidate):
+            # verb-shaped token — check the vault
+            vault_root = Path.cwd().resolve()
+            journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+
+            if not journal_path.is_file():
+                # Outside a vault: surface the spec §Outputs §1 contract message.
+                print(
+                    "outcome verbs are vault-scoped; run inside a vault or use "
+                    "'wiki run <operation>'",
+                    file=sys.stderr,
+                )
+                return WIKI_ERROR_EXIT
+
+            # Inside a vault: look up the verb map.
+            effective_kit_root = kit_root if kit_root is not None else _kit_root()
+            try:
+                verb_map = installed_outcome_verbs(vault_root, effective_kit_root)
+            except JournalCorruptError:
+                # Strict read failed; fall through to argparse without rewrite.
+                verb_map = {}
+
+            if verb_candidate in verb_map:
+                operation, _skill = verb_map[verb_candidate]
+                # Build the rewritten argv: flags before the verb stay as-is
+                # (e.g. ``--verbose``), then ``run <operation>``, then the
+                # remaining tokens after the verb.
+                prefix_flags = argv_list[:verb_candidate_idx]
+                rest = argv_list[verb_candidate_idx + 1 :]
+                if any(t in RUN_HELP_TOKENS for t in rest):
+                    # Print the alias preamble, then re-dispatch with --help.
+                    print(f"(alias for `wiki run {operation}`)")
+                    return main(
+                        [*prefix_flags, "run", operation, "--help"],
+                        kit_root=kit_root,
+                    )
+                return main(
+                    [*prefix_flags, "run", operation, *rest],
+                    kit_root=kit_root,
+                )
+            # verb-shaped but not in map: fall through to argparse, whose
+            # _VerbAwareParser.error override will append the verb list.
+
+    # --- Normal argparse path ---
+    args = parser.parse_args(argv_list)
     args.kit_root = kit_root
     func = args.func
     try:
