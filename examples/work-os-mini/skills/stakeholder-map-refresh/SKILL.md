@@ -1,6 +1,6 @@
 ---
 name: stakeholder-map-refresh
-description: "Produce one stakeholder-map page per project, listing the audience members who receive updates plus their cadence. Load when the user asks 'who's on the distro for project X', when `wiki run stakeholder-map-refresh` invokes you, or on a scheduled monthly sweep. Writes one page per project to `outputs/stakeholder-maps/<project>.md`; idempotent per project — re-running overwrites the same page rather than producing a new one."
+description: "Produce one stakeholder-map page per project, listing the audience members who receive updates plus their cadence. Load when the user asks 'who's on the distro for project X' or to refresh-stakeholders, when `wiki run stakeholder-map-refresh` invokes you, when `/refresh-stakeholders` fires from Claude Code's slash palette, or on a scheduled monthly sweep. Writes one page per project to `outputs/stakeholder-maps/<project>.md`; idempotent per project — re-running overwrites the same page rather than producing a new one."
 license: MIT
 ---
 

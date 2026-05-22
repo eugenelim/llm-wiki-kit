@@ -421,10 +421,20 @@ def test_discover_primitives_accepts_v2_0_0_catalog() -> None:
             "(misplaced primitive.yaml under templates/operations/?)"
         )
 
-    # 3. Every shipped operation contract has empty outcomes
-    # pre-PR-8. Walks the on-disk contracts directly so a future
-    # `outcomes: [digest]` accidentally landed before the rollout
-    # fails here, not just at the catalog-load gate.
+    # 3. PR-8 rollout: the three worked-example operations declare
+    # their canonical verbs per spec §"Three concrete worked
+    # examples". Every other shipped operation still has empty
+    # outcomes — they roll out as their authors reach for verbs
+    # (plan §"Deferred to follow-up PRs"). The dict shape pins both
+    # directions: a stray `outcomes:` slipping onto a not-yet-
+    # rolled-out operation, OR a regression that drops a verb from
+    # a rolled-out operation, both fail here.
+    expected_outcomes_by_op: dict[str, list[str]] = {
+        "weekly-digest": ["digest"],
+        "meal-planning": ["plan-meals"],
+        "stakeholder-map-refresh": ["refresh-stakeholders"],
+    }
+    actual_outcomes_by_op: dict[str, list[str]] = {}
     inspected = 0
     for name in on_disk_ops:
         contract_path = _SHIPPED_OPERATIONS / name / "contract.yaml"
@@ -432,16 +442,34 @@ def test_discover_primitives_accepts_v2_0_0_catalog() -> None:
             continue
         payload = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
         contract = OperationContract.model_validate(payload)
-        assert contract.outcomes == [], (
-            f"shipped operation '{name}' declares outcomes "
-            f"{contract.outcomes!r}; rollout is PR-8, not this PR"
-        )
+        actual_outcomes_by_op[name] = list(contract.outcomes)
         inspected += 1
     # Sanity-pin against an empty templates/ tree silently passing.
     assert inspected == len(on_disk_ops), (
         f"inspected {inspected} contracts but expected "
         f"{len(on_disk_ops)} (one per on-disk operation)"
     )
+
+    # Operations NOT in the expected-rollout set must still have
+    # empty outcomes. Operations IN the rollout set must declare
+    # exactly the expected verb list.
+    for name, actual in actual_outcomes_by_op.items():
+        if name in expected_outcomes_by_op:
+            assert actual == expected_outcomes_by_op[name], (
+                f"shipped operation '{name}' declares outcomes "
+                f"{actual!r}; expected {expected_outcomes_by_op[name]!r} "
+                "(PR-8 rollout pinned by plan §'Three concrete worked examples')"
+            )
+        else:
+            assert actual == [], (
+                f"shipped operation '{name}' declares outcomes "
+                f"{actual!r}; not in PR-8 rollout set. To add this "
+                "operation to the rollout, update TWO files in your "
+                "PR: (1) `expected_outcomes_by_op` in this test, and "
+                "(2) the per-verb eval-trigger prompt fixture under "
+                "`tests/evals/trigger/` (spec AC 'Eval trigger'). "
+                "See plan §'Deferred to follow-up PRs'."
+            )
 
 
 def test_shipped_catalog_outcome_verbs_well_formed() -> None:

@@ -144,14 +144,31 @@ def test_init_journal_order_with_three_primitives(tmp_path: Path, kit_root: Path
         "weekly-digest",
     ]
 
-    # (3) ManagedRegionWriteEvents land *after* all PageWriteEvents.
-    # ADR-0006 §Mechanics step 5: files/ render first, region
-    # aggregation runs in a second pass.
-    last_page_write = max(i for i, e in enumerate(events) if isinstance(e, PageWriteEvent))
-    first_region_write = min(
-        i for i, e in enumerate(events) if isinstance(e, ManagedRegionWriteEvent)
+    # (3) ManagedRegionWriteEvents land *after* the per-primitive
+    # files/ renders (PageWriteEvents) — ADR-0006 §Mechanics step 5:
+    # files/ render first, region aggregation runs in a second pass.
+    # Outcome slash stubs (PR-3) are a THIRD pass that runs after
+    # the region aggregator, so they're PageWriteEvents at
+    # ``.claude/commands/<verb>.md`` that appear AFTER the
+    # ManagedRegionWriteEvents — exclude them from this assertion;
+    # the per-spec ordering is pinned in
+    # tests/integration/test_wiki_init_outcomes.py.
+    # The exclusion is path-string-based on a single prefix. Today
+    # ``.claude/commands/`` is the only post-region PageWriteEvent
+    # path per spec §Outputs §2. If a future kit pass writes
+    # PageWriteEvents under any other ``.claude/`` subtree (e.g. a
+    # new slash-stub category, or a generated ``.claude/skills/``),
+    # extend this filter — or invert it to a positive "primitive
+    # files/ render" set.
+    kit_render_page_writes = [
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, PageWriteEvent) and not e.path.startswith(".claude/commands/")
+    ]
+    region_writes = [i for i, e in enumerate(events) if isinstance(e, ManagedRegionWriteEvent)]
+    assert max(kit_render_page_writes) < min(region_writes), (
+        "kit-render PageWriteEvents must precede the region aggregator (ADR-0006 §Mechanics step 5)"
     )
-    assert last_page_write < first_region_write
 
     # (4) Two region writes: fields then types (alphabetical bucket order).
     region_events = [e for e in events if isinstance(e, ManagedRegionWriteEvent)]

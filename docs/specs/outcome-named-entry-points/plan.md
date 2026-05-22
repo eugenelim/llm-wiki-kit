@@ -1001,9 +1001,13 @@ non-default catalog root.
      - `test_wiki_init_family_recipe_shows_plan_meals_and_digest`
        — run `wiki init --recipe family`; assert `wiki
        outcomes` lists both `digest` and `plan-meals`.
-     - `test_wiki_init_work_os_recipe_shows_refresh_stakeholders_and_digest`
-       — run `wiki init --recipe work-os`; assert `wiki
-       outcomes` lists `digest` and `refresh-stakeholders`.
+     - `test_wiki_init_work_os_recipe_shows_refresh_stakeholders`
+       — run `wiki init --recipe work-os`; assert `wiki outcomes`
+       lists `refresh-stakeholders`. (Plan originally named this
+       `..._and_digest` per spec §"Three concrete worked
+       examples", but `recipes/work-os.yaml` does NOT include
+       `weekly-digest`; spec amended in PR-8 to drop the
+       inaccurate "all three recipes" claim.)
      - The three integration tests above pin spec §"Three
        concrete worked examples" end-to-end.
    - **Approach:** edit three contract YAMLs and three

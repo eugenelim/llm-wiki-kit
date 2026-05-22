@@ -5,6 +5,8 @@ description: >-
   with at least one stakeholder-update in the look-back window.
 period: monthly
 skill: stakeholder-map-refresh
+outcomes:
+  - refresh-stakeholders
 inputs:
   window_days:
     type: integer
