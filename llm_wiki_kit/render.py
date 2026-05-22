@@ -38,7 +38,7 @@ them out:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from llm_wiki_kit.errors import WikiError
@@ -93,6 +93,26 @@ class SafeDict(dict[str, object]):
         return _LazyToken(str(key))
 
 
+def _iter_files_relative(files_dir: Path) -> Iterator[str]:
+    """Yield vault-relative POSIX paths of every file under ``files_dir``.
+
+    Shared structural walker for :func:`render_tree` (write side) and
+    :func:`llm_wiki_kit.install.enumerate_rendered_paths` (adopt side).
+    The structural pin keeps the two surfaces from diverging on
+    "which paths the renderer claims as kit territory" — spec
+    ``docs/specs/wiki-init-adopt/spec.md`` §Contracts §AC22.
+
+    Returns paths in sorted POSIX order. Missing or empty
+    ``files_dir`` yields nothing.
+    """
+
+    if not files_dir.exists():
+        return
+    for path in sorted(files_dir.rglob("*")):
+        if path.is_file():
+            yield path.relative_to(files_dir).as_posix()
+
+
 def render_tree(
     src: Path,
     dest: Path,
@@ -111,6 +131,11 @@ def render_tree(
     :func:`safe_write` computes vault-relative paths from
     ``journal_path.parent.parent`` and a mismatched ``dest`` would produce
     nonsense journal entries.
+
+    Path enumeration is delegated to :func:`_iter_files_relative` so
+    ``render_tree`` and
+    :func:`llm_wiki_kit.install.enumerate_rendered_paths` walk the
+    same set of paths by construction (AC22 structural pin).
     """
 
     vault_root = journal_path.parent.parent
@@ -120,14 +145,11 @@ def render_tree(
             f"derived from journal_path ({vault_root})"
         )
 
-    if not src.exists():
-        return
-
     safe_dict: SafeDict = SafeDict()
     safe_dict.update(context)
 
-    for source_file in sorted(p for p in src.rglob("*") if p.is_file()):
-        relative = source_file.relative_to(src)
+    for relative_posix in _iter_files_relative(src):
+        source_file = src / relative_posix
         try:
             text = source_file.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
@@ -141,4 +163,4 @@ def render_tree(
         else:
             content = text
 
-        safe_write(dest / relative, content, by=by, journal_path=journal_path)
+        safe_write(dest / relative_posix, content, by=by, journal_path=journal_path)

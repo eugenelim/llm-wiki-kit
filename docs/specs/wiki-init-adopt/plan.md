@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*; the
 > plan says *how, in what order, with what verification*.
 
-- **Status:** Drafting
+- **Status:** Shipped (PR-A, PR-B, PR-C)
 - **Spec:** `docs/specs/wiki-init-adopt/spec.md`
 - **Owner:** maintainer
 
@@ -77,6 +77,19 @@ attach to each plan step below.
   flag.** Declined: the operation IS init (one-shot vault
   creation); the flag-on-init shape is the smallest surface that
   satisfies the spec.
+- **Tempted to ship the `test_render_tree_output_byte_equal_before_and_after_refactor`
+  characterization fixture proposed below.** Declined when PR-C
+  landed: the refactor was mechanical (extract `_iter_files_relative`
+  walker; `render_tree`'s byte-content path is unchanged), and the
+  set-equality pin in
+  `test_enumerate_rendered_paths_matches_render_tree_output` plus the
+  full pytest sweep over `core` + `family` recipes catches any divergence
+  in either the path set or the rendered bytes (since `family`-recipe
+  integration tests read the rendered files back). The characterization
+  snapshot would carry ongoing maintenance cost (every legitimate kit
+  asset edit forces a fixture-checksum bump) without an additional
+  failure mode the existing pins miss. Revisit if `render_tree`'s
+  signature changes substantively.
 
 ## Pre-conditions
 
@@ -744,7 +757,7 @@ explicitly.
        and AC20a contracts.
 1. **Crash-during-install recovers via `wiki upgrade` (spec
    §Edge cases "Crash inside the install pipeline").**
-   - **Tests:**
+   - **Tests (DEFERRED — see plan §"Declined patterns"):**
      - `test_wiki_init_adopt_crash_during_install_recovers_via_upgrade`
        — drive `wiki init --adopt` to crash partway through
        the install pipeline by monkeypatching
@@ -760,6 +773,20 @@ explicitly.
        (d) `wiki doctor` post-upgrade reports only
        `pending-proposal` (per AC17), not `missing` /
        `page-drift`.
+   - **DEFERRED RATIONALE (PR-C):** assertions (b)–(d) require
+     `wiki upgrade` to re-render the primitive closure over
+     adopt baselines unconditionally, which `plan_upgrade`
+     does NOT do today (`upgrade.py` short-circuits when every
+     installed version equals the catalog version). Spec
+     §Edge cases was amended in PR-C to acknowledge the gap;
+     the test lands when a follow-on spec ships
+     `wiki upgrade --force-render` (or equivalent). Failing
+     loudly here today would gate PR-C on a contract change
+     outside its scope. **Follow-on tracking:** see
+     `docs/ROADMAP.md` "Post-PR-C follow-ups"; the future spec
+     slug is `wiki-upgrade-force-render` (TBD) — a maintainer
+     grepping for `wiki upgrade --force-render` lands here AND
+     in the ROADMAP entry.
 1. **Ordering invariant: adoption events strictly before
    install-pipeline events (AC18).**
    - **Tests:**
@@ -941,7 +968,9 @@ explicitly.
      `PageWriteEvent` supersedes it; do not silently overwrite
      a `PageAdoptedEvent` baseline with differing kit content
      (route to proposal instead) even if `on_disk_hash ==
-     baseline_hash`." Keep the entry under 250 chars.
+     baseline_hash`." Body length follows the existing corpus
+     (K-0012–K-0014 are ~500–1000 chars each — the README's
+     only soft cap is on `title` at ~80 chars).
    - **Verify:** `python -m json.tool < docs/knowledge/patterns.jsonl`
      parses every line as a valid JSON object; `id` is unique.
 

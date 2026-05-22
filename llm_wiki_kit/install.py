@@ -51,7 +51,7 @@ from llm_wiki_kit.models import (
     PrimitiveKind,
 )
 from llm_wiki_kit.primitives import load_operation_contract
-from llm_wiki_kit.render import render_tree
+from llm_wiki_kit.render import _iter_files_relative, render_tree
 from llm_wiki_kit.write_helper import safe_write, safe_write_region
 
 _logger = logging.getLogger(__name__)
@@ -109,6 +109,42 @@ def _warn_if_install_pipeline_uncached(journal_path: Path) -> None:
 
 
 _REGIONS_SUBDIR = "regions"
+
+
+def enumerate_rendered_paths(
+    primitives: Sequence[Primitive],
+    sources: Mapping[str, Path],
+) -> set[str]:
+    """Return the vault-relative POSIX paths the renderer would produce.
+
+    Walks each primitive's ``<source>/files/`` tree (via the shared
+    private :func:`llm_wiki_kit.render._iter_files_relative` helper)
+    and returns the union of relative paths as a set. Pure function:
+    no writes, no journal events, no side effects.
+
+    **Scope.** Source-of-truth for the *renderer's* path set — only
+    what :func:`llm_wiki_kit.render.render_tree` will actually write
+    to disk via :func:`safe_write`. Managed-region host files that
+    no primitive ships in its ``files/`` tree but DO appear as a
+    `contributes_to` target are NOT in this set; the adopt-set
+    computation in :func:`llm_wiki_kit.adopt.compute_adoption_set`
+    unions them in separately. The AC22 structural pin
+    (spec ``docs/specs/wiki-init-adopt/spec.md`` §Contracts;
+    ADR-0008 §Decision sub-choice 2) keeps this walker AND the
+    renderer's walker pointed at the same code path
+    (``_iter_files_relative``) so the two cannot drift. A primitive
+    with no source root in ``sources`` or no ``files/`` directory
+    contributes nothing.
+    """
+
+    paths: set[str] = set()
+    for primitive in primitives:
+        root = sources.get(primitive.name)
+        if root is None:
+            continue
+        for relative_posix in _iter_files_relative(root / "files"):
+            paths.add(relative_posix)
+    return paths
 
 
 @dataclass(frozen=True)

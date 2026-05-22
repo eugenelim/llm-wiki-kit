@@ -207,12 +207,11 @@ def safe_write(
         # function ``on_disk_hash`` snapshot is stale by construction).
         # See spec §Behavior "Adopt fast-path" step 2.
         #
-        # FUTURE (Phase D, when ``wiki journal tail`` lands): consider
-        # adding a ``reason: Literal["fresh","adopt","recovery"]`` field
-        # to ``PageWriteEvent`` so a user staring at the tail can
-        # distinguish "kit adopted my existing file" from "kit wrote a
-        # fresh file" from "kit re-wrote after a crash" — today's
-        # ``by`` field alone doesn't carry that provenance.
+        # Decision pinned by ADR-0008 §Decision sub-choice 4: rejected
+        # a ``reason: Literal["fresh","adopt","recovery"]`` field on
+        # ``PageWriteEvent`` in favor of dedicated ``PageAdoptedEvent``
+        # / ``ManagedRegionAdoptedEvent`` classes. See
+        # ``docs/specs/wiki-init-adopt/spec.md`` for the shipped contract.
         reread_hash = _hash(abs_path.read_bytes())
         if reread_hash == new_hash:
             # Spec §Behavior "Adopt fast-path" step 3: recompute ``now``

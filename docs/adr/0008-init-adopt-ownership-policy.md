@@ -1,6 +1,6 @@
 # ADR-0008: `wiki init --adopt` adopts pre-existing files via dedicated baseline events
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-20
 - **Deciders:** maintainer
 - **Related:** RFC-0001 §"Unresolved questions" (`--adopt` deferral),
@@ -221,12 +221,22 @@ then.
   produce a journal with two `VaultInitEvent`s, breaking
   `replay_state`'s assumption that there is one. Exit 2.
 - **`<target>/.wiki.journal/journal.jsonl` exists but contains
-  zero `PrimitiveInstallEvent`s** — proceed as a re-run. This is
-  the init-in-progress state left by a crash during the adoption
-  phase (see §6). The adopt-phase event emission is idempotent on
-  replay (latest-wins on hash mismatch; identical content
-  re-emits the same event); the install pipeline then runs from
-  the prefix the journal already carries.
+  zero `PrimitiveInstallEvent`s AND `--adopt` is set** — proceed
+  as a re-run. This is the init-in-progress state left by a
+  crash during the adoption phase (see §6). The adopt-phase
+  event emission is idempotent on replay (latest-wins on hash
+  mismatch; identical content re-emits the same event); the
+  install pipeline then runs from the prefix the journal already
+  carries.
+- **`<target>/.wiki.journal/journal.jsonl` carries a
+  `VaultInitEvent` but no `PrimitiveInstallEvent` AND `--adopt`
+  is NOT set** — refuse with `WikiError("target carries an
+  init-in-progress journal: ...; re-run with --adopt to resume,
+  or remove .wiki.journal/ to start fresh.")`. Exit 2. The
+  generic "target directory is not empty" refusal would mis-
+  direct the user to delete `.wiki.journal/` (destroying the
+  recovery slot the next `wiki init --adopt` would replay); the
+  init-in-progress branch routes to the correct remediation.
 - **Malformed managed-region host file** — refuse with
   `WikiError("cannot adopt managed-region host '<file>': markers
   do not parse (<reason>)")`. Exit 2. The user fixes the file or
@@ -272,11 +282,19 @@ keys on "journal contains a `PrimitiveInstallEvent`" rather than
 - **Crash inside the install pipeline** (after at least one
   `PrimitiveInstallEvent` landed) — the already-a-vault refusal
   fires; `wiki init --adopt` is no longer the recovery path.
-  Recovery routes through `wiki upgrade` (which re-renders the
-  primitive closure over the adopted baselines using the drift-
-  aware safe-write helpers — byte-identical files take the
-  no-rewrite branch, differing files surface as `.proposed`
-  sidecars). The user resolves any sidecars via `wiki-conflict`.
+  `wiki upgrade` re-renders the primitive closure ONLY when the
+  catalog bumps a version (`plan_upgrade` short-circuits on a
+  matching-version no-op), so when the kit catalog is unchanged
+  the user has no productive automated recovery: `wiki doctor`
+  surfaces `missing` for paths the renderer didn't reach, and
+  the user either waits for the next catalog version bump (which
+  drives `wiki upgrade` over the existing adopt baselines via
+  the drift-aware safe-write helpers — byte-identical files take
+  the no-rewrite branch, differing files surface as `.proposed`
+  sidecars) or destructively re-runs from scratch. A `wiki init
+  --adopt --resume` (or `wiki upgrade --force-render`) surface
+  that closes the recovery gap unconditionally is deferred to a
+  follow-on spec.
 - **Sidecars from the adopt phase pile up** — the user resolves
   them via `wiki-conflict` exactly like any other proposal
   sidecar. Resolution emits `PageWriteEvent`, which supersedes
