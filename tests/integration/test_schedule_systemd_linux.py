@@ -158,6 +158,7 @@ def test_systemd_write_activate_inspect_deactivate(tmp_path: Path) -> None:
                 ["systemctl", "--user", "daemon-reload"],
                 capture_output=True,
                 text=True,
+                timeout=10.0,
             )
         except (subprocess.SubprocessError, OSError) as exc:
             print(
