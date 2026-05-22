@@ -1172,28 +1172,33 @@ End-to-end verification (post PR-9):
   Mitigation: the verb-shape gate (kebab regex from spec
   §Inputs §2 rule 1) means tokens that obviously aren't
   verbs — `--help`, `init`, `not_a_verb` — never reach the
-  journal read. `journal-reader-cache` (already shipped)
-  keeps the read sub-millisecond when it does fire.
-  `JournalCorruptError` surfaces with the same exit shape
-  as every other journal-reading command (`wiki doctor`,
-  `wiki journal tail`); the dispatcher does not silently
-  fall back. The `--verbose` test in PR-6 (verb-position
-  invariant) pins the canonical position, and the `--help`
-  preamble test pins the concatenation. PR-6's
-  adversarial-reviewer pass should focus on this surface
-  specifically.
-- **`installed_outcome_verbs` is a hot path on every `wiki
-  <verb>` invocation.** Reading + replaying the journal on
-  every CLI call costs more than the equivalent static
-  argparse lookup. Mitigation: `journal-reader-cache`
-  (already shipped) means the read is sub-millisecond for
-  typical journal sizes; PR-4 calls `read_events` once per
-  CLI invocation, not per verb. A construction test
-  asserting `len(read_events_called) == 1` would over-pin
-  the implementation; instead, the existing CLI tests' wall
-  time is the canary — if PR-6 introduces a noticeable
-  regression on `wiki --help` outside a vault, surface in
-  review.
+  journal read. PR-6's dispatcher catches
+  `JournalCorruptError` at its boundary and falls through
+  to argparse without rewriting `argv` — the user sees
+  argparse's standard "invalid choice" error, plus any
+  `wiki doctor` complaint the next run surfaces. (PR-4's
+  helper raises strict, not lenient: a partial verb set
+  would be more dangerous than a hard failure.) The
+  `--verbose` test in PR-6 (verb-position invariant) pins
+  the canonical position, and the `--help` preamble test
+  pins the concatenation. PR-6's adversarial-reviewer pass
+  should focus on this surface specifically.
+- **`installed_outcome_verbs` is a hot path on every
+  verb-shaped `wiki <verb>` invocation.** Reading +
+  replaying the journal on every such call costs more than
+  the equivalent static argparse lookup. The
+  `journal-reader-cache` shipped for the install/upgrade
+  pipelines is **not** in play here: `read_events` goes
+  straight to disk regardless of any `_CURRENT_READER`
+  scope (the cache is consulted only by `write_helper`-
+  style `reader.events()` callers). The mitigation is the
+  raw cost — one small file read per verb-shaped CLI
+  invocation is typically sub-millisecond for the journal
+  sizes the kit targets. If that turns out to bite on a
+  large vault, PR-6 can re-evaluate (e.g. wrap the
+  dispatcher in `journal.use_journal_cache` and have
+  `installed_outcome_verbs` consult the reader); for now
+  the existing CLI tests' wall time is the canary.
 - **Catalog rollout (PR-8) creates the first user-visible
   change.** Up to PR-7, every PR is dead code in
   production. PR-8 makes the rollout atomic, but it ALSO
@@ -1224,19 +1229,19 @@ End-to-end verification (post PR-9):
   pins the whole-word semantics against the substring
   case (PR-3 step 2's
   `test_validate_skill_fragment_whole_word_match`).
-- **`recipes.installed_outcome_verbs` home.** The spec's
-  §"Contracts with other modules" table puts the helper in
-  `recipes.py`, but the helper reads
-  `state.installed_primitives` (a journal-replay output) and
-  the operation `contract.yaml`s — it doesn't touch recipe
-  shapes at all. A more natural home would be `primitives.py`
-  (next to `check_outcome_verb_uniqueness`) or a small new
-  `cli.py` helper section. The plan follows the spec's
-  contracted location verbatim to avoid silent spec drift;
-  if the adversarial reviewer prefers a different module,
-  fold the move into PR-4 and flag the spec amendment in
-  the same PR. Either way, this is a **spec drift
-  candidate** (see §"Spec drift to flag in PR body").
+- *(Resolved in PR-4. The helper landed in `recipes.py` per
+  the spec's contracted location. The reviewer's suggested
+  alternative homes (`primitives.py`, a `cli.py` helper)
+  were not pursued — keeping the helper next to
+  `resolve_recipe_primitives` makes sense once you read
+  it as "recipe + journal → installed verb set". The
+  signature was widened to `(vault_root, kit_root)` and the
+  amendment landed in `spec.md`'s Contracts table. The
+  helper uses strict `journal.read_events`: lenient is
+  doctor-only per `docs/specs/journal-locking/`, and a
+  partial verb set is worse than a hard failure — PR-6's
+  dispatcher catches `JournalCorruptError` at its
+  boundary.)*
 - **Slash-stub user edits before the kit owns the file.**
   A user installs the kit, manually creates
   `.claude/commands/digest.md` themselves (perhaps copied
@@ -1272,11 +1277,15 @@ shape.
    is silent; the plan pins `--verbose` MUST precede the
    verb (mirroring `_cmd_run`'s existing pre-scan
    constraint). Spec amendment to make this explicit.
-3. **`installed_outcome_verbs` module home.** Spec
-   §"Contracts with other modules" puts it in `recipes.py`;
-   the helper reads journal-replayed state, not recipe
-   shapes. If PR-4 relocates it (per §Risks), the spec
-   table needs amending in the same PR.
+3. *(Resolved in PR-4: the helper landed in `recipes.py`
+   per the spec; the `(vault_root)` → `(vault_root, kit_root)`
+   signature widening was amended into `spec.md`'s "Contracts
+   with other modules" row in the same PR. The helper uses
+   strict `journal.read_events` (lenient is doctor-only per
+   `docs/specs/journal-locking/`); PR-6's dispatcher catches
+   `JournalCorruptError` at the boundary. Per AGENTS.md,
+   spec/code drift is a bug — fixed in-PR rather than
+   deferred.)*
 4. **Slash-stub user-created before the kit owns it.** Spec
    is silent on the case where a user hand-creates
    `.claude/commands/<verb>.md` before the kit's first

@@ -466,7 +466,7 @@ upgrade, or removal:
 
 | Caller | What it calls | What changes |
 |---|---|---|
-| `cli.py` top-level dispatcher | `recipes.installed_outcome_verbs(vault_root)` (new) | New helper returning `dict[verb, (operation, skill)]` from the journal-replayed installed primitive set. |
+| `cli.py` top-level dispatcher | `recipes.installed_outcome_verbs(vault_root, kit_root)` (new) | New helper returning `dict[verb, (operation, skill)]` from the journal-replayed installed primitive set. ``kit_root`` is required so the helper can resolve each installed operation's ``contract.yaml`` under ``<kit_root>/templates/operations/<name>/``; callers (``_cmd_outcomes``, the dispatcher, ``_cmd_doctor``) already have ``args.kit_root`` / ``_kit_root()`` to hand. Uses strict ``journal.read_events``: lenient is doctor-only per ``docs/specs/journal-locking/`` (a partial verb set would be more dangerous than a hard failure here); PR-6's dispatcher catches ``JournalCorruptError`` at the boundary and falls through to argparse. |
 | `cli._cmd_outcomes` (new) | Same helper | Renders the table for `wiki outcomes`. |
 | `install.py` (existing region aggregator) | `write_outcome_slash_stubs(...)` (new) | Called from `install_primitives` after the existing region pass. One `safe_write` per stub. |
 | `doctor.py` | `installed_outcome_verbs(...)` | Reads the installed verb set; reports orphan stubs at `.claude/commands/*.md` whose verb is not in the current set. |

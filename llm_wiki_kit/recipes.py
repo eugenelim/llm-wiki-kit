@@ -61,8 +61,9 @@ import yaml
 from pydantic import ValidationError as PydanticValidationError
 
 from llm_wiki_kit.errors import RecipeError, ValidationError
+from llm_wiki_kit.journal import read_events, replay_state
 from llm_wiki_kit.models import Primitive, Recipe
-from llm_wiki_kit.primitives import resolve_dependencies
+from llm_wiki_kit.primitives import load_operation_contract, resolve_dependencies
 
 CORE_PRIMITIVE_NAME = "core"
 
@@ -173,3 +174,79 @@ def resolve_recipe_primitives(
                 pending.append(required)
 
     return resolve_dependencies(list(closed.values()))
+
+
+def installed_outcome_verbs(
+    vault_root: Path,
+    kit_root: Path,
+) -> dict[str, tuple[str, str]]:
+    """Return verb → (operation, skill) for every installed outcome-declaring op.
+
+    The map is computed by:
+
+    1. Resolving the journal path
+       (``<vault_root>/.wiki.journal/journal.jsonl``); a missing
+       journal yields ``{}`` (the helper is pure — PR-6's CLI
+       dispatcher handles the "outside a vault" message per spec
+       §Outputs §1).
+    2. Reading the journal via :func:`journal.read_events`
+       (strict). The lenient sibling is doctor-only by design (see
+       ``docs/specs/journal-locking/plan.md`` §"lenient consumers")
+       and silently swallows mid-journal corruption — a partial
+       verb set is more dangerous than a hard failure here. The
+       helper therefore raises :class:`JournalCorruptError` on
+       corruption; PR-6's dispatcher catches it at the boundary
+       and falls through to argparse without a verb-shaped
+       rewrite (the user sees argparse's standard error, plus
+       any ``wiki doctor`` complaint the next run surfaces).
+    3. :func:`journal.replay_state` derives the currently-installed
+       primitive set from the parsed events.
+    4. For each installed primitive name, looking up
+       ``<kit_root>/templates/operations/<name>/contract.yaml`` via
+       :func:`primitives.load_operation_contract`. A primitive that
+       is not an operation (no ``contract.yaml`` under
+       ``operations/``) or is no longer in the kit catalog is
+       silently skipped — matching ``wiki upgrade``'s
+       ``plan.not_in_catalog`` handling in
+       :func:`upgrade.plan_upgrade` (``upgrade.py`` ~line 109's
+       installed-set vs. catalog-set diff).
+    5. Emitting one entry per declared verb:
+       ``verbs[verb] = (contract.name, contract.skill or contract.name)``.
+       The ``contract.skill or contract.name`` fallback mirrors
+       :func:`run._load_contract`'s resolution
+       (``run.py:508`` / documented in ``wiki run --help`` at
+       ``cli.py:1919`` as ``<contract.skill or operation>``) and
+       the slash-stub writer (PR-3) so the discovery surface and
+       the on-disk stub agree about ``{skill}``.
+
+    The returned dict's **insertion order** mirrors the journal's
+    event order — first install wins iteration order. Callers that
+    surface verbs to a user (``wiki outcomes``) sort by key per
+    spec §Outputs §4; iteration-order-sensitive callers should
+    sort explicitly rather than rely on this contract.
+
+    Helper reads the **current catalog**'s contract per installed
+    primitive (the journal records the install version but not the
+    verbs). A vault that was installed before its operation's
+    contract declared ``outcomes:`` sees the new verbs as soon as
+    the on-disk contract gains them — regardless of whether a
+    ``PrimitiveUpgradeEvent`` ever fired. Spec AC "Backwards
+    compatibility" depends on this.
+    """
+
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        return {}
+
+    state = replay_state(read_events(journal_path))
+
+    operations_dir = kit_root / "templates" / "operations"
+    verbs: dict[str, tuple[str, str]] = {}
+    for primitive_name in state.installed_primitives:
+        contract = load_operation_contract(operations_dir / primitive_name)
+        if contract is None or not contract.outcomes:
+            continue
+        skill = contract.skill or contract.name
+        for verb in contract.outcomes:
+            verbs[verb] = (contract.name, skill)
+    return verbs
