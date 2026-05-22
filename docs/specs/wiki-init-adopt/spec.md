@@ -586,6 +586,13 @@ The differing-bytes case the ADR's §Positive describes:
   `adopted_regions: dict[tuple[str, str],
   ManagedRegionAdoptedEvent]`. Both have `default_factory=dict`
   so older `VaultState` payloads round-trip unchanged.
+  `adopted_regions` is additionally `Field(exclude=True)` — the
+  tuple-key shape is supported for in-memory use but Pydantic v2
+  encodes tuple keys as comma-joined strings on `model_dump_json`
+  and rejects the same shape on read, so the field is excluded
+  from serialization by design. A future `wiki doctor --json`
+  surface that needs the region adoptions reconstructs them via
+  `replay_state` over the journal events.
   **Semantics:** these dicts track the latest *adopt event* per
   path / `(file, region)` — they are NOT a "currently sticky-
   adopt" view. A subsequent `PageWriteEvent` does not remove

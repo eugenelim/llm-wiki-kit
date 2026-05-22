@@ -65,9 +65,11 @@ from llm_wiki_kit.models import (
     LintRunEvent,
     LockAcquiredEvent,
     LockReleasedEvent,
+    ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
     OperationExecFailedEvent,
     OperationRunEvent,
+    PageAdoptedEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -1603,6 +1605,14 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
         ("file", "file", False),
         ("region", "region", False),
     ),
+    # PR-A of wiki-init-adopt: ADR-0008 §Decision sub-choice 3's new
+    # event classes. Summary shape mirrors their ``Write`` counterparts —
+    # ``_EVENT_SUMMARY_FIELDS`` raises ``KeyError`` on unmapped classes
+    # by design, so these rows must land alongside the model additions.
+    ManagedRegionAdoptedEvent: (
+        ("file", "file", False),
+        ("region", "region", False),
+    ),
     IngestRoutedEvent: (
         ("source", "source", False),
         ("content_type", "content_type", False),
@@ -1613,6 +1623,7 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
         ("content_type", "content_type", False),
     ),
     PageWriteEvent: (("path", "path", False),),
+    PageAdoptedEvent: (("path", "path", False),),
     PageProposalEvent: (
         ("path", "path", False),
         ("proposed_path", "proposed", False),

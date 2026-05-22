@@ -34,7 +34,9 @@ from llm_wiki_kit.errors import ManagedRegionError, WikiError
 from llm_wiki_kit.journal import append_event
 from llm_wiki_kit.models import (
     Event,
+    ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
+    PageAdoptedEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -436,9 +438,18 @@ def safe_write_region(
 def _managed_region_baseline_hash(
     journal_path: Path, relative_file: str, region_id: str
 ) -> str | None:
+    """Return the latest region-level baseline ``content_hash`` for ``(relative_file, region_id)``.
+
+    Walks ``ManagedRegionWriteEvent`` AND ``ManagedRegionAdoptedEvent``
+    (ADR-0008 §Decision sub-choice 3). Adoption seeds a region
+    baseline just like a write, so an aggregator pass over a host
+    whose only history is an adopt answers "no drift" when the
+    canonicalised on-disk region body still matches.
+    """
+
     for event in reversed(_read_events_cached(journal_path)):
         if (
-            isinstance(event, ManagedRegionWriteEvent)
+            isinstance(event, ManagedRegionWriteEvent | ManagedRegionAdoptedEvent)
             and event.file == relative_file
             and event.region == region_id
         ):
@@ -495,15 +506,27 @@ def _hash(data: bytes) -> str:
 
 
 def _baseline_hash(journal_path: Path, relative_path: str) -> str | None:
-    """Return the hash of the most recent ``PageWrite`` event for the path.
+    """Return the hash of the most recent page-level baseline event for ``relative_path``.
 
-    ``PageConflictResolved`` is audit-only here; ``resolve_proposal``
-    re-establishes the baseline by emitting its own ``PageWrite``
-    alongside the audit event (ADR-0004 §Mechanics step 6).
+    Walks ``PageWriteEvent`` AND ``PageAdoptedEvent`` (ADR-0008
+    §Decision sub-choice 3): adoption seeds a baseline just like a
+    write, so a journal whose latest event for the path is an adopt
+    answers "no drift" for byte-identical on-disk content.
+    ``PageConflictResolvedEvent`` remains audit-only here;
+    ``resolve_proposal`` re-establishes the baseline by emitting its
+    own ``PageWriteEvent`` alongside the audit event (ADR-0004
+    §Mechanics step 6).
+
+    Returning the hash regardless of class is correct because PR-A's
+    contract is just "what hash should I compare new content against?"
+    The adopt-aware predicate landing in PR-B will dispatch on the
+    latest baseline's *class*, not just its hash, to route
+    differing-content writes to the proposal branch — see
+    ``docs/specs/wiki-init-adopt/plan.md`` PR-B.
     """
 
     for event in reversed(_read_events_cached(journal_path)):
-        if isinstance(event, PageWriteEvent) and event.path == relative_path:
+        if isinstance(event, PageWriteEvent | PageAdoptedEvent) and event.path == relative_path:
             return event.hash
     return None
 

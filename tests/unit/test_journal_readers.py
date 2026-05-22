@@ -30,9 +30,11 @@ from llm_wiki_kit.models import (
     LintRunEvent,
     LockAcquiredEvent,
     LockReleasedEvent,
+    ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
     OperationExecFailedEvent,
     OperationRunEvent,
+    PageAdoptedEvent,
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
@@ -578,6 +580,14 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
         "file=AGENTS.md region=fields",
     ),
     (
+        # PR-A of wiki-init-adopt: adoption-baseline events render the
+        # same summary shape as their ``Write`` counterparts so a user
+        # running ``wiki journal tail`` sees a familiar row.
+        ManagedRegionAdoptedEvent,
+        {"file": "AGENTS.md", "region": "fields", "content_hash": "deadbeef"},
+        "file=AGENTS.md region=fields",
+    ),
+    (
         IngestRoutedEvent,
         {"source": "memo.pdf", "content_type": "meeting", "via": "auto"},
         "source=memo.pdf content_type=meeting via=auto",
@@ -589,6 +599,11 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
     ),
     (
         PageWriteEvent,
+        {"path": "people/alice.md", "hash": "abc"},
+        "path=people/alice.md",
+    ),
+    (
+        PageAdoptedEvent,
         {"path": "people/alice.md", "hash": "abc"},
         "path=people/alice.md",
     ),
@@ -777,6 +792,11 @@ def _build_instance(cls: type) -> typing.Any:
             "region": "fields",
             "content_hash": "deadbeef",
         },
+        ManagedRegionAdoptedEvent: {
+            "file": "x.md",
+            "region": "fields",
+            "content_hash": "deadbeef",
+        },
         IngestRoutedEvent: {
             "source": "memo.pdf",
             "content_type": "meeting",
@@ -788,6 +808,7 @@ def _build_instance(cls: type) -> typing.Any:
             "content_type": "meeting",
         },
         PageWriteEvent: {"path": "x.md", "hash": "deadbeef"},
+        PageAdoptedEvent: {"path": "x.md", "hash": "deadbeef"},
         PageProposalEvent: {
             "path": "x.md",
             "proposed_path": "x.md.proposed",

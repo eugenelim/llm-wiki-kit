@@ -232,23 +232,27 @@ def check_missing(state: VaultState, vault_root: Path) -> list[Issue]:
 def check_orphans(state: VaultState, vault_root: Path) -> list[Issue]:
     """Files under kit-owned paths with no corresponding journal event.
 
-    Kit-owned territory is derived from ``state.page_writes``
-    (retro-review qC10 + C6): every path the kit has ever recorded a
-    ``page.write`` for contributes. The top-level directory of every
-    such path is treated as kit territory; journaled top-level
+    Kit-owned territory is derived from ``state.page_writes`` AND
+    ``state.adopted_pages`` (retro-review qC10 + C6; ADR-0008 §Decision
+    sub-choice 3): every path the kit has ever recorded a ``page.write``
+    OR ``page.adopted`` for contributes. The top-level directory of
+    every such path is treated as kit territory; journaled top-level
     filenames are watched directly. Skips ``.proposed`` sidecars
     (those surface as pending-proposal) and any path outside the
     derived territory (user-owned by default).
 
-    Doctrine: only ``page.write`` events extend territory.
-    ``ManagedRegionWriteEvent``s always reference a file that was
-    seeded earlier via ``safe_write`` (which emits a ``PageWriteEvent``),
-    so the shared-file case is already covered by the page-writes
-    fold-in. ``SourceIngestEvent.produced_pages`` is a forward-looking
-    record; the actual page writes the vault-side ingester performs
-    flow through ``safe_write`` and emit their own ``PageWriteEvent``s.
-    Folding either of those event types in would double-count
-    territory without expanding what the kit actually owns.
+    Doctrine: only ``page.write`` AND ``page.adopted`` events extend
+    territory. ``ManagedRegionWriteEvent``s always reference a file
+    that was seeded earlier via ``safe_write`` (which emits a
+    ``PageWriteEvent``), so the shared-file case is already covered
+    by the page-writes fold-in. ``ManagedRegionAdoptedEvent``s likewise
+    reference a host file that already carries a ``PageAdoptedEvent``
+    in the adopt-phase journal sequence (spec §Outputs Journal events
+    bullet 2 names the interleave). ``SourceIngestEvent.produced_pages``
+    is a forward-looking record; the actual page writes the vault-side
+    ingester performs flow through ``safe_write`` and emit their own
+    ``PageWriteEvent``s. Folding any of those event types in would
+    double-count territory without expanding what the kit actually owns.
 
     Transition note: an empty journal claims no territory. The orphan
     check fires only after the kit has journaled at least one write —
@@ -261,7 +265,7 @@ def check_orphans(state: VaultState, vault_root: Path) -> list[Issue]:
     is bounded to the pre-init window.
     """
 
-    journaled = set(state.page_writes)
+    journaled = set(state.page_writes) | set(state.adopted_pages)
     proposal_sidecars = {e.proposed_path for e in state.pending_proposals.values()}
 
     owned_files: set[str] = set()

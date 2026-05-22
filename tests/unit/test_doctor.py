@@ -38,6 +38,7 @@ from llm_wiki_kit.models import (
     HeldLock,
     LockAcquiredEvent,
     ManagedRegionWriteEvent,
+    PageAdoptedEvent,
     PageProposalEvent,
     PageWriteEvent,
     PrimitiveInstallEvent,
@@ -448,6 +449,93 @@ def test_orphan_silent_when_no_paths_journaled(tmp_path: Path) -> None:
     (vault / "skills" / "rogue" / "SKILL.md").write_text("stray", encoding="utf-8")
 
     assert check_orphans(VaultState(), vault) == []
+
+
+# PR-A of wiki-init-adopt: ``check_orphans`` widens ``journaled`` to
+# include adopted paths. Plan step 6 + spec §Contracts ``doctor`` bullet.
+
+
+def _state_with_adopted_page(path: str, content: str) -> VaultState:
+    event = PageAdoptedEvent(timestamp=NOW, by="wiki-init-adopt", path=path, hash=_hash(content))
+    return VaultState(adopted_pages={path: event})
+
+
+def test_check_orphans_treats_adopted_pages_as_kit_owned(tmp_path: Path) -> None:
+    """An adopted file at a known path is not flagged as an orphan."""
+
+    vault = _vault(tmp_path)
+    skills = vault / "skills" / "ingest"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text("adopted body", encoding="utf-8")
+
+    state = _state_with_adopted_page("skills/ingest/SKILL.md", "adopted body")
+    assert check_orphans(state, vault) == []
+
+
+def test_check_orphans_extends_kit_territory_via_adopted_pages(tmp_path: Path) -> None:
+    """An adopt under a top-level dir makes that dir kit-owned for orphan purposes.
+
+    Pins AC11 at the unit level: ``wiki/people/.gitkeep`` adopted ⇒
+    ``wiki/people/uncle-bob.md`` (user file, no event) surfaces as
+    ``orphan``. Without the ``check_orphans`` extension, the user file
+    is invisible — the dir would have no journaled territory because
+    only ``page_writes`` contributes to it pre-PR-A.
+    """
+
+    vault = _vault(tmp_path)
+    people = vault / "wiki" / "people"
+    people.mkdir(parents=True)
+    (people / ".gitkeep").write_text("", encoding="utf-8")
+    (people / "uncle-bob.md").write_text("uncle bob", encoding="utf-8")
+
+    state = _state_with_adopted_page("wiki/people/.gitkeep", "")
+    assert check_orphans(state, vault) == [Issue("orphan", "wiki/people/uncle-bob.md")]
+
+
+def test_check_orphans_unions_page_writes_and_adopted_pages(tmp_path: Path) -> None:
+    """Both event types contribute to ``journaled``; neither double-counts."""
+
+    vault = _vault(tmp_path)
+    (vault / "wiki" / "core").mkdir(parents=True)
+    (vault / "wiki" / "core" / "AGENTS.md").write_text("a", encoding="utf-8")
+    (vault / "wiki" / "core" / "README.md").write_text("r", encoding="utf-8")
+
+    state = VaultState(
+        page_writes={
+            "wiki/core/AGENTS.md": PageWriteEvent(
+                timestamp=NOW, by="core", path="wiki/core/AGENTS.md", hash=_hash("a")
+            )
+        },
+        adopted_pages={
+            "wiki/core/README.md": PageAdoptedEvent(
+                timestamp=NOW,
+                by="wiki-init-adopt",
+                path="wiki/core/README.md",
+                hash=_hash("r"),
+            )
+        },
+    )
+    # Both files are kit-owned (one via page.write, one via page.adopted);
+    # neither is an orphan.
+    assert check_orphans(state, vault) == []
+
+
+def test_check_orphans_treats_top_level_adopted_files_as_kit_owned(
+    tmp_path: Path,
+) -> None:
+    """The top-level "owned files" branch also unions ``adopted_pages``."""
+
+    vault = _vault(tmp_path)
+    (vault / "AGENTS.md").write_text("body", encoding="utf-8")
+
+    state = VaultState(
+        adopted_pages={
+            "AGENTS.md": PageAdoptedEvent(
+                timestamp=NOW, by="wiki-init-adopt", path="AGENTS.md", hash=_hash("body")
+            )
+        }
+    )
+    assert check_orphans(state, vault) == []
 
 
 def test_orphan_ignores_proposed_sidecars(tmp_path: Path) -> None:
