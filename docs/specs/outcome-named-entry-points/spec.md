@@ -164,28 +164,29 @@ add`, and the catalog-validation unit tests):
 2. **Locale**: English-only for v1. Internationalization is an
    explicit non-goal (see Non-goals).
 3. **Reserved-word block**: the verb may not equal any name in
-   `llm_wiki_kit/cli.py:RESERVED_OUTCOME_VERBS`. That constant is
-   defined by literal enumeration of the current `wiki` subcommand
-   set as registered in `cli.py` argparse plus the standard
-   discovery aliases:
-   `{init, add, upgrade, doctor, ingest, resolve, lock, run,
-   research, search, journal, help, version, outcomes}`.
-   The set is updated by editing `cli.py` in the same PR that
-   adds or removes a top-level subcommand.
+   `llm_wiki_kit/primitives.py:RESERVED_OUTCOME_VERBS`. That
+   constant is the union of every top-level `wiki` subcommand
+   registered in `cli.py:build_parser()` and the standard
+   discovery aliases (`help`, `version`, `outcomes`). The set is
+   updated in `primitives.py` in the same PR that adds or
+   removes a top-level subcommand in `cli.py`;
+   `tests/unit/test_outcome_verbs.py::test_reserved_outcome_verbs_matches_subcommand_set`
+   pins the two sources of truth against each other so the drift
+   trips CI.
 4. **Verb-form**: must match the verb shape "verb stem optionally
    followed by `-<object>`". Concretely: either the whole verb is
    one of the bare-verb entries in
-   `llm_wiki_kit/cli.py:OUTCOME_VERB_STEMS` (illustrative entries:
-   `digest`, `roll-up`), or the verb starts with `<stem>-<object>`
-   where `<stem>` is one of the prefix entries in the same
-   constant (illustrative entries: `plan-`, `refresh-`, `log-`,
-   `summarize-`, `prep-`, `review-`, `track-`, `synthesize-`,
-   `pack-`, `remind-`, `map-`). The illustrative lists above are
-   *examples*, not the authoritative set; the canonical list lives
-   in `cli.py:OUTCOME_VERB_STEMS` and is extended in the same PR
-   that adds an operation needing a new stem. Bare nouns (`meals`,
-   `stakeholders`) and adjective-noun shapes (`weekly-summary`)
-   are rejected.
+   `llm_wiki_kit/primitives.py:OUTCOME_VERB_STEMS` (illustrative
+   entries: `digest`, `roll-up`), or the verb starts with
+   `<stem>-<object>` where `<stem>` is one of the prefix entries
+   in the same constant (illustrative entries: `plan-`,
+   `refresh-`, `log-`, `summarize-`, `prep-`, `review-`,
+   `track-`, `synthesize-`, `pack-`, `remind-`, `map-`). The
+   illustrative lists above are *examples*, not the authoritative
+   set; the canonical list lives in `primitives.py:OUTCOME_VERB_STEMS`
+   and is extended in the same PR that adds an operation needing
+   a new stem. Bare nouns (`meals`, `stakeholders`) and
+   adjective-noun shapes (`weekly-summary`) are rejected.
 5. **Global uniqueness in the catalog**: across all
    `templates/operations/*/contract.yaml`, a given verb appears
    at most once. The aggregator that surfaces this check lives

@@ -1296,17 +1296,19 @@ shape.
    the repo (only `pre-coauthor-rewrite-backup`). Spec
    amendment to read "additive against the post-v2-
    development baseline on `origin/main`."
-7. **Constants live in `primitives.py`, not `cli.py`.**
-   Spec §Inputs §2 rules 3 and 4 name the constants as
-   `llm_wiki_kit/cli.py:RESERVED_OUTCOME_VERBS` and
-   `llm_wiki_kit/cli.py:OUTCOME_VERB_STEMS`. PR-1 step 2
-   places both in `primitives.py` to keep the dependency
-   graph a DAG (`cli.py → primitives.py` is the existing
-   direction; reversing it would introduce a circular
-   import). Spec amendment to update both literal
-   references to `primitives.py`. Scope of the amendment:
-   §Inputs §2 rules 3 and 4 only; the constants are not
-   referenced elsewhere in `spec.md`.
+
+### Resolved during implementation
+
+- **Constants in `primitives.py`, not `cli.py`** (was item 7).
+  Spec §Inputs §2 rules 3 and 4 were amended in PR-1 to
+  reference `llm_wiki_kit/primitives.py:RESERVED_OUTCOME_VERBS`
+  and `llm_wiki_kit/primitives.py:OUTCOME_VERB_STEMS` directly,
+  and the prose now points at
+  `cli.py:build_parser()` as the enumeration source with the
+  unit test
+  (`test_reserved_outcome_verbs_matches_subcommand_set`) as
+  the drift pin. Per AGENTS.md, spec/code drift is a bug —
+  fixed in-PR rather than deferred.
 
 ## Out of scope
 
