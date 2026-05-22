@@ -2,10 +2,12 @@
 
 Implements the ``_Emitter`` Protocol from ``schedule/_emitter.py`` for
 Windows. At v1 this is **file-emission only**: ``activate()`` and
-``deactivate()`` print the corresponding ``schtasks`` commands for the user
-to run by hand (the Windows v1 special case from
-``docs/specs/wiki-schedule/spec.md`` §"Windows v1 special case"). No
-subprocess is invoked against ``schtasks``.
+``deactivate()`` are no-ops (no subprocess, no print). The caller (PR-5
+orchestrator) obtains the user-facing ``schtasks`` instruction lines via
+the module-level helpers ``format_activation_instruction`` and
+``format_deactivation_instruction`` and includes them in the stdout summary
+block (spec §"Windows v1 special case"). No subprocess is invoked against
+``schtasks`` anywhere in this module.
 
 **XML encoding choice.** ``render_artifact`` returns ``bytes`` (UTF-16 LE
 with BOM). Task Scheduler expects UTF-16 XML; the stdlib
@@ -57,9 +59,10 @@ class TaskSchedulerEmitter:
     """Windows Task Scheduler emitter.
 
     Implements ``_Emitter`` for the Task Scheduler XML artifact. File-emission
-    only at v1; ``activate``/``deactivate`` print the ``schtasks`` command for
-    the user to run. ``inspect`` is file-presence only (no ``schtasks /Query``
-    invocation at v1).
+    only at v1; ``activate``/``deactivate`` are no-ops — the orchestrator
+    calls ``format_activation_instruction``/``format_deactivation_instruction``
+    to obtain the ``schtasks`` lines and includes them in its stdout summary.
+    ``inspect`` is file-presence only (no ``schtasks /Query`` invocation at v1).
     """
 
     def artifact_path(self, vault_id: str, operation: str) -> Path:
@@ -85,8 +88,9 @@ class TaskSchedulerEmitter:
         Returns ``bytes`` (UTF-16 with BOM + XML declaration) ready for
         ``write_os_artifact`` to write atomically. The task name embedded in
         ``<URI>`` is ``llm-wiki-kit-<vault-id>-<operation>``; the same name
-        is used in the ``schtasks /Create`` and ``schtasks /Delete`` commands
-        printed by ``activate``/``deactivate``.
+        is used by ``format_activation_instruction`` and
+        ``format_deactivation_instruction`` when building the ``schtasks``
+        instruction lines for the orchestrator's stdout summary.
 
         The trigger block delegates to ``dsl.to_task_scheduler_trigger``,
         which is covered by ``test_schedule_dsl.py``; this function only
@@ -121,19 +125,26 @@ class TaskSchedulerEmitter:
         # <Settings> — minimal defaults; Task Scheduler fills the rest.
         settings = _el("Settings", root)
         _el_with_text("MultipleInstancesPolicy", "IgnoreNew", settings)
-        _el_with_text("DisallowStartIfOnBatteries", "false", settings)
+        # Battery policy: both true = laptop-friendly. Don't start on battery;
+        # don't run if power transitions mid-task. The next scheduled trigger
+        # picks it up when back on AC. Both-false would drain the battery;
+        # the mixed (false/true) pair is a partial-run failure mode worse than
+        # either consistent choice — start succeeds but the task is killed
+        # mid-run on battery transition.
+        _el_with_text("DisallowStartIfOnBatteries", "true", settings)
         _el_with_text("StopIfGoingOnBatteries", "true", settings)
         _el_with_text("ExecutionTimeLimit", "PT1H", settings)
         _el_with_text("Enabled", "true", settings)
 
         # <Actions>
+        assert exec_command, "exec_command must be non-empty per _Emitter contract"
         actions = _el("Actions", root)
         actions.set("Context", "Author")
         exec_el = _el("Exec", actions)
         command_el = _el("Command", exec_el)
-        command_el.text = exec_command[0] if exec_command else "wiki"
+        command_el.text = exec_command[0]
         args_el = _el("Arguments", exec_el)
-        args_el.text = " ".join(exec_command[1:]) if len(exec_command) > 1 else ""
+        args_el.text = " ".join(exec_command[1:])
         working_dir = _el("WorkingDirectory", exec_el)
         working_dir.text = str(vault_root)
 
@@ -144,36 +155,61 @@ class TaskSchedulerEmitter:
         return result
 
     def activate(self, artifact_path: Path) -> None:
-        """Print the ``schtasks /Create`` command; do not invoke it.
+        """No-op. Windows v1 special case: no subprocess is spawned.
 
-        Windows v1 special case (spec §"Windows v1 special case"): the kit
-        cannot fail here — no subprocess is spawned. The user copies the
-        printed command and runs it by hand. The caller journals the install
-        event immediately after this no-op ``activate()``.
+        The orchestrator (PR-5) calls ``format_activation_instruction``
+        separately and includes the ``schtasks /Create`` line in the stdout
+        summary block. This method is a true no-op so that the
+        ``write → activate → journal`` ordering stays uniform across OSes
+        without any risk of failure or output here.
         """
-        task_name = _task_name_from_path(artifact_path)
-        print(f'schtasks /Create /XML "{artifact_path}" /TN "{task_name}"')
 
     def deactivate(self, artifact_path: Path) -> None:
-        """Print the ``schtasks /Delete`` command; do not invoke it.
+        """No-op. Windows v1 special case: no subprocess is spawned.
 
-        Symmetric to ``activate()``: no subprocess, best-effort, print only.
-        The journal records the uninstall intent regardless.
+        Symmetric to ``activate()``. The orchestrator includes the
+        ``schtasks /Delete`` instruction in its own stdout summary.
         """
-        task_name = _task_name_from_path(artifact_path)
-        print(f'schtasks /Delete /TN "{task_name}" /F')
 
     def inspect(self, artifact_path: Path) -> InspectResult:
         """Return ``"missing-file"`` or ``"not-inspectable"``.
 
-        File-presence is the only signal at v1 (no ``schtasks /Query``
-        invocation). ``"not-inspectable"`` when the file exists — the kit
-        cannot determine whether Task Scheduler has actually loaded it.
-        ``"missing-file"`` when the file is absent.
+        File-presence (``is_file()``) is the only signal at v1 (no
+        ``schtasks /Query`` invocation). ``"not-inspectable"`` when the file
+        exists — the kit cannot determine whether Task Scheduler has actually
+        loaded it. ``"missing-file"`` when the file is absent or is a
+        directory.
         """
-        if not artifact_path.exists():
+        if not artifact_path.is_file():
             return "missing-file"
         return "not-inspectable"
+
+
+# ---------------------------------------------------------------------------
+# Public format helpers — called by the PR-5 orchestrator to compose the
+# stdout summary block. These return strings; they never spawn a subprocess.
+# ---------------------------------------------------------------------------
+
+
+def format_activation_instruction(artifact_path: Path) -> str:
+    """Return the ``schtasks /Create`` line for inclusion in the install summary.
+
+    The orchestrator prints this as part of the ``wiki schedule install``
+    stdout summary (spec §"Windows v1 special case"). Keeping it out of
+    ``activate()`` means ``activate()`` is a pure no-op and cannot fail or
+    produce unexpected output on its own.
+    """
+    task_name = _task_name_from_path(artifact_path)
+    return f'schtasks /Create /XML "{artifact_path}" /TN "{task_name}"'
+
+
+def format_deactivation_instruction(artifact_path: Path) -> str:
+    """Return the ``schtasks /Delete`` line for inclusion in the uninstall summary.
+
+    Symmetric to ``format_activation_instruction``.
+    """
+    task_name = _task_name_from_path(artifact_path)
+    return f'schtasks /Delete /TN "{task_name}" /F'
 
 
 # ---------------------------------------------------------------------------

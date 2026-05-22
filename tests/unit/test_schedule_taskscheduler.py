@@ -1,6 +1,6 @@
 """Tests for ``llm_wiki_kit.schedule.taskscheduler``.
 
-Five groups matching plan step 7 in ``docs/specs/wiki-schedule/plan.md``:
+Six groups matching plan step 7 in ``docs/specs/wiki-schedule/plan.md``:
 
 1. Golden-XML assertions per cadence kind (daily / weekly / monthly /
    quarterly). The rendered XML is inspected via
@@ -8,36 +8,46 @@ Five groups matching plan step 7 in ``docs/specs/wiki-schedule/plan.md``:
    are not human-readable as inline strings. This approach is documented in
    the module docstring as the canonical way to pin the XML shape in tests.
 
-2. Round-trip: parse → serialize → assert equal. Verifies the XML is
-   well-formed and stable under ``ET.tostring`` → parse → ``ET.tostring``.
+2. Round-trip: byte-for-byte serialise/parse stability. Verifies the XML
+   is well-formed and that ``ET.tostring(ET.fromstring(bytes))`` is
+   idempotent — i.e. a second parse-then-serialise produces the same bytes.
 
-3. ``activate(artifact_path)`` prints (does not invoke) the expected
-   ``schtasks /Create /XML "<path>" /TN "llm-wiki-kit-<…>"`` command.
-   Captured via pytest's ``capsys`` fixture.
+3. ``activate``/``deactivate`` are no-ops: produce no stdout, no exceptions,
+   and never invoke ``subprocess.run``. Format helpers return the expected
+   instruction strings without spawning any subprocess.
 
-4. ``deactivate(artifact_path)`` prints (does not invoke) the expected
-   ``schtasks /Delete /TN "llm-wiki-kit-<…>" /F`` command.
+4. Critical XML structure verification: ``<LogonType>``, ``<RunLevel>``,
+   ``<Actions Context>``, and ``<CalendarTrigger/Enabled>`` are pinned to
+   their spec-mandated values.
 
-5. ``inspect(artifact_path)`` returns ``"missing-file"`` when the file is
-   absent and ``"not-inspectable"`` when present.
+5. Battery policy: both ``DisallowStartIfOnBatteries`` and
+   ``StopIfGoingOnBatteries`` are ``true`` (laptop-friendly pair).
+
+6. ``inspect(artifact_path)`` returns ``"missing-file"`` when the file is
+   absent (or is a directory) and ``"not-inspectable"`` when it is a file.
 
 **XML encoding choice.** ``render_artifact`` returns UTF-16 bytes with BOM
 and an XML declaration. Golden assertions parse with
 ``ET.fromstring(rendered.decode("utf-16"))`` — this strips the declaration and
 BOM automatically, leaving a tree we can traverse semantically. The raw-bytes
-representation is pinned via a single round-trip test (group 2) rather than
-inline literals to avoid encoding-artefact fragility in the test source.
+representation is pinned via the byte-for-byte round-trip test (group 2).
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 from xml.etree import ElementTree as ET
 
 import pytest
 
 from llm_wiki_kit.schedule.dsl import ResolvedCadence
-from llm_wiki_kit.schedule.taskscheduler import TaskSchedulerEmitter
+from llm_wiki_kit.schedule.taskscheduler import (
+    TaskSchedulerEmitter,
+    format_activation_instruction,
+    format_deactivation_instruction,
+)
 
 _NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
 
@@ -138,6 +148,27 @@ class TestGoldenXmlDailySchemaAssertions:
         root = _parse(_render(_DAILY))
         wd = _find(root, "WorkingDirectory")
         assert wd.text == str(VAULT_ROOT)
+
+    # C4: critical XML structure assertions.
+    def test_logon_type_is_interactive_token(self) -> None:
+        root = _parse(_render(_DAILY))
+        assert _find(root, "LogonType").text == "InteractiveToken"
+
+    def test_run_level_is_least_privilege(self) -> None:
+        root = _parse(_render(_DAILY))
+        assert _find(root, "RunLevel").text == "LeastPrivilege"
+
+    def test_actions_context_attribute_is_author(self) -> None:
+        root = _parse(_render(_DAILY))
+        actions = _find(root, "Actions")
+        assert actions.get("Context") == "Author"
+
+    def test_calendar_trigger_enabled_is_true(self) -> None:
+        root = _parse(_render(_DAILY))
+        ct = _find(root, "CalendarTrigger")
+        enabled = ct.find(f"{{{_NS}}}Enabled")
+        assert enabled is not None
+        assert enabled.text == "true"
 
 
 class TestGoldenXmlWeeklySchemaAssertions:
@@ -262,19 +293,9 @@ class TestGoldenXmlQuarterlySchemaAssertions:
         assert set(month_tags) == {"January", "April", "July", "October"}
         assert len(month_tags) == 4
 
-    def test_quarterly_does_not_include_non_quarter_months(self) -> None:
-        root = _parse(_render(_QUARTERLY))
-        sbm = _find(root, "ScheduleByMonth")
-        months = sbm.find(f"{{{_NS}}}Months")
-        assert months is not None
-        month_tags = {child.tag.split("}")[-1] for child in months}
-        assert "February" not in month_tags
-        assert "March" not in month_tags
-        assert "May" not in month_tags
-
 
 # ---------------------------------------------------------------------------
-# Group 2 — Round-trip: parse the output, re-serialize, assert equal.
+# Group 2 — Round-trip: byte-for-byte serialise/parse stability.
 # ---------------------------------------------------------------------------
 
 
@@ -290,117 +311,121 @@ class TestGoldenXmlQuarterlySchemaAssertions:
 def test_render_artifact_round_trips_through_xml_parse(
     cadence: ResolvedCadence, label: str
 ) -> None:
-    """Rendered XML round-trips through ET.fromstring without diff.
+    """Rendered XML is byte-for-byte stable under parse → serialise → parse → serialise.
 
-    The approach: parse with fromstring (validates well-formedness), then
-    re-serialize with ET.tostring to canonical form, parse again, and check
-    the tag/text/attrib of the root are identical. We compare the decoded
-    string representation rather than raw bytes because ET.tostring may
-    reorder attributes deterministically but differently from the first
-    serialization — structure-equality is the meaningful contract here.
+    The contract: ``ET.tostring(ET.fromstring(bytes), encoding="utf-16",
+    xml_declaration=True)`` applied twice must produce identical bytes. This
+    pins that the output is well-formed, deterministically serialised UTF-16
+    XML with no drift across repeated round-trips.
     """
     rendered = _render(cadence)
 
-    # First parse — validates the UTF-16 bytes are well-formed XML.
-    root1 = _parse(rendered)
-
-    # Re-serialize (to UTF-8 for comparison convenience) and parse again.
-    intermediate = ET.tostring(root1, encoding="unicode")
-    root2 = ET.fromstring(intermediate)
-
-    # Structure-equal: same tag, same attribute keys, same child count at root.
-    assert root1.tag == root2.tag, f"[{label}] root tag mismatch"
-    assert set(root1.attrib) == set(root2.attrib), f"[{label}] root attrib keys mismatch"
-    assert len(list(root1)) == len(list(root2)), f"[{label}] root child count mismatch"
-
-    # URI text is stable across re-serialization.
-    uri1 = root1.find(f".//{{{_NS}}}URI")
-    uri2 = root2.find(f".//{{{_NS}}}URI")
-    assert uri1 is not None and uri2 is not None
-    assert uri1.text == uri2.text, f"[{label}] URI text changed across round-trip"
+    s1 = ET.tostring(
+        ET.fromstring(rendered.decode("utf-16")), encoding="utf-16", xml_declaration=True
+    )
+    s2 = ET.tostring(ET.fromstring(s1.decode("utf-16")), encoding="utf-16", xml_declaration=True)
+    assert s1 == s2, f"[{label}] XML is not byte-for-byte stable across round-trips"
 
 
 # ---------------------------------------------------------------------------
-# Group 3 — activate() prints the schtasks /Create command; no subprocess.
+# Group 3 — activate/deactivate are no-ops; format helpers return the right
+# instruction strings; nothing spawns subprocess.run.
 # ---------------------------------------------------------------------------
 
 
-def test_activate_prints_schtasks_create_command(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+def test_activate_produces_no_stdout(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    """``activate()`` is a true no-op: produces no stdout output."""
+    artifact = tmp_path / "abc123def456-weekly-digest.xml"
+    TaskSchedulerEmitter().activate(artifact)
+    assert capsys.readouterr().out == ""
+
+
+def test_deactivate_produces_no_stdout(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    """``deactivate()`` is a true no-op: produces no stdout output."""
+    artifact = tmp_path / "abc123def456-weekly-digest.xml"
+    TaskSchedulerEmitter().deactivate(artifact)
+    assert capsys.readouterr().out == ""
+
+
+def test_activate_and_deactivate_never_invoke_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``activate()`` prints the ``schtasks /Create`` command to stdout.
+    """Neither ``activate`` nor ``deactivate`` may spawn a subprocess.
 
-    No subprocess is invoked (Windows v1 special case). The printed line
-    contains the artifact path and the expected task name.
+    Windows v1 special case: the kit cannot fail here — no subprocess is
+    ever invoked against ``schtasks``. This invariant is load-bearing for
+    the journal-ordering guarantee (spec §"Windows v1 special case").
     """
+    mock = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock)
+
     artifact = tmp_path / "abc123def456-weekly-digest.xml"
     emitter = TaskSchedulerEmitter()
     emitter.activate(artifact)
+    assert not mock.called, "activate() must not invoke subprocess.run"
 
-    out = capsys.readouterr().out.strip()
-    expected_task_name = "llm-wiki-kit-abc123def456-weekly-digest"
-    assert out == f'schtasks /Create /XML "{artifact}" /TN "{expected_task_name}"'
-
-
-def test_activate_returns_none(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """``activate()`` returns ``None`` — it is a no-op at v1.
-
-    Verified by calling and confirming no exception is raised. The function
-    is declared ``-> None`` so mypy catches any accidental return value.
-    """
-    artifact = tmp_path / "abc123def456-weekly-digest.xml"
-    TaskSchedulerEmitter().activate(artifact)
-    capsys.readouterr()
-
-
-def test_activate_does_not_raise_regardless_of_file_existence(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """The Windows v1 activate() cannot fail — it merely prints."""
-    # File does not exist — should still not raise.
-    artifact = tmp_path / "no-such-file.xml"
-    TaskSchedulerEmitter().activate(artifact)
-    capsys.readouterr()  # consume output
-
-
-# ---------------------------------------------------------------------------
-# Group 4 — deactivate() prints the schtasks /Delete command; no subprocess.
-# ---------------------------------------------------------------------------
-
-
-def test_deactivate_prints_schtasks_delete_command(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """``deactivate()`` prints the ``schtasks /Delete`` command to stdout.
-
-    Symmetric to ``activate()`` — no subprocess, print only.
-    """
-    artifact = tmp_path / "abc123def456-weekly-digest.xml"
-    emitter = TaskSchedulerEmitter()
+    mock.reset_mock()
     emitter.deactivate(artifact)
-
-    out = capsys.readouterr().out.strip()
-    expected_task_name = "llm-wiki-kit-abc123def456-weekly-digest"
-    assert out == f'schtasks /Delete /TN "{expected_task_name}" /F'
+    assert not mock.called, "deactivate() must not invoke subprocess.run"
 
 
-def test_deactivate_returns_none(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """``deactivate()`` returns ``None`` — verified by confirming no exception."""
-    artifact = tmp_path / "abc123def456-weekly-digest.xml"
-    TaskSchedulerEmitter().deactivate(artifact)
-    capsys.readouterr()
-
-
-def test_deactivate_does_not_raise_regardless_of_file_existence(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
+def test_format_activation_instruction_returns_schtasks_create_line(
+    tmp_path: Path,
 ) -> None:
-    artifact = tmp_path / "no-such-file.xml"
-    TaskSchedulerEmitter().deactivate(artifact)
-    capsys.readouterr()
+    """``format_activation_instruction`` returns the correct ``schtasks /Create`` string."""
+    artifact = tmp_path / "abc123def456-weekly-digest.xml"
+    expected_task_name = "llm-wiki-kit-abc123def456-weekly-digest"
+    result = format_activation_instruction(artifact)
+    assert result == f'schtasks /Create /XML "{artifact}" /TN "{expected_task_name}"'
+
+
+def test_format_deactivation_instruction_returns_schtasks_delete_line(
+    tmp_path: Path,
+) -> None:
+    """``format_deactivation_instruction`` returns the correct ``schtasks /Delete`` string."""
+    artifact = tmp_path / "abc123def456-weekly-digest.xml"
+    expected_task_name = "llm-wiki-kit-abc123def456-weekly-digest"
+    result = format_deactivation_instruction(artifact)
+    assert result == f'schtasks /Delete /TN "{expected_task_name}" /F'
+
+
+def test_format_helpers_never_invoke_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Format helpers must not spawn a subprocess — they are pure string builders."""
+    mock = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock)
+
+    artifact = tmp_path / "abc123def456-weekly-digest.xml"
+    format_activation_instruction(artifact)
+    assert not mock.called, "format_activation_instruction must not invoke subprocess.run"
+
+    mock.reset_mock()
+    format_deactivation_instruction(artifact)
+    assert not mock.called, "format_deactivation_instruction must not invoke subprocess.run"
 
 
 # ---------------------------------------------------------------------------
-# Group 5 — inspect() is file-presence only.
+# Group 4 — Battery policy: both flags must be "true" (laptop-friendly pair).
+# ---------------------------------------------------------------------------
+
+
+def test_battery_policy_disallow_start_on_battery_is_true() -> None:
+    """``DisallowStartIfOnBatteries`` must be ``true`` — don't start on battery."""
+    root = _parse(_render(_DAILY))
+    elem = _find(root, "DisallowStartIfOnBatteries")
+    assert elem.text == "true"
+
+
+def test_battery_policy_stop_if_going_on_batteries_is_true() -> None:
+    """``StopIfGoingOnBatteries`` must be ``true`` — kill mid-run on battery transition."""
+    root = _parse(_render(_DAILY))
+    elem = _find(root, "StopIfGoingOnBatteries")
+    assert elem.text == "true"
+
+
+# ---------------------------------------------------------------------------
+# Group 5 — inspect() is file-presence only (is_file(), not exists()).
 # ---------------------------------------------------------------------------
 
 
@@ -423,6 +448,18 @@ def test_inspect_returns_not_inspectable_when_artifact_present(tmp_path: Path) -
     artifact.write_bytes(b"<placeholder>")
     result = TaskSchedulerEmitter().inspect(artifact)
     assert result == "not-inspectable"
+
+
+def test_inspect_treats_directory_as_missing(tmp_path: Path) -> None:
+    """``inspect`` uses ``is_file()``, so a directory at the artifact path is ``"missing-file"``.
+
+    ``Path.exists()`` returns True for directories; using ``is_file()`` avoids
+    a false ``"not-inspectable"`` when a directory happens to share the name.
+    """
+    artifact = tmp_path / "abc123def456-weekly-digest.xml"
+    artifact.mkdir()
+    result = TaskSchedulerEmitter().inspect(artifact)
+    assert result == "missing-file"
 
 
 # ---------------------------------------------------------------------------
