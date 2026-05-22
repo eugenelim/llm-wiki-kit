@@ -144,7 +144,13 @@ and can call `write_text` freely.
   vault, every existing file looks like "drift" relative to no journal
   baseline. Mitigated: `wiki init` over a non-empty folder either
   refuses (default) or runs an explicit `--adopt` path that journals
-  every existing file as a `PageWrite` at adoption time.
+  every existing file as a `PageWrite` at adoption time. See
+  [ADR-0008](0008-init-adopt-ownership-policy.md) for the pinned
+  `--adopt` semantics (dedicated `PageAdoptedEvent` /
+  `ManagedRegionAdoptedEvent` baselines rather than a `PageWrite`-
+  with-`reason` field) and
+  [`docs/specs/wiki-init-adopt/`](../specs/wiki-init-adopt/) for the
+  shipped contract.
 - **The noisy-existing-folder case extends to every CLI command, not
   just `wiki init`.** Any `safe_write` over a path the kit has never
   journaled now routes through the proposal flow (`safe-write-ordering`

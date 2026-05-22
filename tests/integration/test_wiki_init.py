@@ -234,6 +234,17 @@ def test_init_creates_target_directory(tmp_path: Path) -> None:
 def test_init_is_idempotently_refused_on_rerun(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A re-init over an installed vault refuses with the already-a-vault error.
+
+    ADR-0008 §5 pins the predicate on "journal contains a
+    ``PrimitiveInstallEvent``"; a successful first ``wiki init`` lands
+    every primitive's install event, so the second invocation hits the
+    refusal regardless of whether ``--adopt`` is passed. The pre-
+    ADR-0008 "not empty" error fires only when the journal has no
+    install events at all (a truly fresh non-empty directory without
+    ``--adopt``), exercised by ``test_init_refuses_non_empty_target``.
+    """
+
     vault = tmp_path / "rerun-vault"
 
     assert main(["init", str(vault), "--recipe", "family"]) == 0
@@ -243,7 +254,8 @@ def test_init_is_idempotently_refused_on_rerun(
 
     assert exit_code == WIKI_ERROR_EXIT
     err = capsys.readouterr().err
-    assert "not empty" in err
+    assert "already a wiki vault" in err
+    assert "wiki upgrade" in err
 
 
 def test_wiki_init_install_pipeline_reads_journal_once_via_cache(

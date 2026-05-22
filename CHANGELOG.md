@@ -22,6 +22,17 @@ file is the shipped-work record. Decisions behind shipped work live in
 
 ### Added
 
+- `wiki init --adopt` — adopt an existing folder as a vault by
+  journaling each pre-existing kit-owned file as a
+  `PageAdoptedEvent` (and managed-region host files as
+  `ManagedRegionAdoptedEvent`s) before the install pipeline runs.
+  The adopt-aware `safe_write` / `safe_write_region` predicate
+  routes differing-content kit writes against the adopt baseline to
+  `.proposed` sidecars, preserving the user's bytes; byte-identical
+  files adopt silently. See
+  [`docs/specs/wiki-init-adopt/spec.md`](docs/specs/wiki-init-adopt/spec.md)
+  and
+  [`docs/adr/0008-init-adopt-ownership-policy.md`](docs/adr/0008-init-adopt-ownership-policy.md).
 - `wiki init --no-git` opt-out for the new default git-init behavior.
   Skips `git init` and the initial commit; the kit's `.gitignore`
   still ships through the normal render path. See

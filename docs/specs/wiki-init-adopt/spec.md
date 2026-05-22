@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/cli.py:_cmd_init`,
   `llm_wiki_kit/install.py`, `llm_wiki_kit/write_helper.py`,
   `llm_wiki_kit/models.py`
@@ -101,8 +101,12 @@ land (event-before-disk per the safe-write-ordering spec):
    `ManagedRegionAdoptedEvent(by="wiki-init-adopt", file=<path>,
    region=<id>, content_hash=<sha256 of
    managed_regions.canonical_region_body(<body on disk>)>)` rows
-   the host file produces (one per managed region present on disk,
-   in `sorted(region)` order within the file). The interleave —
+   the host file produces (one per managed region the recipe
+   contributes to via `contributes_to`, in `sorted(region)` order
+   within the file — see §Contracts `compute_adoption_set` for
+   the precise predicate. A region the user has markers for but
+   no primitive contributes to is NOT seeded: the kit will not
+   write that region, so no baseline is needed). The interleave —
    page event followed by all its region events before moving to
    the next host file — ensures that a crash mid-adoption leaves a
    consistent prefix: every `PageAdoptedEvent` in the journal has
@@ -155,10 +159,19 @@ ADR-0008 §Decision sub-choice 3 (`PageAdoptedEvent`,
   surfaced from the adoption walk (kit-owned = path's
   non-`.proposed` form is in
   `enumerate_rendered_paths(...)`): `wiki init: found N
-  pre-existing kit-owned .proposed sidecar.` (`sidecars.` for
-  `N != 1`) — one line total, count-aware. The line is on
-  stderr only (not stdout) to match the "warning" framing and
-  keep stdout parse-clean for tools counting only the adopt
+  pre-existing kit-owned .proposed sidecar. Render-phase drift
+  on those paths during this run will have overwritten the prior
+  sidecar content; check the journal for a fresh
+  PageProposalEvent and recover from git history if the prior
+  body mattered.` (`sidecars.` for `N != 1`) — one line total,
+  count-aware. The past-tense framing is intentional: the
+  warning emits AFTER the install pipeline closes, so any
+  pre-existing sidecar at a kit-owned path that drifted during
+  this run has already been clobbered by `safe_write`'s
+  drift branch (see
+  `docs/specs/safe-write-ordering/spec.md` §Behavior). The line
+  is on stderr only (not stdout) to match the "warning" framing
+  and keep stdout parse-clean for tools counting only the adopt
   summary. Sidecars outside the rendered closure are ignored.
 
 ### Disk
@@ -402,12 +415,24 @@ The differing-bytes case the ADR's §Positive describes:
   on-disk content) and proceeds into the install pipeline.
 - **Crash inside the install pipeline (after a
   `PrimitiveInstallEvent` landed)** — the already-a-vault refusal
-  fires; `wiki init --adopt` is no longer the recovery path.
-  Recovery routes through `wiki upgrade` (which re-renders the
-  primitive closure over the adopted baselines using the
-  drift-aware safe-write helpers — byte-identical files pass
-  through, differing files surface as `.proposed` sidecars). The
-  user resolves sidecars via `wiki-conflict`.
+  fires; `wiki init --adopt` is no longer the recovery path. The
+  vault is in a partial state: some primitives' `PrimitiveInstallEvent`
+  rows are journaled with their renders incomplete, the adopt
+  baselines from the same run are durable, and `wiki doctor`
+  reports `missing` for any kit-owned path the renderer didn't
+  reach. `wiki upgrade` does NOT re-attempt the failed renders
+  unless the kit catalog bumps a primitive's version
+  (`plan_upgrade` short-circuits when every installed version
+  matches the catalog — `llm_wiki_kit/upgrade.py:plan_upgrade`),
+  so today's recovery story is: (1) run `wiki doctor` to surface
+  the missing files, (2) the user re-runs `wiki init --adopt`
+  after manually deleting `.wiki.journal/` (destructive — last
+  resort), or waits for the next catalog version bump to drive
+  `wiki upgrade` over the existing adopt baselines. A proper
+  `wiki init --adopt --resume` (or `wiki upgrade --force-render`)
+  surface is deferred to a follow-on spec; the current PR's
+  acceptance criteria do not pin a green test for this recovery
+  path because the kit cannot deliver it yet.
 
 ### Error cases
 
@@ -438,8 +463,21 @@ The differing-bytes case the ADR's §Positive describes:
 - `target directory is not empty: <target>\nwiki init refuses to
   render over existing files. Choose an empty directory or
   remove its contents first.` — existing error, exit 2. Fires
-  only when `--adopt` is NOT set (the empty-dir refusal). With
-  `--adopt`, this branch is suppressed.
+  only when `--adopt` is NOT set, the target is non-empty, AND
+  the journal carries no `VaultInitEvent` (the empty-dir
+  refusal). With `--adopt`, this branch is suppressed.
+- `target carries an init-in-progress journal: <target>; re-run
+  with \`--adopt\` to resume, or remove \`.wiki.journal/\` to
+  start fresh.` — new error, exit 2. Fires when `--adopt` is NOT
+  set, the target is non-empty, AND the journal carries a
+  `VaultInitEvent` but no `PrimitiveInstallEvent` (the
+  init-in-progress recovery slot from §Edge cases "Crash during
+  the adoption phase"). The user re-runs with `--adopt` to
+  resume, or removes `.wiki.journal/` to discard the
+  crashed-init state. The generic "target directory is not
+  empty" message is suppressed for this predicate so the user
+  isn't pointed at deleting the journal — which would destroy
+  the recovery slot.
 - `path '<path>' resolves to '<resolved>', which is not inside
   the vault rooted at '<vault>'` — from `_relative_to_vault`
   during the adoption walk (symlink escape). Exit 2.
@@ -676,12 +714,12 @@ The differing-bytes case the ADR's §Positive describes:
 
 ## Acceptance criteria
 
-- [ ] **AC1 — `wiki init --adopt` over an empty target behaves
+- [x] **AC1 — `wiki init --adopt` over an empty target behaves
   identically to `wiki init`.** Same journal events, same on-disk
   output, no `wiki init: adopted ...` summary line printed. Pinned
   by comparing the journal byte-for-byte against a non-`--adopt`
   control run.
-- [ ] **AC2 — `wiki init --adopt` over a target containing only
+- [x] **AC2 — `wiki init --adopt` over a target containing only
   byte-identical kit-owned files emits one `PageAdoptedEvent` per
   file, one `PageWriteEvent` per file from the render phase's
   adopt-match no-rewrite branch, and zero `PageProposalEvent`s.**
@@ -691,20 +729,20 @@ The differing-bytes case the ADR's §Positive describes:
   their pre-call content AND inode-preserved (`stat().st_ino`
   unchanged across the call — the adopt-match no-rewrite branch
   in `safe_write` skips the disk write).
-- [ ] **AC3 — `wiki init --adopt` over a target containing
+- [x] **AC3 — `wiki init --adopt` over a target containing
   byte-differing kit-owned files emits one `PageAdoptedEvent` per
   file AND one `PageProposalEvent` per file during the render
   phase.** The adopted-bytes baseline and the proposed-bytes
   hash are both in the journal. The `.proposed` sidecar contains
   the kit's would-render bytes; the original file is
   byte-identical to its pre-call content.
-- [ ] **AC4 — `wiki init --adopt` against a target whose
+- [x] **AC4 — `wiki init --adopt` against a target whose
   `<target>/.wiki.journal/journal.jsonl` already contains a
   `PrimitiveInstallEvent` exits 2 with `target is already a wiki
   vault` on stderr.** No journal modification, no on-disk writes.
   Pinned alongside AC4b below to nail the predicate's exact
   condition.
-- [ ] **AC4b — `wiki init --adopt` against a target whose journal
+- [x] **AC4b — `wiki init --adopt` against a target whose journal
   carries only `VaultInitEvent` and/or adoption events (no
   `PrimitiveInstallEvent`) PROCEEDS as a re-run AND re-emits the
   adopt events idempotently.** Pinned by hand-pre-seeding a
@@ -719,11 +757,11 @@ The differing-bytes case the ADR's §Positive describes:
   (c) `PrimitiveInstallEvent`s land afterward, completing the
   install. Pins the recovery contract for §Edge cases "Crash
   during the adoption phase".
-- [ ] **AC5 — `wiki init` (without `--adopt`) against a
+- [x] **AC5 — `wiki init` (without `--adopt`) against a
   non-empty target retains today's `target directory is not
   empty` refusal.** Pinned by `test_wiki_init_refuses_non_empty`
   (existing test should remain green).
-- [ ] **AC6 — `PageAdoptedEvent`s emit in `sorted(path)` order,
+- [x] **AC6 — `PageAdoptedEvent`s emit in `sorted(path)` order,
   interleaved with each host file's `ManagedRegionAdoptedEvent`s
   (in `sorted(region)` order) immediately after that file's
   page event.** Pinned by feeding a target with two unordered
@@ -735,14 +773,14 @@ The differing-bytes case the ADR's §Positive describes:
   region_x), ManagedRegionAdoptedEvent(file_b, region_y)]` —
   no host-file region events appear after a different host
   file's page event.
-- [ ] **AC7 — `by="wiki-init-adopt"` on adoption-phase events
+- [x] **AC7 — `by="wiki-init-adopt"` on adoption-phase events
   ONLY.** `VaultInitEvent.by == "wiki-init"`,
   `PrimitiveInstallEvent.by == "wiki-init"`,
   aggregator-emitted `ManagedRegionWriteEvent.by == "wiki-init"`,
   per-primitive `PageWriteEvent.by == <primitive_name>`. Only
   `PageAdoptedEvent` and `ManagedRegionAdoptedEvent` carry the
   new vehicle string.
-- [ ] **AC8 — A pre-existing `frontmatter.schema.yaml` with the
+- [x] **AC8 — A pre-existing `frontmatter.schema.yaml` with the
   user's region content gets both a `PageAdoptedEvent` AND one
   `ManagedRegionAdoptedEvent` per parseable region.** Pinned by
   pre-seeding a target with a hand-rolled
@@ -750,7 +788,7 @@ The differing-bytes case the ADR's §Positive describes:
   asserting the journal contains both events with hashes that
   match `managed_regions.canonical_region_body` applied to each
   region body.
-- [ ] **AC9 — A pre-existing managed-region host file whose
+- [x] **AC9 — A pre-existing managed-region host file whose
   markers DO NOT parse causes `wiki init --adopt` to exit 2
   with `cannot adopt managed-region host '<file>': markers do
   not parse`.** No journal events appended. Pinned by feeding a
@@ -758,7 +796,7 @@ The differing-bytes case the ADR's §Positive describes:
   exit code, the stderr text, and that
   `.wiki.journal/journal.jsonl` does not exist (or, if the
   `target.mkdir` ran first, is empty / contains zero events).
-- [ ] **AC9b — A pre-existing managed-region host file that
+- [x] **AC9b — A pre-existing managed-region host file that
   parses but is missing markers for a region the recipe needs
   causes `wiki init --adopt` to exit 2 with `cannot adopt
   managed-region host '<file>': missing markers for region
@@ -766,7 +804,7 @@ The differing-bytes case the ADR's §Positive describes:
   Pinned by feeding a target whose host file declares only
   `types` but the recipe includes a primitive that contributes
   to `fields`.
-- [ ] **AC10 — A pre-existing `.proposed` sidecar whose
+- [x] **AC10 — A pre-existing `.proposed` sidecar whose
   non-`.proposed` path is in the recipe's rendered closure is
   surfaced as `pre_existing_sidecars` but NOT adopted.** Pinned
   by feeding a target with both `wiki/people/.gitkeep`
@@ -774,23 +812,28 @@ The differing-bytes case the ADR's §Positive describes:
   exactly one `PageAdoptedEvent` for `wiki/people/.gitkeep`,
   zero adoption events for the sidecar, and stderr contains
   the informational `wiki init: found 1 pre-existing kit-owned
-  .proposed sidecar.` line. A `.proposed` file at a path
-  OUTSIDE the rendered closure (e.g.,
-  `notes/personal.md.proposed`) is ignored entirely (no
-  warning).
-- [ ] **AC11 — A user-territory file under a kit-owned directory
+  .proposed sidecar.` line followed by the past-tense
+  `will have overwritten the prior sidecar content` and
+  `recover from git history` clauses (the warning emits AFTER
+  the install pipeline closes, so `safe_write`'s drift branch
+  has already clobbered any pre-existing sidecar at a drifting
+  kit-owned path). A `.proposed` file at a path OUTSIDE the
+  rendered closure (e.g., `notes/personal.md.proposed`) is
+  ignored entirely (no warning). Plural-noun branch (`N != 1`)
+  pinned by a separate test seeding two sidecars.
+- [x] **AC11 — A user-territory file under a kit-owned directory
   is NOT adopted but DOES surface as `orphan` post-run.** Pinned
   by feeding a target with `wiki/people/uncle-bob.md` (the
   user's own page, not produced by the `people` primitive's
   `files/` tree). Assert no adoption event for `uncle-bob.md`,
   and `wiki doctor` after the run reports `Issue(ORPHAN,
   "wiki/people/uncle-bob.md")`.
-- [ ] **AC12 — A user-territory file OUTSIDE every kit-owned
+- [x] **AC12 — A user-territory file OUTSIDE every kit-owned
   directory is NOT adopted and NOT surfaced as `orphan`.**
   Pinned by feeding a target with `notes/personal.md` (no
   primitive declares anything under `notes/`). Assert no
   adoption event AND `wiki doctor` does not flag the file.
-- [ ] **AC13 — `safe_write` after a `PageAdoptedEvent` baseline
+- [x] **AC13 — `safe_write` after a `PageAdoptedEvent` baseline
   produces a `PageProposalEvent` when the kit's content differs
   from the adopted bytes, even though `on_disk_hash ==
   baseline_hash`.** Construction test in
@@ -801,26 +844,26 @@ The differing-bytes case the ADR's §Positive describes:
   original file's bytes are byte-identical to its pre-call
   content, and a `PageProposalEvent` is the latest journal
   entry for the path.
-- [ ] **AC14 — `safe_write` after a `PageAdoptedEvent` baseline
+- [x] **AC14 — `safe_write` after a `PageAdoptedEvent` baseline
   with `new_hash == adopted_hash == on_disk_hash` takes the
   adopt-match no-rewrite branch.** Assert `WriteResult.WRITTEN`,
   exactly one new `PageWriteEvent(hash=new_hash)` is journaled,
   no sidecar, AND `target.stat().st_ino` equals the pre-call
   inode (the file is NOT rewritten). Pins the inode-preservation
   contract AC2 depends on.
-- [ ] **AC15 — `safe_write_region` after a
+- [x] **AC15 — `safe_write_region` after a
   `ManagedRegionAdoptedEvent` baseline produces a
   `PageProposalEvent` when the kit's aggregated region body
   differs from the adopted region body.** Same shape as AC13.
   The host file's `stat().st_ino` is unchanged when the
   match-no-rewrite branch fires (kit's region content matches
   adopted region content).
-- [ ] **AC16 — `resolve_proposal` against an adopted-then-proposed
+- [x] **AC16 — `resolve_proposal` against an adopted-then-proposed
   page path emits a `PageWriteEvent` that becomes the new latest
   baseline; subsequent `safe_write` calls with the same content
   take the direct-write branch.** Pins the page-level
   "sticky-adopt clears on resolve" contract.
-- [ ] **AC16b — `resolve_proposal` against an adopted-then-proposed
+- [x] **AC16b — `resolve_proposal` against an adopted-then-proposed
   managed-region host file emits one `ManagedRegionWriteEvent`
   per region present in BOTH the journal's adopt events for the
   file AND the resolved content (the
@@ -832,7 +875,7 @@ The differing-bytes case the ADR's §Positive describes:
   `PageWriteEvent` `resolve_proposal` emits. Without this AC,
   the region-level sticky-adopt baselines never clear and every
   subsequent aggregator pass re-proposes the host.
-- [ ] **AC17 — `wiki doctor` after `wiki init --adopt` on a mixed
+- [x] **AC17 — `wiki doctor` after `wiki init --adopt` on a mixed
   target reports exactly the expected issues: zero orphans for
   user-territory files outside kit-owned directories; one
   orphan per user-territory file under a kit-owned directory;
@@ -840,31 +883,31 @@ The differing-bytes case the ADR's §Positive describes:
   `missing`, zero `page-drift`, zero `managed-region-drift`.**
   Integration-level assertion against `doctor.run_doctor` after
   a representative `wiki init --adopt` run.
-- [ ] **AC18 — Adoption phase events are durable before any
+- [x] **AC18 — Adoption phase events are durable before any
   install-pipeline event.** Assert the slice
   `read_events(journal_path)` in run order has all
   `PageAdoptedEvent`s and `ManagedRegionAdoptedEvent`s strictly
   before the first `PrimitiveInstallEvent`. Mirrors `wiki
   upgrade` AC9's "aggregator strictly after per-primitive" pin.
-- [ ] **AC19 — Symlink-escape during the adoption walk raises
+- [x] **AC19 — Symlink-escape during the adoption walk raises
   `WikiError` and leaves the journal empty.** Pinned by feeding
   a target with a symlink whose target resolves outside the
   vault root; assert `WikiError`, exit 2, no
   `.wiki.journal/journal.jsonl` (or an empty one if the
   `target.mkdir` ran before the walk).
-- [ ] **AC20 — `replay_state` over a journal with adoption
+- [x] **AC20 — `replay_state` over a journal with adoption
   events populates `state.adopted_pages` and
   `state.adopted_regions` correctly; older journals without
   adoption events replay unchanged (round-trip equivalence with
   pre-AC20 behavior).** Pinned by a Pydantic-model round-trip
   test on a hand-crafted journal containing one each of the
   new event types.
-- [ ] **AC21 — `wiki init --adopt` over a target with N
+- [x] **AC21 — `wiki init --adopt` over a target with N
   pre-existing kit-owned files prints `wiki init: adopted N
   file.` (or `files.`) as the final stdout line.** Pluralisation
   pinned for `N == 1` and `N != 1`. When N == 0, no summary
   line is emitted.
-- [ ] **AC20a — TOCTOU window between `compute_adoption_set` and
+- [x] **AC20a — TOCTOU window between `compute_adoption_set` and
   the render phase produces a `.proposed` sidecar, not a silent
   overwrite.** Integration-level construction: pre-place a
   kit-owned file with content C₁ (matching what the kit would
@@ -885,7 +928,7 @@ The differing-bytes case the ADR's §Positive describes:
   which is the documented surfacing for the TOCTOU residual
   per spec §Edge cases "TOCTOU between adoption walk and
   render-phase writes").
-- [ ] **AC21b — `wiki journal tail` / `grep` / `explain` over a
+- [x] **AC21b — `wiki journal tail` / `grep` / `explain` over a
   post-adopt journal render `page.adopted` and
   `managed_region.adopted` rows without raising.** Pins the
   `_EVENT_SUMMARY_FIELDS` extension that the new event classes
@@ -895,7 +938,7 @@ The differing-bytes case the ADR's §Positive describes:
   explicit" claim is structurally undelivered: every
   post-adopt user running `wiki journal tail` crashes on the
   first adopt row.
-- [ ] **AC22 — `install.enumerate_rendered_paths` is the source
+- [x] **AC22 — `install.enumerate_rendered_paths` is the source
   of truth for the kit-owned path set AND `render_tree` walks
   that same set.** Structural pin (not a coincidence-of-output
   pin): `render_tree`'s implementation calls into
@@ -963,6 +1006,19 @@ The differing-bytes case the ADR's §Positive describes:
 - **No backward-compat for pre-ADR-0008 vaults without adoption
   events.** Existing vaults journal-replay unchanged because
   the new `VaultState` fields default to empty dicts.
+- **No `missing` flag from `wiki doctor` for adopted-then-deleted
+  pages.** `doctor.check_missing` (`llm_wiki_kit/doctor.py:check_missing`)
+  walks `state.page_writes` only, not `state.adopted_pages`.
+  Scenario: user runs `wiki init --adopt` (file lands an adopt
+  baseline), then `rm`s the file. The journal records the adopt
+  baseline; the file is gone; doctor reports nothing until the
+  next install runs `safe_write` and produces a new
+  `PageProposalEvent` (route through the adopt-differ disjunct).
+  The kit's "single-user" assumption (per ADR-0002) treats an
+  unexplained `rm` as user-driven cleanup; extending
+  `check_missing` to walk adopted_pages would require a separate
+  decision about whether "the user removed a kit-claimed path"
+  is drift or intent. Deferred to a future doctor spec.
 
 ## Constraints
 
@@ -996,3 +1052,16 @@ The differing-bytes case the ADR's §Positive describes:
 - **No change to managed-region marker syntax.** ADR-0003's
   `<!-- BEGIN MANAGED: id -->` / `# BEGIN MANAGED: id` are the
   only markers the adoption phase recognizes.
+- **No cross-process safety on the already-a-vault refusal.**
+  The journal scan that decides "is this a wiki vault?" runs
+  OUTSIDE `journal.use_journal_cache`'s `fcntl.flock` scope (the
+  cache opens later, after the refusal predicates have already
+  decided to proceed). Two `wiki init --adopt` processes racing
+  on the same target can both decide "no `PrimitiveInstallEvent`,
+  proceed" and then serialise their appends behind the journal's
+  per-append flock, producing duplicate `VaultInitEvent` +
+  interleaved install events. The kit assumes single-user,
+  single-machine usage per ADR-0002 §Negative; if real
+  concurrent-init becomes a use case, a future spec can take an
+  advisory lock on the journal path (allowing the file to not
+  exist yet) around the entire `_cmd_init` body.

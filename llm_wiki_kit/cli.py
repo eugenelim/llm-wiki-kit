@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from llm_wiki_kit import __version__, journal
+from llm_wiki_kit import __version__, adopt, journal
 from llm_wiki_kit.doctor import format_issue, run_doctor
 from llm_wiki_kit.errors import JournalCorruptError, WikiError
 from llm_wiki_kit.git_init import initialize_git
@@ -271,22 +271,29 @@ def _primitive_source_dir(primitive: Primitive, core_dir: Path, templates_dir: P
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    """Render a fresh vault from a recipe.
+    """Render a fresh vault from a recipe, optionally adopting pre-existing files.
 
-    Refuses to run against a non-empty target directory. The RFC's
-    "unresolved questions" list flagged an ``--adopt`` flag for adopting
-    an existing folder as a vault; the decision at Task 10 is to omit
-    that flag entirely for now — the design is non-trivial (every
-    pre-existing file needs to be journaled before any kit-owned write
-    can land safely) and ``wiki upgrade`` will cover the natural re-run
-    case. A future task can add ``--adopt`` once its semantics are
-    pinned in an ADR.
+    Without ``--adopt``, refuses non-empty targets (the conservative
+    default). With ``--adopt``, allows non-empty targets and journals
+    each pre-existing kit-owned file as a :class:`PageAdoptedEvent`
+    (plus :class:`ManagedRegionAdoptedEvent`s for managed-region host
+    files) BEFORE the install pipeline runs. The adopt-aware
+    :func:`safe_write` predicate (ADR-0008) then routes differing-
+    content kit writes against an adopt baseline to the proposal
+    branch, preserving the user's bytes. See
+    ``docs/specs/wiki-init-adopt/spec.md`` and ADR-0008.
+
+    Already-a-vault refusal keys on "journal contains a
+    ``PrimitiveInstallEvent``" (NOT "journal file exists"), so a
+    crash during the adoption phase leaves an init-in-progress
+    journal that is re-runnable for recovery. Once the install
+    pipeline has begun, recovery routes through ``wiki upgrade``.
 
     Ordering follows ADR-0002: the journal is the source of truth, so
-    ``VaultInitEvent`` and each ``PrimitiveInstallEvent`` are appended
-    *before* the corresponding filesystem writes. If a write crashes
-    mid-install, the journal still reflects the intent and ``wiki
-    doctor`` (Task 12) can reconcile.
+    ``VaultInitEvent``, every adoption event, and each
+    ``PrimitiveInstallEvent`` are appended *before* the corresponding
+    filesystem writes. If a write crashes mid-install, the journal
+    still reflects the intent and ``wiki doctor`` can reconcile.
 
     Unless ``--no-git`` is passed, the handler concludes by calling
     :func:`llm_wiki_kit.git_init.initialize_git`, which runs ``git
@@ -302,7 +309,48 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     if target.exists() and target.is_file():
         raise WikiError(f"target path is a file, not a directory: {target}")
-    if target.exists() and any(target.iterdir()):
+
+    # Already-a-vault refusal — fires regardless of ``--adopt`` because a
+    # vault that has already begun installing primitives needs ``wiki
+    # upgrade``, not a re-init. The predicate keys on
+    # ``PrimitiveInstallEvent`` presence so a crash during the adoption
+    # phase (after ``VaultInitEvent`` but before any
+    # ``PrimitiveInstallEvent``) leaves an init-in-progress journal that
+    # ``wiki init --adopt`` can re-run for recovery. See ADR-0008 §6 and
+    # spec §Edge cases "Crash during the adoption phase".
+    journal_path = target / ".wiki.journal" / "journal.jsonl"
+    init_in_progress = False
+    if journal_path.is_file():
+        # Pre-flight read happens BEFORE the journal-cache scope opens,
+        # so this re-reads the journal once even on a clean re-run that
+        # then falls through to the cache-amortised install pipeline.
+        # The duplicate is bounded — an init-in-progress journal is
+        # VaultInit + the adoption-prefix at most (kilobytes for typical
+        # vaults; tens of kilobytes for the 10k-file pathological case
+        # spec §Edge cases names), well under the cache-scope warning
+        # threshold in ``install._UNCACHED_INSTALL_PIPELINE_WARN_THRESHOLD``.
+        existing_events = read_events(journal_path)
+        if any(isinstance(event, PrimitiveInstallEvent) for event in existing_events):
+            raise WikiError(
+                f"target is already a wiki vault: {target}; "
+                "run `wiki upgrade` to refresh installed primitives or "
+                "`wiki add` to install more."
+            )
+        if any(isinstance(event, VaultInitEvent) for event in existing_events):
+            init_in_progress = True
+
+    if not args.adopt and target.exists() and any(target.iterdir()):
+        # Init-in-progress takes precedence over the generic non-empty
+        # refusal: deleting ``.wiki.journal/`` (what the generic message
+        # would tell the user to do) destroys the recovery slot. ADR-0008
+        # §6 + spec §Edge cases "Crash during the adoption phase" make
+        # ``wiki init --adopt`` the supported recovery path.
+        if init_in_progress:
+            raise WikiError(
+                f"target carries an init-in-progress journal: {target}; "
+                "re-run with `--adopt` to resume, or remove "
+                "`.wiki.journal/` to start fresh."
+            )
         raise WikiError(
             f"target directory is not empty: {target}\n"
             "wiki init refuses to render over existing files. "
@@ -339,8 +387,21 @@ def _cmd_init(args: argparse.Namespace) -> int:
     # disk (no half-init journal, no kit-owned directories).
     validate_outcome_skill_fragments(primitives=ordered, sources=sources)
 
+    # Compute the adoption set BEFORE ``target.mkdir`` and BEFORE the
+    # journal-cache scope opens, so a symlink-escape or malformed-
+    # host refusal leaves zero side effects on disk (spec §Edge cases
+    # "Symlink escape during adoption"; plan §PR-C step 14). Order:
+    # compute → mkdir → cache scope. Inverting compute and mkdir would
+    # leave an empty ``target/`` on a refusal, surfacing as orphan-dir
+    # noise; the stricter "no kit-owned directories created on refusal"
+    # surface is what tests like
+    # ``test_init_adopt_symlink_escape_raises_no_journal`` pin.
+    if args.adopt and target.exists():
+        adoption_set = adopt.compute_adoption_set(target, ordered, sources)
+    else:
+        adoption_set = adopt.AdoptionSet(host_adoptions=(), pre_existing_sidecars=())
+
     target.mkdir(parents=True, exist_ok=True)
-    journal_path = target / ".wiki.journal" / "journal.jsonl"
     vault_name = target.name
     context = _build_context(recipe, vault_name)
     now = datetime.now(UTC)
@@ -350,17 +411,63 @@ def _cmd_init(args: argparse.Namespace) -> int:
     # `safe_write_region` inside reads the journal at most once;
     # subsequent baseline lookups consult the in-memory cache that
     # `append_event` extends after each fsync. See
-    # `docs/specs/journal-reader-cache/spec.md`.
+    # `docs/specs/journal-reader-cache/spec.md`. The adoption phase
+    # appends INSIDE the same cache scope — one warning per resolved
+    # path suffices (plan §Declined patterns: "extend
+    # _warn_if_install_pipeline_uncached to cover the adoption
+    # phase").
+    length_before_install: int
     with journal.use_journal_cache(journal_path):
-        append_event(
-            journal_path,
-            VaultInitEvent(
-                timestamp=now,
-                by=INSTALL_VEHICLE_INIT,
-                vault_name=vault_name,
-                recipe=recipe.name,
-            ),
-        )
+        # Skip the VaultInitEvent re-append on an init-in-progress
+        # re-run — the prior run's VaultInitEvent is durable and a
+        # duplicate would only show up as journal-tail noise (replay
+        # collapses to latest-wins on vault_name/recipe; ``state.recipe``
+        # already matches). Spec §Edge cases "Crash during the adoption
+        # phase" documents the recovery contract.
+        if not init_in_progress:
+            append_event(
+                journal_path,
+                VaultInitEvent(
+                    timestamp=now,
+                    by=INSTALL_VEHICLE_INIT,
+                    vault_name=vault_name,
+                    recipe=recipe.name,
+                ),
+            )
+
+        # Adoption phase — one PageAdoptedEvent per pre-existing
+        # kit-owned file, interleaved with its
+        # ManagedRegionAdoptedEvents (page → its regions → next host)
+        # so any crash prefix is internally consistent
+        # (spec §Outputs Journal events bullet 2).
+        for host in adoption_set.host_adoptions:
+            append_event(
+                journal_path,
+                PageAdoptedEvent(
+                    timestamp=now,
+                    by=adopt.INSTALL_VEHICLE_ADOPT,
+                    path=host.path,
+                    hash=host.hash,
+                ),
+            )
+            for region in host.regions:
+                append_event(
+                    journal_path,
+                    ManagedRegionAdoptedEvent(
+                        timestamp=now,
+                        by=adopt.INSTALL_VEHICLE_ADOPT,
+                        file=host.path,
+                        region=region.region,
+                        content_hash=region.content_hash,
+                    ),
+                )
+
+        # Capture the journal length AFTER adoption events land so the
+        # proposal-line collection below picks up only events emitted by
+        # the install pipeline (not adoption events from a re-run's
+        # idempotent re-emission, which can produce duplicate adopt
+        # rows but never proposals).
+        length_before_install = len(read_events(journal_path))
 
         # Per-primitive render + the second-pass region aggregator
         # (ADR-0006). ``install_primitives`` runs ``to_install`` ==
@@ -399,6 +506,46 @@ def _cmd_init(args: argparse.Namespace) -> int:
         kit_root_resolved = args.kit_root if args.kit_root is not None else _kit_root()
         if installed_outcome_verbs(target, kit_root_resolved):
             print("Run `wiki outcomes` to see this vault's operation verbs.")
+
+        install_phase_events = read_events(journal_path)[length_before_install:]
+
+    # Surface every proposal produced during the install pipeline (page
+    # writes AND aggregator region writes both surface as
+    # ``PageProposalEvent``) so the user sees one drift line per sidecar.
+    for event in install_phase_events:
+        if isinstance(event, PageProposalEvent):
+            print(
+                f"Wrote {event.proposed_path} (drift detected on {event.path}); "
+                "run the wiki-conflict skill to merge."
+            )
+
+    # Adopt-summary line: stdout, count-aware, only when at least one
+    # file was adopted (spec §Outputs Stdout).
+    adopted_count = len(adoption_set.host_adoptions)
+    if adopted_count > 0:
+        noun = "file" if adopted_count == 1 else "files"
+        print(f"wiki init: adopted {adopted_count} {noun}.")
+
+    # Pre-existing-sidecar warning: stderr, count-aware (spec §Outputs
+    # Stderr "warning" framing — keeps stdout parse-clean for tools
+    # counting only the adopt-summary line). The trailing fragment
+    # makes the render-phase overwrite explicit: ``safe_write`` writes
+    # ``<path>.proposed`` unconditionally on drift (write_helper.py
+    # disjunct 5), so any pre-existing sidecar whose path the kit's
+    # render-phase also produces gets clobbered by this run. Surfacing
+    # the remediation lets a user resolve via ``wiki-conflict`` before
+    # re-running, or back up their sidecar content first.
+    sidecar_count = len(adoption_set.pre_existing_sidecars)
+    if sidecar_count > 0:
+        noun = "sidecar" if sidecar_count == 1 else "sidecars"
+        print(
+            f"wiki init: found {sidecar_count} pre-existing kit-owned .proposed {noun}. "
+            "Render-phase drift on those paths during this run will have "
+            "overwritten the prior sidecar content; check the journal "
+            "for a fresh PageProposalEvent and recover from git history "
+            "if the prior body mattered.",
+            file=sys.stderr,
+        )
 
     return 0
 
@@ -1950,6 +2097,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Skip git repo initialization and the initial commit. The kit's "
             ".gitignore still ships through the normal render path."
+        ),
+    )
+    init.add_argument(
+        "--adopt",
+        action="store_true",
+        help=(
+            "Adopt pre-existing files in the target as kit baselines. "
+            "Allows wiki init over a non-empty directory; pre-existing "
+            "kit-owned files are journaled as PageAdoptedEvent baselines "
+            "before the install pipeline runs, so render-time drift "
+            "surfaces as .proposed sidecars instead of silent overwrites. "
+            "See docs/specs/wiki-init-adopt/spec.md."
         ),
     )
     init.set_defaults(func=_cmd_init)

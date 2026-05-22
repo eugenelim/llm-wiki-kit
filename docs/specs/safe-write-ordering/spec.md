@@ -781,11 +781,13 @@ predicate, so a regression in one sub-case cannot be masked by a
   consistent answer.
 - **Not a `wiki init --adopt` flag.** The page-level adopt fast-path
   covers the byte-identical case; the differing-bytes case routes
-  through `.proposed`. A vault-wide `--adopt` (which would journal
-  every pre-existing file as a `PageWriteEvent` to claim ownership
-  without surfacing each as a proposal) remains RFC-0001's
-  unresolved-question for a future task. This spec does not block
-  it.
+  through `.proposed`. The vault-wide `--adopt` deferral is now
+  closed by ADR-0008 and
+  [`docs/specs/wiki-init-adopt/`](../wiki-init-adopt/) — adoption
+  emits dedicated `PageAdoptedEvent` /
+  `ManagedRegionAdoptedEvent` baselines rather than the
+  `PageWriteEvent`-with-`reason` shape this non-goal originally
+  named. This spec does not block it.
 - **Not a rollback or two-phase commit.** Event-before-disk + the
   doctor checks named in §Edge cases is the recovery model. A real
   2PC would require fsyncing intent and rollback markers around

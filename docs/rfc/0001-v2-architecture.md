@@ -210,7 +210,8 @@ mid-flight (`journal-locking/`, `journal-reader-cache/`,
    recipe files.
 1. **Task 10 — `wiki init` end-to-end.** ✅ First working command —
    a vault with only the core primitive renders correctly. (`--adopt`
-   deferred; see §"Unresolved questions".)
+   shipped post-v2.0 per ADR-0008 and
+   [`docs/specs/wiki-init-adopt/`](../specs/wiki-init-adopt/).)
 
 #### Phase C — Primitives (parallelizable after Task 11) — ✅ shipped
 
@@ -273,9 +274,9 @@ mid-flight (`journal-locking/`, `journal-reader-cache/`,
     The ROADMAP pass documents only items the RFC explicitly defers,
     currently a single entry:
     - `wiki init --adopt` — explicit "Unresolved question" in this
-      RFC; deferred at Task 10. Needs its own spec before any task
-      picks it up. `cli.py:_cmd_init` carries an inline-docstring
-      pointer for future readers.
+      RFC; deferred at Task 10. Resolved post-v2.0 by ADR-0008 and
+      [`docs/specs/wiki-init-adopt/`](../specs/wiki-init-adopt/); now
+      shipped.
 
     Acceptance: `docs/ROADMAP.md` lists `--adopt` under "Deferred
     from v2.0" with the one-line intent above; `CHANGELOG.md`
@@ -449,9 +450,9 @@ doesn't need `stakeholder-map-refresh`, a CX lead doesn't need
   the install pipeline runs. Policy pinned in
   [ADR-0008](../adr/0008-init-adopt-ownership-policy.md); contract
   + plan in
-  [`docs/specs/wiki-init-adopt/`](../specs/wiki-init-adopt/).
-  Implementation queued (three PRs per the plan); the inline comment
-  in `cli.py:_cmd_init` carries the same pointer.
+  [`docs/specs/wiki-init-adopt/`](../specs/wiki-init-adopt/);
+  shipped across three PRs (event types + replay, adopt-aware
+  predicate, CLI surface).
 - **Recipe inheritance (`extends:`)?** Out of scope for v2.0. Tier 3
   roadmap item.
 
