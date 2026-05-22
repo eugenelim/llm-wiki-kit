@@ -350,7 +350,7 @@ def test_activate_raises_wiki_error_if_daemon_reload_fails(
     timer = tmp_path / "llm-wiki-kit-abc-op.timer"
 
     def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
-        return _cp(returncode=1, stderr="Failed to connect to bus")
+        return _cp(returncode=1, stderr="Failed to connect to bus", stdout="some output")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -359,6 +359,9 @@ def test_activate_raises_wiki_error_if_daemon_reload_fails(
     msg = str(exc.value)
     assert "daemon-reload" in msg
     assert str(timer) in msg
+    # C3: both streams present in error message
+    assert "stderr=" in msg
+    assert "stdout=" in msg
 
 
 def test_activate_raises_wiki_error_if_enable_fails(
@@ -374,7 +377,7 @@ def test_activate_raises_wiki_error_if_enable_fails(
         # daemon-reload succeeds; enable --now fails
         if call_count == 1:
             return _cp(returncode=0)
-        return _cp(returncode=1, stderr="Unit not found")
+        return _cp(returncode=1, stderr="Unit not found", stdout="hint on stdout")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -383,6 +386,80 @@ def test_activate_raises_wiki_error_if_enable_fails(
     msg = str(exc.value)
     assert "enable --now" in msg
     assert str(timer) in msg
+    # C3: both streams present in error message
+    assert "stderr=" in msg
+    assert "stdout=" in msg
+
+
+# ---------------------------------------------------------------------------
+# C1. timeout=10.0 on all subprocess calls; TimeoutExpired mapped correctly
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_returns_not_loaded_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TimeoutExpired from is-enabled → ``"not-loaded"``."""
+    timer = tmp_path / "llm-wiki-kit-abc-op.timer"
+    timer.write_text("")
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert inspect(timer) == "not-loaded"
+
+
+def test_activate_raises_wiki_error_on_daemon_reload_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TimeoutExpired from daemon-reload → WikiError with timeout message."""
+    timer = tmp_path / "llm-wiki-kit-abc-op.timer"
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(WikiError) as exc:
+        activate(timer)
+    assert "daemon-reload" in str(exc.value)
+    assert "timed out" in str(exc.value)
+
+
+def test_activate_raises_wiki_error_on_enable_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TimeoutExpired from enable --now → WikiError with timeout message."""
+    timer = tmp_path / "llm-wiki-kit-abc-op.timer"
+    call_count = 0
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _cp(returncode=0)  # daemon-reload succeeds
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(WikiError) as exc:
+        activate(timer)
+    assert "enable --now" in str(exc.value)
+    assert "timed out" in str(exc.value)
+
+
+def test_deactivate_does_not_raise_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TimeoutExpired from disable --now must not raise (best-effort)."""
+    timer = tmp_path / "llm-wiki-kit-abc-op.timer"
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=10.0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    deactivate(timer)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -424,28 +501,36 @@ def test_deactivate_calls_disable_now(tmp_path: Path, monkeypatch: pytest.Monkey
 # ---------------------------------------------------------------------------
 
 
-def test_systemd_emitter_artifact_path_delegates() -> None:
+def test_systemd_emitter_delegates_artifact_path_and_render_artifact() -> None:
+    """SystemdEmitter delegates to module-level functions; pin output against the daily golden."""
     e = SystemdEmitter()
-    assert e.artifact_path("vid", "myop") == artifact_path("vid", "myop")
 
+    # artifact_path delegation
+    expected_ap = Path.home() / ".config" / "systemd" / "user" / "llm-wiki-kit-vid-myop.timer"
+    assert e.artifact_path("vid", "myop") == expected_ap
 
-def test_systemd_emitter_render_artifact_delegates() -> None:
-    e = SystemdEmitter()
-    result = e.render_artifact(
-        operation=_OPERATION,
-        vault_root=_VAULT_ROOT,
-        vault_id=_VAULT_ID,
-        cadence=_DAILY,
-        exec_command=_EXEC_CMD,
+    # render_artifact delegation — assert against the canonical golden for daily cadence
+    expected = (
+        "[Unit]\n"
+        "Description=Timer for llm-wiki-kit weekly-digest in /home/user/my-vault\n"
+        "\n"
+        "[Timer]\n"
+        "OnCalendar=*-*-* 07:00:00\n"
+        "Persistent=true\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
     )
-    expected = render_artifact(
-        operation=_OPERATION,
-        vault_root=_VAULT_ROOT,
-        vault_id=_VAULT_ID,
-        cadence=_DAILY,
-        exec_command=_EXEC_CMD,
+    assert (
+        e.render_artifact(
+            operation=_OPERATION,
+            vault_root=_VAULT_ROOT,
+            vault_id=_VAULT_ID,
+            cadence=_DAILY,
+            exec_command=_EXEC_CMD,
+        )
+        == expected
     )
-    assert result == expected
 
 
 # ---------------------------------------------------------------------------

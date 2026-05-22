@@ -147,10 +147,10 @@ def render_service(
     Elements are joined with spaces — systemd's ``ExecStart=`` line takes
     a command string, not a JSON array.
 
-    Precondition: no element of ``exec_command`` may contain whitespace or
-    shell metacharacters.  systemd splits ``ExecStart=`` on whitespace; a
-    path with a space would silently corrupt argv.  A :class:`WikiError` is
-    raised at this boundary if any element violates this constraint.
+    Precondition: no element of ``exec_command`` may contain whitespace.
+    systemd's ``ExecStart=`` parser splits on whitespace; a path with a
+    space would silently corrupt argv.  A :class:`WikiError` is raised at
+    this boundary if any element violates this constraint.
     """
 
     bad = [el for el in exec_command if any(c in el for c in " \t\n\r")]
@@ -186,26 +186,35 @@ def activate(timer_path: Path) -> None:
 
     timer_name = timer_path.name
 
-    reload_result = subprocess.run(
-        ["systemctl", "--user", "daemon-reload"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        reload_result = subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WikiError("systemctl --user daemon-reload timed out after 10s") from exc
     if reload_result.returncode != 0:
         raise WikiError(
             f"systemctl --user daemon-reload failed for {timer_path}: "
-            f"{reload_result.stderr.strip()}"
+            f"stderr={reload_result.stderr.strip()!r} stdout={reload_result.stdout.strip()!r}"
         )
 
-    enable_result = subprocess.run(
-        ["systemctl", "--user", "enable", "--now", timer_name],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        enable_result = subprocess.run(
+            ["systemctl", "--user", "enable", "--now", timer_name],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WikiError(f"systemctl --user enable --now {timer_path} timed out after 10s") from exc
     if enable_result.returncode != 0:
         raise WikiError(
-            f"systemctl --user enable --now {timer_name} failed for {timer_path}: "
-            f"{enable_result.stderr.strip()}"
+            f"systemctl --user enable --now {timer_path} failed "
+            f"(exit code {enable_result.returncode}): "
+            f"stderr={enable_result.stderr.strip()!r} stdout={enable_result.stdout.strip()!r}"
         )
 
 
@@ -218,11 +227,19 @@ def deactivate(timer_path: Path) -> None:
     """
 
     timer_name = timer_path.name
-    result = subprocess.run(
-        ["systemctl", "--user", "disable", "--now", timer_name],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "disable", "--now", timer_name],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"warning: systemctl --user disable --now {timer_name} timed out after 10s",
+            file=sys.stderr,
+        )
+        return
     if result.returncode != 0:
         print(
             f"warning: systemctl --user disable --now {timer_name} "
@@ -248,11 +265,15 @@ def inspect(timer_path: Path) -> InspectResult:
         return "missing-file"
 
     timer_name = timer_path.name
-    result = subprocess.run(
-        ["systemctl", "--user", "is-enabled", timer_name],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-enabled", timer_name],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except subprocess.TimeoutExpired:
+        return "not-loaded"
     if result.returncode == 0 and result.stdout.strip() == "enabled":
         return "loaded"
     return "not-loaded"

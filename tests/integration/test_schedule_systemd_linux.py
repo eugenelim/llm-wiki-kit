@@ -151,7 +151,7 @@ def test_systemd_write_activate_inspect_deactivate(tmp_path: Path) -> None:
         # residual systemd state if the test body raises mid-way.
         try:
             deactivate(timer_path)
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             print(f"warning: deactivate during cleanup failed: {exc}", file=sys.stderr)
         try:
             subprocess.run(
@@ -159,7 +159,7 @@ def test_systemd_write_activate_inspect_deactivate(tmp_path: Path) -> None:
                 capture_output=True,
                 text=True,
             )
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             print(
                 f"warning: daemon-reload during cleanup failed: {exc}",
                 file=sys.stderr,
