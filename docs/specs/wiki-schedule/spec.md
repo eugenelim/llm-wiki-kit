@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/schedule/`, `llm_wiki_kit/cli.py:_cmd_schedule_*`
 - **Related:** [RFC-0003](../../rfc/0003-scheduling-and-autonomous-execution.md),
   [`docs/specs/wiki-run-exec/spec.md`](../wiki-run-exec/spec.md),
@@ -144,8 +144,14 @@ mirrors RFC-0003 §"Cadence vocabulary":
   The journal stays clean. Because the artifact write precedes
   activation, a *cleanup-after-activation-failure* hop that itself
   fails (file write succeeded, activation failed, unlink failed)
-  leaves a stale artifact on disk; the next `wiki doctor` flags
-  it as "stale artifact / no journal entry" (§"Stale schedule").
+  leaves a stale artifact on disk with no journal entry. The kit
+  surfaces this only on the user's next `wiki schedule install
+  <op>` (which overwrites it) or via direct inspection of the
+  artifact directory (`ls ~/Library/LaunchAgents/`,
+  `~/.config/systemd/user/`, or `%LOCALAPPDATA%/llm-wiki-kit/schedules/`).
+  `wiki doctor` does **not** scan those directories for orphan
+  artifacts at v1 — its schedule checks iterate journaled events
+  only. A future doctor-fix RFC may add the filesystem scan.
 
   **Windows v1 special case.** `taskscheduler.activate()` returns
   `None` without spawning a subprocess on Windows v1 — the
@@ -352,12 +358,16 @@ mirrors RFC-0003 §"Cadence vocabulary":
   uninstalled. Spec'd this way so a `wiki doctor --fix` (future) can
   re-materialise schedules from the journal without producing event
   noise.
-- **Stale schedule (artifact present but no journal entry)** — `list`
-  reports `unknown` for the artifact's `(operation, machine)`;
-  `uninstall` refuses with the "no schedule installed" message
-  rather than silently removing the file. The user must
-  `rm <artifact>` manually or write a `ScheduleInstalledEvent` by
-  hand (out of scope; `wiki doctor` flags it).
+- **Stale schedule (artifact present but no journal entry)** — the
+  kit's journal-driven surfaces (`list`, `doctor`) only enumerate
+  schedules with a live `ScheduleInstalledEvent`, so an orphan
+  artifact is invisible to both. `uninstall` refuses with the "no
+  schedule installed" message rather than silently removing the
+  file. The user must `rm <artifact>` manually, or re-run
+  `wiki schedule install <op>` (which overwrites the orphan), or
+  write a `ScheduleInstalledEvent` by hand (out of scope). A
+  future doctor-fix RFC may add the filesystem scan that would
+  surface orphans automatically.
 - **Running on an unsupported OS** (anything not in `{Darwin, Linux,
   Windows}`) — refuse install with `WikiError("scheduling is not
   supported on <platform>; see RFC-0003 §'OS coverage'")`.
@@ -621,6 +631,16 @@ already distinguishes the two (per existing `llm_wiki_kit/doctor.py`
 convention), and a stale schedule shouldn't fail CI-style checks on
 the vault. `wiki doctor` exits `0` when only schedule warnings are
 present; warnings are surfaced on stdout, not stderr.
+
+Rendering shape: when any schedule warnings are present, the CLI emits
+a literal `Schedules:` header line (flush-left) after the existing
+failure issues, followed by one warning per line indented two spaces.
+When non-schedule failures coexist, a blank line separates the failure
+block from the `Schedules:` block. The header is suppressed entirely
+when no schedule warnings fire so a clean vault produces empty
+stdout. The two-space indent is the same gutter `wiki outcomes` uses,
+keeping doctor's section visually consistent with the rest of the
+kit's listing surfaces.
 
 ### Artifact templates
 
