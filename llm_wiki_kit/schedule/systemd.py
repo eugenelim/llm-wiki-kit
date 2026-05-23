@@ -316,6 +316,42 @@ class SystemdEmitter:
             exec_command=exec_command,
         )
 
+    def companion_artifacts(
+        self,
+        *,
+        operation: str,
+        vault_root: Path,
+        vault_id: str,
+        cadence: ResolvedCadence,
+        exec_command: list[str],
+    ) -> list[tuple[Path, str | bytes]]:
+        """Return the ``.service`` companion for the ``.timer`` primary artifact.
+
+        Systemd's load order requires the unit file to exist before the
+        timer file enables, so the orchestrator writes this companion
+        first (spec §"install happy path" step 8). ``cadence`` is
+        accepted for Protocol uniformity but ignored — the timer
+        carries the schedule, the service does not.
+        """
+        del cadence  # unused: the .service is cadence-independent.
+        timer_path = self.artifact_path(vault_id, operation)
+        sp = service_path(timer_path)
+        body = render_service(
+            operation=operation,
+            vault_root=vault_root,
+            vault_id=vault_id,
+            exec_command=exec_command,
+        )
+        return [(sp, body)]
+
+    def install_instruction(self, timer_path: Path) -> str | None:
+        """``activate()`` already enables the timer; no user-facing instruction needed."""
+        return None
+
+    def uninstall_instruction(self, timer_path: Path) -> str | None:
+        """``deactivate()`` already disables the timer; no user-facing instruction needed."""
+        return None
+
     def activate(self, timer_path: Path) -> None:
         activate(timer_path)
 

@@ -45,8 +45,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-import yaml
-
 from llm_wiki_kit.errors import WikiError
 from llm_wiki_kit.journal import append_event, read_events, replay_state
 from llm_wiki_kit.models import (
@@ -54,10 +52,7 @@ from llm_wiki_kit.models import (
     OperationExecFailedEvent,
     OperationInputSpec,
     OperationRunEvent,
-    Primitive,
-    PrimitiveKind,
 )
-from llm_wiki_kit.primitives import discover_primitives, load_primitive
 from llm_wiki_kit.write_helper import safe_write
 
 # Hex pattern for ``dispatch_event_id`` shape validation. 12 lowercase
@@ -208,70 +203,15 @@ def _coerce_input(raw_value: str, spec: OperationInputSpec) -> object:
 # ---------------------------------------------------------------------------
 
 
-def _operation_contract_path(operation: str, kit_root: Path) -> Path:
-    return kit_root / "templates" / "operations" / operation / "contract.yaml"
-
-
-def _load_contract(operation: str, kit_root: Path) -> OperationContract:
-    """Read and validate ``templates/operations/<operation>/contract.yaml``.
-
-    Raises :class:`WikiError` with the absolute path on a missing
-    file (the kit-version-skew case — primitive is installed in the
-    journal but its contract file disappeared from disk).
-    """
-
-    path = _operation_contract_path(operation, kit_root)
-    if not path.is_file():
-        raise WikiError(f"operation {operation!r}: no contract.yaml at {path}")
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return OperationContract.model_validate(payload)
-
-
-def _resolve_operation_kind(
-    operation: str,
-    *,
-    kit_root: Path,
-    installed_primitive_names: set[str],
-) -> None:
-    """Verify ``operation`` is installed AND has kind ``operation``.
-
-    Looks the primitive up in the full discovered catalog
-    (``core`` + ``templates/``) so a content-type installed under
-    the operation name gives a clean kind-mismatch error rather
-    than a confusing missing-contract error. Raises
-    :class:`WikiError` on either failure.
-    """
-
-    if operation not in installed_primitive_names:
-        installed_sorted = ", ".join(sorted(installed_primitive_names)) or "(none)"
-        raise WikiError(
-            f"operation {operation!r} is not installed in this vault. "
-            f"Installed primitives: {installed_sorted}"
-        )
-
-    core_dir = kit_root / "core"
-    templates_dir = kit_root / "templates"
-    catalog: list[Primitive] = []
-    if core_dir.is_dir():
-        catalog.append(load_primitive(core_dir))
-    if templates_dir.is_dir():
-        catalog.extend(discover_primitives(templates_dir))
-
-    target = next((p for p in catalog if p.name == operation), None)
-    if target is None:
-        # In the journal but not on disk — kit-version skew.
-        # _load_contract will raise the path-bearing error a moment
-        # later; raise the same shape here so callers see one
-        # consistent message.
-        raise WikiError(
-            f"operation {operation!r} is installed but not present in "
-            f"the kit's catalog (searched {core_dir} and {templates_dir})"
-        )
-    if target.kind is not PrimitiveKind.OPERATION:
-        raise WikiError(
-            f"{operation!r} is installed but its kind is {target.kind.value!r}, not 'operation'"
-        )
-
+# Operation-primitive helpers are shared with ``schedule.install`` and live
+# in :mod:`llm_wiki_kit.operations`. Re-imported here under their existing
+# names so callers and tests that referenced ``run._resolve_operation_kind``
+# etc. continue to work without churn.
+from llm_wiki_kit.operations import (  # noqa: E402, F401
+    _load_contract,
+    _operation_contract_path,
+    _resolve_operation_kind,
+)
 
 # ---------------------------------------------------------------------------
 # DispatchResult

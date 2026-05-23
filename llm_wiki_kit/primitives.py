@@ -95,6 +95,7 @@ RESERVED_OUTCOME_VERBS: frozenset[str] = frozenset(
         "research",
         "search",
         "journal",
+        "schedule",
         # Discovery aliases — never registered as subparsers but
         # reserved so a primitive cannot claim them.
         "help",

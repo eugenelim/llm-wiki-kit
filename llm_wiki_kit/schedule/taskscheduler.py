@@ -157,6 +157,33 @@ class TaskSchedulerEmitter:
         assert isinstance(result, bytes)
         return result
 
+    def companion_artifacts(
+        self,
+        *,
+        operation: str,
+        vault_root: Path,
+        vault_id: str,
+        cadence: ResolvedCadence,
+        exec_command: list[str],
+    ) -> list[tuple[Path, str | bytes]]:
+        """Task Scheduler emits a single ``.xml`` artifact — no companions."""
+        return []
+
+    def install_instruction(self, artifact_path: Path) -> str | None:
+        """Return the user-facing ``schtasks /Create /XML`` line for the stdout summary.
+
+        Windows v1 doesn't auto-activate (``activate()`` is a no-op);
+        the orchestrator prints this string so the user can run the
+        command by hand to enable the task. Delegates to the existing
+        module-level helper so PR-7's golden-string assertions stay
+        green.
+        """
+        return format_activation_instruction(artifact_path)
+
+    def uninstall_instruction(self, artifact_path: Path) -> str | None:
+        """Return the user-facing ``schtasks /Delete`` line for the uninstall summary."""
+        return format_deactivation_instruction(artifact_path)
+
     def activate(self, artifact_path: Path) -> None:
         """No-op. Windows v1 special case: no subprocess is spawned.
 

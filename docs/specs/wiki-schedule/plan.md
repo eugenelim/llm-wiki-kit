@@ -23,9 +23,9 @@ default_time + DSL + emitter Protocol (PR-2+3 of 8)`). PR-3 directly
 consumes PR-2's `OperationContract.default_time` field, and the same PR
 hoists the `_Emitter` Protocol into `schedule/_emitter.py` so the three
 per-OS emitter PRs (steps 4, 6, 7) can import it without colliding on
-shared init-module state. Once that bundled PR lands, steps 4, 6, and 7
-become `Depends on: none` from a supervisor's POV and can ship in
-parallel from a single round.
+shared init-module state. Steps 4, 6, and 7 shipped as #89, #90, #91
+respectively from a parallel round-3 supervisor view; this section is
+now historical context.
 
 Why this order: every per-OS emitter consumes the DSL parser, the
 module API, and the new `write_helper` exemption, so those land first;
@@ -140,33 +140,214 @@ the OS invokes it independently of how it was authored).
 
 5. **Module orchestration: `schedule.install`, `schedule.uninstall`,
    `schedule.list_schedules`.**
-   - **Depends on:** Step 1, Step 2, Step 3, Step 4.
-   - **Tests:**
-     - `tests/unit/test_schedule_install.py` covering spec CT-1, CT-2,
-       CT-3, CT-4, CT-5, CT-6, **CT-12** (activation failure leaves
-       no install event — verified by injecting a stub `_Emitter`
-       whose `activate()` raises), and CT-18 (exec_command
-       resolution).
-     - `tests/unit/test_schedule_uninstall.py` covering CT-7, CT-8,
-       CT-9, and **CT-16** (foreign-machine uninstall journals event,
-       skips activation).
-     - `tests/unit/test_schedule_list.py` covering CT-10, CT-11,
-       CT-13.
-     - `tests/integration/test_cli_schedule.py` driving
-       `python -m llm_wiki_kit schedule install …` against a real
-       `tmp_path` vault, asserting on stdout + journal + artifact
-       file.
+   - **Depends on:** Step 1, Step 2, Step 3, Step 4 (launchd),
+     **Step 6 (systemd)**, **Step 7 (taskscheduler)**. PR-5 imports
+     `SystemdEmitter` and `TaskSchedulerEmitter` into the dispatch
+     table and into the systemd-ordering construction test, so all
+     three emitter modules must have landed first. The earlier
+     "parallel with PR-6 and PR-7" framing only applied while
+     PR-5/PR-6/PR-7 were in flight from a single round-3 supervisor;
+     post-merge of PR-6 (#90) and PR-7 (#91) this step is a strict
+     follow-on.
+   - **CT → construction test map:**
+
+     |Spec CT|Construction test                                                                           |File                                  |
+     |-------|--------------------------------------------------------------------------------------------|--------------------------------------|
+     |CT-1   |`test_install_journals_event_writes_artifact_and_prints_summary` + integration `test_cli_*`|`test_schedule_install.py` + `test_cli_schedule.py`|
+     |CT-2   |`test_install_with_at_override_records_canonical_dsl`                                       |`test_schedule_install.py`            |
+     |CT-3   |`test_install_refuses_on_demand_period`                                                     |`test_schedule_install.py`            |
+     |CT-4   |`test_install_refuses_cron_string_via_at_flag`                                              |`test_schedule_install.py`            |
+     |CT-5   |`test_install_idempotent_on_identical_cadence`                                              |`test_schedule_install.py`            |
+     |CT-6   |`test_install_refuses_changed_cadence_without_uninstall`                                    |`test_schedule_install.py`            |
+     |CT-7   |`test_uninstall_deletes_artifact_and_journals_event`                                        |`test_schedule_uninstall.py`          |
+     |CT-8   |`test_uninstall_succeeds_when_artifact_already_missing`                                     |`test_schedule_uninstall.py`          |
+     |CT-9   |`test_uninstall_refuses_when_no_install_event_exists` + `test_uninstall_twice_refuses_second_call`|`test_schedule_uninstall.py`     |
+     |CT-10  |`test_list_ok_then_drift_after_artifact_rm`                                                 |`test_schedule_list.py`               |
+     |CT-11  |`test_list_refuses_non_vault_directory`                                                     |`test_schedule_list.py`               |
+     |CT-12  |`test_install_does_not_journal_when_activation_fails`                                       |`test_schedule_install.py`            |
+     |CT-13  |`test_list_machine_filter_and_all_machines_flag`                                            |`test_schedule_list.py`               |
+     |CT-14  |Already covered by PR-2+3's `test_models_schedule_events.py`.                              |(not in PR-5)                         |
+     |CT-15  |PR-8's doctor section.                                                                      |(not in PR-5)                         |
+     |CT-16  |`test_uninstall_foreign_machine_skips_os_deactivation`                                      |`test_schedule_uninstall.py`          |
+     |CT-17  |PR-8's doctor section.                                                                      |(not in PR-5)                         |
+     |CT-18  |`test_install_exec_command_prefers_shutil_which_over_argv0`                                 |`test_schedule_install.py`            |
+
+   - **Tests (construction):**
+     - `tests/unit/test_schedule_install.py`:
+       - `test_install_journals_event_writes_artifact_and_prints_summary` —
+         CT-1: stub `_Emitter` whose `artifact_path()` returns a
+         `tmp_path` file; one `ScheduleInstalledEvent`, artifact file
+         exists, stdout summary present.
+       - `test_install_with_at_override_records_canonical_dsl` — CT-2:
+         `at="tue 18:00"` resolves to `cadence_dsl="TUE 18:00"`; the
+         stub captures the `cadence` passed to `render_artifact` and we
+         assert `day_of_week=2, hour=18, minute=0`.
+       - `test_install_refuses_on_demand_period` — CT-3.
+       - `test_install_refuses_cron_string_via_at_flag` — CT-4.
+       - `test_install_idempotent_on_identical_cadence` — CT-5. The
+         dup-cadence short-circuit runs **before** `journal.transaction()`
+         opens (spec §"install happy path" step 7 precedes step 8), so
+         the idempotent path emits zero events of any type — not just
+         zero `ScheduleInstalledEvent`s. The test snapshots the journal
+         line-count before and after the second call and asserts
+         equality.
+       - `test_install_refuses_changed_cadence_without_uninstall` — CT-6.
+       - `test_install_does_not_journal_when_activation_fails` — CT-12.
+         The stub's `activate()` **asserts `artifact_path.exists()` on
+         entry** (pinning the spec's "write → activate" ordering —
+         the write must have run before the activation attempt), then
+         raises `WikiError`. Post-call assertions in the test
+         fixture's controlled `tmp_path` directory (where unlink
+         always succeeds): no `schedule.installed` event, artifact
+         file is gone, `lock.acquired` / `lock.released` pair present,
+         non-zero return. The "best-effort unlink may fail in
+         production" caveat from spec §"OS-side activation" is
+         documentation about real-world disk-error paths and is not in
+         tension with this test's assertion — the test runs in a
+         fixture where unlink succeeds, exercising the happy
+         cleanup path.
+       - `test_install_systemd_activation_failure_leaves_service_companion_on_disk`
+         — pins CT-12's systemd-specific clause. Setup: monkeypatch
+         `_resolve_emitter` to a real `SystemdEmitter()`; monkeypatch
+         `Path.home` to `tmp_path`; monkeypatch `SystemdEmitter.activate`
+         to raise `WikiError("simulated")`. Run `install`. Assert
+         (a) `not timer_path.exists()` (primary unlinked on
+         best-effort cleanup), (b) `service_path(timer_path).exists()`
+         (companion left on disk as harmless orphan), (c) zero
+         `ScheduleInstalledEvent`s in the journal, (d) `lock.acquired`
+         / `lock.released` pair present.
+       - `test_install_systemd_calls_companion_artifacts_protocol_method`
+         — pins that the orchestrator invokes
+         `emitter.companion_artifacts(...)` exactly once (rather than
+         hard-coding the systemd-specific dual-write via an
+         `isinstance` branch). Monkeypatch `SystemdEmitter.companion_artifacts`
+         to a spy; run `install`; assert the spy was called exactly
+         once with `cadence` and `exec_command` matching the install
+         inputs. The spy then delegates to the real implementation
+         (via `original.companion_artifacts(...)`) so the rest of
+         install completes normally. Companion to
+         `test_install_systemd_writes_companion_then_primary` below
+         (which observes the side-effect; this one observes the
+         invocation).
+       - `test_systemd_emitter_companion_artifacts_returns_service_pair_for_timer`
+         — unit-tests the new `SystemdEmitter.companion_artifacts`
+         method in isolation. Pure-function assertion: for a daily
+         cadence + `(operation, vault_id, vault_root, exec_command)`
+         tuple, the returned list has exactly one entry, the path
+         equals `service_path(timer_path)` (where `timer_path` is
+         what `artifact_path(vault_id, operation)` returns), and the
+         body equals `render_service(operation=..., vault_root=...,
+         vault_id=..., exec_command=...)` byte-for-byte. Lives in
+         `tests/unit/test_schedule_systemd.py` (PR-6's file, amended
+         by PR-5) rather than `test_schedule_install.py` because the
+         method belongs to the systemd module.
+       - `test_install_systemd_writes_companion_then_primary` — pins
+         the Linux dual-write the orchestrator performs via the
+         lifted Protocol method
+         `emitter.companion_artifacts(...)`. Setup: monkeypatch
+         `llm_wiki_kit.schedule._resolve_emitter` to return a real
+         `SystemdEmitter()` so the systemd code path is exercised
+         regardless of host OS; monkeypatch `Path.home` to `tmp_path`
+         so the artifact paths land under the fixture; monkeypatch
+         `SystemdEmitter.activate` to a no-op recorder; monkeypatch
+         `llm_wiki_kit.schedule.write_os_artifact` (the name the
+         orchestrator resolves at call time, *not*
+         `llm_wiki_kit.write_helper.write_os_artifact`) to a spy that
+         appends each call into a shared `calls: list[tuple[str,
+         Path]]` log. The `activate` no-op also appends
+         `("activate", timer_path)`. Assertions: (a) both `.service`
+         and `.timer` files exist after install, (b) the recorded
+         call order is `[("write", service_path), ("write",
+         timer_path), ("activate", timer_path)]` — pinning the full
+         spec'd ordering (`render → companion_artifacts → write
+         companions → write primary → activate`).
+       - `test_install_windows_summary_includes_schtasks_instruction` —
+         pins the `install_instruction()` Protocol lift. Stub emitter
+         whose `install_instruction()` returns
+         `"schtasks /Create /XML /tmp/x.xml /TN foo"`; assert captured
+         stdout contains that string. Symmetric assertion in
+         `test_uninstall_windows_summary_includes_schtasks_instruction`
+         under `test_schedule_uninstall.py`.
+       - `test_install_exec_command_prefers_shutil_which_over_argv0` —
+         CT-18. Setup: `(tmp_path / "bin").mkdir()`, write
+         `tmp_path / "bin" / "wiki"` with a shebang stub,
+         `wiki_path.chmod(0o755)`, `monkeypatch.setenv("PATH", str(tmp_path / "bin"))`.
+         Assert the journaled `exec_command[0]` equals
+         `str(tmp_path / "bin" / "wiki")` (matches `shutil.which("wiki")`
+         after the PATH stub). `shutil.which` reads `os.environ["PATH"]`
+         fresh per call — no `lru_cache` to clear.
+     - `tests/unit/test_schedule_uninstall.py`:
+       - `test_uninstall_deletes_artifact_and_journals_event` — CT-7.
+       - `test_uninstall_succeeds_when_artifact_already_missing` — CT-8.
+       - `test_uninstall_refuses_when_no_install_event_exists` — CT-9.
+       - `test_uninstall_twice_refuses_second_call` — second uninstall
+         hits CT-9's "no schedule installed" path because the later
+         `ScheduleUninstalledEvent` masks the earlier
+         `ScheduleInstalledEvent`. Exactly one
+         `ScheduleUninstalledEvent` total across the two calls.
+       - `test_uninstall_foreign_machine_skips_os_deactivation` —
+         CT-16: stub emitter records `deactivate()` calls; assert no
+         call, event has `removed_artifact=False`, stderr warning.
+         **Also pre-create a file at the journaled `os_artifact_path`
+         under `tmp_path` and assert it is untouched** (the foreign-
+         machine branch must not unlink local files).
+       - `test_uninstall_windows_summary_includes_schtasks_instruction`
+         — symmetric to the install variant above.
+     - `tests/unit/test_schedule_list.py`:
+       - `test_list_ok_then_drift_after_artifact_rm` — CT-10.
+       - `test_list_refuses_non_vault_directory` — CT-11.
+       - `test_list_machine_filter_and_all_machines_flag` — CT-13.
+     - `tests/integration/test_cli_schedule.py`:
+       - `test_cli_schedule_install_journals_event_and_writes_artifact`
+         — drive `python -m llm_wiki_kit schedule install …` against a
+         real `tmp_path` vault; assert stdout, journal, and artifact
+         file on disk.
    - **Approach:** new `llm_wiki_kit/schedule/__init__.py` wiring DSL
      + emitter + journal + state-replay together. Install sequence
-     **write → activate → journal** per spec §"install happy path"
-     step 8 (no rollback; activation failure unlinks the artifact and
-     skips the journal append). PR-5 may land in parallel with PR-6
-     and PR-7 (per the round-3 plan); if PR-6 or PR-7 has not yet
-     merged when PR-5 ships, the missing emitter's slot in the
-     platform-dispatch table raises `NotImplementedError` for that
-     OS until its PR lands. If all three emitter PRs have merged
-     first, PR-5's tests pin against the real emitter return values
-     and there are no stubs at any point.
+     **write companions → write primary → activate → journal** per
+     spec §"install happy path" step 8 (no rollback; activation
+     failure unlinks the primary artifact and skips the journal
+     append; companions are *not* unlinked — they're harmless orphans
+     on the failure path, consistent with spec §Invariants "uninstall
+     deletes one file"). The dup-cadence idempotent check runs
+     **before** `journal.transaction()` opens, so the no-op path
+     emits zero events of any type (no `lock.acquired` /
+     `lock.released` pair) — spec §Invariants now pins this
+     explicitly. Platform dispatch via a module-level
+     `_EMITTERS: dict[str, _Emitter]` table keyed by
+     `platform.system()`; tests inject behavior by monkeypatching
+     `_resolve_emitter`. **Import shape pinned:**
+     `schedule/__init__.py` does `from llm_wiki_kit.write_helper
+     import write_os_artifact` so the function is bound in the
+     `llm_wiki_kit.schedule` namespace; tests monkeypatch at that
+     call-site name so the spy actually intercepts. Resolves PR-7's
+     deferred design question by **lifting
+     `install_instruction(artifact_path) -> str | None` and
+     `uninstall_instruction(artifact_path) -> str | None` onto
+     `_Emitter`** with `None`-default impls on launchd/systemd; the
+     Windows emitter's methods delegate to the existing module-level
+     `format_activation_instruction` / `format_deactivation_instruction`
+     helpers (PR-7's tests stay green). Names are deliberately
+     `*_instruction` not `post_*_instruction` to read as "return the
+     user-facing instruction string for the stdout summary" rather
+     than "run after install"; the docstring pins "never spawn a
+     subprocess." **Also lifts
+     `companion_artifacts(...) -> list[tuple[Path, str | bytes]]`
+     onto `_Emitter`** with default `[]` on launchd/taskscheduler;
+     the Linux `SystemdEmitter` returns
+     `[(service_path(timer_path), service_body)]`. Rationale: removes
+     both the Windows-only and Linux-only branches from the
+     orchestrator and keeps `_Emitter` as the single place a future
+     OS implementor learns the contract — every per-OS asymmetry is
+     now a Protocol method with a sensible default. Also extracts
+     `run._resolve_operation_kind`, `_load_contract`, and
+     `_operation_contract_path` to a new
+     `llm_wiki_kit/operations.py` module so `schedule.install`
+     reuses the same installed-primitive + kind check + contract
+     loader `wiki run` uses; spec §"Contracts with other modules"
+     amended to enumerate the three extracted names. Refactor is
+     pure; `run.py` imports the extracted names and behavior is
+     byte-identical.
 
 6. **Linux systemd emitter — file emission only.**
    - **Depends on:** PR-1 (`write_helper.write_os_artifact()`) and the
