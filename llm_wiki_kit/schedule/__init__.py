@@ -224,8 +224,10 @@ def _latest_install(
     Returns ``None`` when no install event exists OR when the most
     recent install is masked by a later ``ScheduleUninstalledEvent``
     on the same ``(operation, machine_id)`` pair. Used by ``install``
-    (idempotent / changed-cadence checks) and ``uninstall`` (the
-    "no schedule installed" refusal).
+    (idempotent / changed-cadence checks) and ``uninstall`` — both
+    the pre-transaction early-refusal and the in-transaction
+    race-loss re-check on the foreign-machine branch route through
+    this helper.
     """
 
     latest: ScheduleInstalledEvent | None = None
@@ -538,11 +540,23 @@ def uninstall(
         # warning. Crucially, the artifact at the journaled path is
         # NOT touched on the local filesystem — even if a file
         # happens to exist there (vault-id collision, shared home),
-        # the foreign-machine branch must not unlink it. No
-        # `journal.transaction()` wrapper here: the spec brackets
-        # transactions around journal-plus-OS-side pairs; foreign
-        # uninstall has no OS-side work, so a single `append_event`
-        # is the right shape.
+        # the foreign-machine branch must not unlink it.
+        #
+        # The append runs under `journal.transaction()` so the
+        # pre-read above + the append are serialized against a
+        # competing `wiki schedule uninstall` for the same
+        # `(operation, machine_id)` pair landing between them (spec
+        # §"uninstall happy path" step 4 "Foreign machine";
+        # §Invariants "Either both happen or neither does" extended
+        # to cover this single-append case). The pre-transaction
+        # read is retained as the cheap early-refusal path so a
+        # clearly-missing schedule does not pay the lock-pair cost
+        # (CT-9 invariant: zero events on refusal). Not extracted
+        # into a shared helper with the current-host branch below:
+        # that branch interleaves `emitter.deactivate()` and
+        # `artifact_path.unlink()` inside the same transaction, so
+        # the shared surface would be the two-line read+re-check
+        # — not worth the helper's parameter shape.
         try:
             emitter: _Emitter | None = _resolve_emitter()
         except WikiError:
@@ -550,16 +564,36 @@ def uninstall(
             # unsupported OS" says uninstall still works (journal
             # append). No instruction to print.
             emitter = None
-        append_event(
-            journal_path,
-            ScheduleUninstalledEvent(
-                timestamp=now,
-                by=SCHEDULE_VEHICLE,
-                operation=operation,
-                machine_id=machine_id,
-                removed_artifact=False,
-            ),
-        )
+        with transaction(journal_path, by=SCHEDULE_VEHICLE, reason=f"uninstall {operation}"):
+            # TOCTOU re-check under the flock: a competing uninstall
+            # may have landed between the pre-read above and this
+            # acquire. Mirrors install()'s in-transaction re-read.
+            prior_locked = _latest_install(list(read_events(journal_path)), operation, machine_id)
+            if prior_locked is None:
+                # Discriminator on the message so a user-reported refusal
+                # can be classified at command time without journal grep —
+                # this branch only fires on the rare race; the pre-read
+                # refusal at line ~529 uses the bare message.
+                raise WikiError(
+                    f"no schedule installed for {operation} on {machine_id} "
+                    f"(concurrent uninstall observed under lock; "
+                    f"re-check the journal)"
+                )
+            # Source the result payload from the locked view rather than
+            # the lockless pre-read; today the two events agree (no event
+            # type rewrites os_artifact_path in place), but tracking the
+            # under-lock confirmation future-proofs the coupling.
+            prior = prior_locked
+            append_event(
+                journal_path,
+                ScheduleUninstalledEvent(
+                    timestamp=now,
+                    by=SCHEDULE_VEHICLE,
+                    operation=operation,
+                    machine_id=machine_id,
+                    removed_artifact=False,
+                ),
+            )
         return UninstallResult(
             operation=operation,
             machine_id=machine_id,

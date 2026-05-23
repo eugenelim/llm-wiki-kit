@@ -319,10 +319,54 @@ mirrors RFC-0003 §"Cadence vocabulary":
      - Append `ScheduleUninstalledEvent` with the recorded
        `removed_artifact`.
    - **Foreign machine** (`--machine` differs from
-     `socket.gethostname()`): no OS access possible. Append
-     `ScheduleUninstalledEvent(removed_artifact=False)` and print a
-     warning to stderr: `note: schedule was installed on <machine>;
-     remove the artifact at <path> manually on that host`. Exit `0`.
+     `socket.gethostname()`): no OS-side access possible. The
+     pre-transaction `_latest_install` read above is retained as the
+     early-refusal cheap path — a clearly-missing schedule
+     short-circuits with no `journal.transaction()` open and therefore
+     no lock-pair events (CT-9 invariant: zero events on refusal). If
+     the pre-read finds a live install, enter
+     `journal.transaction(by="wiki-schedule", reason="uninstall <op>")`
+     and re-read events under the flock. The in-transaction re-check
+     has two outcomes:
+     - **Install still live** (no later
+       `ScheduleUninstalledEvent` for the same `(operation,
+       machine_id)`): append
+       `ScheduleUninstalledEvent(removed_artifact=False)` and exit `0`
+       after printing the warning. This is the steady-state happy
+       path; the lock-pair brackets exactly one
+       `ScheduleUninstalledEvent`.
+     - **Install now masked by a concurrent uninstall** (the
+       competitor's `ScheduleUninstalledEvent` landed between the
+       pre-read and the lock acquisition): raise `WikiError("no
+       schedule installed for <op> on <machine>")` without appending a
+       second `ScheduleUninstalledEvent`. The journal will contain
+       this caller's `LockAcquiredEvent` / `LockReleasedEvent` pair
+       with no `ScheduleUninstalledEvent` payload between them — the
+       diagnostic shape for "a verb opened the lock and refused after
+       the in-transaction re-check." This extends §"Double uninstall"'s
+       sequential-idempotency invariant (exactly one
+       `ScheduleUninstalledEvent` across any sequential uninstall
+       pair) to a **concurrent** foreign-machine uninstall pair on
+       the same `(operation, machine_id)`. The current-host branch
+       does not (yet) share this concurrent-pair guarantee — see
+       §Invariants for scope and follow-up.
+
+     Print the stderr warning `note: schedule was installed on
+     <machine>; remove the artifact at <path> manually on that host`
+     on the happy-path branch. Exit `0` on the happy path; non-zero on
+     the masked-by-uninstall branch (WikiError). A concurrent
+     `install` on the same `(operation, machine_id)` cannot race
+     against an in-transaction re-check: `install` short-circuits
+     idempotently when a prior live install exists (§"install happy
+     path" step 7), so the only event a competitor can land between
+     pre-read and re-check is a competing `ScheduleUninstalledEvent`.
+     A competing `install` landing *after* the pre-read found no
+     live install and *before* the early-refusal `WikiError` returns
+     is a benign lost-update: the user sees a stale "no schedule
+     installed" message and retries; the second invocation observes
+     the new install and proceeds normally. The journal stays
+     consistent — only the user's read of "is there a schedule?" was
+     stale.
 5. Print the success line and exit `0`.
 
 ### `list` happy path
@@ -432,7 +476,28 @@ mirrors RFC-0003 §"Cadence vocabulary":
 - The journal append is **paired** with the OS-side write inside a
   single `journal.transaction()`. Either both happen or neither does.
   The transaction is the lock-bracket pair specified by the
-  [journal-locking spec](../journal-locking/spec.md).
+  [journal-locking spec](../journal-locking/spec.md). This invariant
+  also covers **foreign-machine `uninstall`**, with a sharper claim:
+  the foreign branch has no OS-side write to pair with, but the
+  pre-read + re-check + append still runs inside
+  `journal.transaction()` so a competing **uninstall** for the same
+  `(operation, machine_id)` cannot interleave between the foreign
+  branch's pre-read and its append. (A competing `install` on the
+  same pair is not part of this race: `install` short-circuits
+  idempotently when a prior live install exists per §"install happy
+  path" step 7, so the only journal mutation a competitor can land
+  between the foreign branch's pre-read and its in-transaction
+  re-check is another `ScheduleUninstalledEvent`.) The current-host
+  branch's read-then-append in `schedule.uninstall` is itself
+  outside this race-closing scope — its `journal.transaction()`
+  brackets the OS-side `deactivate → delete → journal` pair per the
+  "Either both happen or neither does" invariant, but it does not
+  re-read events under the flock. A concurrent current-host
+  uninstall pair may therefore append two
+  `ScheduleUninstalledEvent`s before the OS-side delete races
+  itself; tracked as a known follow-up. §"Double uninstall" remains
+  the **sequential** idempotency invariant (re-running the verb to
+  "make sure" refuses on the second call).
 - `ScheduleInstalledEvent.exec_command` is stored as `list[str]` —
   the argv the OS-side artifact runs. `[0]` is the absolute path to
   the kit's `wiki` binary, resolved in this order:
@@ -799,7 +864,11 @@ The contract tests below define "done". Construction tests live in
   OS-side deactivation, (c) prints the "remove the artifact manually"
   warning to stderr, (d) exits `0`. The artifact file at the journaled
   path is not touched on the local filesystem (it isn't there to
-  touch).
+  touch). Under the `journal.transaction(reason="uninstall <op>")`
+  wrapper specified in §"uninstall happy path" step 4, a
+  `LockAcquiredEvent` / `LockReleasedEvent` pair brackets the
+  `ScheduleUninstalledEvent`; (a)'s "one" counts
+  `ScheduleUninstalledEvent` only.
 
 - [ ] **CT-17: hostname rename surfaces in doctor.** With a schedule
   installed under `machine_id="old-name"` and the current host's
@@ -817,6 +886,43 @@ The contract tests below define "done". Construction tests live in
   produces `exec_command[0]` pointing at the `wiki` binary, not at
   a `python -m …` form. Tests use a `tmp_path` PATH stub
   (`tmp_path / "bin" / "wiki"`) to make `shutil.which` deterministic.
+
+- [ ] **CT-19: foreign-machine uninstall serializes against
+  concurrent uninstall.** Given a foreign-machine install for
+  `(operation, machine_id)` and a simulated concurrent
+  `ScheduleUninstalledEvent` for the same pair landing on disk
+  between the pre-transaction `_latest_install` read and the
+  in-transaction re-check, `wiki schedule uninstall <op> --machine
+  <foreign>` (a) raises `WikiError` whose message starts with "no
+  schedule installed" and carries the `(concurrent uninstall
+  observed under lock; re-check the journal)` discriminator so an
+  operator can tell the race-loss refusal apart from the steady-state
+  pre-read refusal without journal access, (b) after the call
+  exactly one
+  `ScheduleUninstalledEvent` for `(operation, machine_id)` exists in
+  the on-disk journal (the competitor's, written between the two
+  reads); no additional `ScheduleUninstalledEvent` is appended by
+  this caller — extending §"Double uninstall"'s
+  sequential-idempotency invariant to the concurrent foreign-machine
+  uninstall pair on the same `(operation, machine_id)`. (c) the
+  on-disk journal contains a
+  `LockAcquiredEvent` / `LockReleasedEvent` pair from this caller's
+  transaction bracketing no `ScheduleUninstalledEvent` payload — the
+  diagnostic shape for a verb that opened the lock and refused after
+  the in-transaction re-check. Construction-test technique:
+  monkeypatch `llm_wiki_kit.schedule.read_events` so that on its
+  first call it (i) delegates to the real `read_events` and returns
+  the install-only view, then (ii) before returning, calls the real
+  `append_event` to write a competitor `ScheduleUninstalledEvent` to
+  disk; subsequent calls delegate to the real `read_events`
+  unchanged. The competitor's event is therefore genuinely on disk
+  by the time the in-transaction re-check runs, and (b)/(c) are
+  both `events.jsonl` scans rather than read-view assertions. The
+  competitor's `append_event` is intentionally lockless — the race
+  window this wrapper closes is **lockless pre-read → locked
+  re-check**, not lock-held → lock-held, so the simulation injects
+  the competitor in that exact gap rather than from a second
+  `journal.transaction()`.
 
 ## Non-goals
 
