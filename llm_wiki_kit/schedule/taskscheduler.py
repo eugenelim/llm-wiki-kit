@@ -40,7 +40,7 @@ import os
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from llm_wiki_kit.schedule._emitter import InspectResult
+from llm_wiki_kit.schedule._emitter import InspectResult, default_disabled_hint
 from llm_wiki_kit.schedule.dsl import ResolvedCadence, to_task_scheduler_trigger
 
 # Task Scheduler 2.0 XML namespace.
@@ -213,6 +213,22 @@ class TaskSchedulerEmitter:
         if not artifact_path.is_file():
             return "missing-file"
         return "not-inspectable"
+
+    def disabled_hint(self, artifact_path: Path) -> str:
+        """Windows never returns ``not-loaded`` from ``inspect`` at v1.
+
+        Delegates to :func:`default_disabled_hint` so the string is
+        defined in one place — ``_Emitter`` is a structural
+        :class:`typing.Protocol` (the concrete emitter classes do not
+        inherit from it), so the Protocol's default body never executes
+        at runtime; sharing the helper keeps this concrete impl and
+        the Protocol-default docstring contract from drifting. A
+        future ``schtasks /Query`` integration that grows a
+        ``"not-loaded"`` result should replace this body with a
+        Windows-specific recovery hint rather than fall back to it
+        silently.
+        """
+        return default_disabled_hint(artifact_path)
 
 
 # ---------------------------------------------------------------------------

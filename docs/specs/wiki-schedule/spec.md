@@ -390,9 +390,12 @@ mirrors RFC-0003 §"Cadence vocabulary":
   `wiki schedule list` shows the schedule as `STATUS=unknown` (the
   current host can't introspect it). `wiki doctor` surfaces the
   apparent mismatch with a one-liner: `current hostname '<new>',
-  journaled schedules for '<old>'; pass '--machine <old>' to operate
-  on them, or uninstall+reinstall to migrate`. The kit does **not**
-  auto-migrate — silent rebinding would corrupt the
+  journaled schedules for '<old>' (either a rename or a schedule on
+  another host); pass '--machine <old>' to operate on them`. The
+  warning is neutral by design — doctor cannot distinguish a renamed
+  host from a legitimate multi-host vault (where `--machine other-box`
+  installs put schedules under a foreign `machine_id`). The kit does
+  **not** auto-migrate — silent rebinding would corrupt the
   per-machine source of truth.
 
 ### Error cases
@@ -802,7 +805,7 @@ The contract tests below define "done". Construction tests live in
   installed under `machine_id="old-name"` and the current host's
   `socket.gethostname()` now `"new-name"`, `wiki doctor` exits `0`
   and stdout contains both `old-name` and `new-name` plus the
-  `--machine old-name` migration hint. No journal write.
+  `--machine old-name` operate-on-them hint. No journal write.
 
 - [ ] **CT-18: `exec_command` resolution prefers `shutil.which`.**
   With `wiki` on `PATH`, the journaled `exec_command` is a

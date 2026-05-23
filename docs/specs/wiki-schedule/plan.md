@@ -170,7 +170,7 @@ the OS invokes it independently of how it was authored).
      |CT-15  |PR-8's doctor section.                                                                      |(not in PR-5)                         |
      |CT-16  |`test_uninstall_foreign_machine_skips_os_deactivation`                                      |`test_schedule_uninstall.py`          |
      |CT-17  |PR-8's doctor section.                                                                      |(not in PR-5)                         |
-     |CT-18  |`test_install_exec_command_prefers_shutil_which_over_argv0`                                 |`test_schedule_install.py`            |
+     |CT-18  |`test_install_exec_command_prefers_shutil_which_over_argv0` + `…_falls_back_to_executable_argv0_when_which_misses` + `…_raises_when_argv0_not_executable` |`test_schedule_install.py`            |
 
    - **Tests (construction):**
      - `tests/unit/test_schedule_install.py`:

@@ -33,7 +33,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from platform import system as _platform_system
 from socket import gethostname
 
 from llm_wiki_kit import managed_regions
@@ -51,7 +50,7 @@ from llm_wiki_kit.models import (
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
 from llm_wiki_kit.recipes import installed_outcome_verbs
 from llm_wiki_kit.schedule import _resolve_emitter
-from llm_wiki_kit.schedule._emitter import InspectResult, _Emitter
+from llm_wiki_kit.schedule._emitter import InspectResult, _Emitter, default_disabled_hint
 
 # Issue kinds (also serve as the line prefix in the CLI output).
 PAGE_DRIFT = "page-drift"
@@ -71,6 +70,10 @@ JOURNAL_CORRUPT = "journal-corrupt"
 # pin a specific drift mode.
 SCHEDULE_MISSING_FILE = "schedule-missing-file"
 SCHEDULE_DISABLED = "schedule-disabled"
+# The kind name predates the spec rephrasing — the rendered warning
+# (``detail``) is neutral between a true rename and a legitimate
+# multi-host vault, but the kind is retained for journal-grep
+# compatibility and for tests that pin a specific drift mode.
 SCHEDULE_HOSTNAME_RENAME = "schedule-hostname-rename"
 SCHEDULE_EXEC_FAILURES = "schedule-exec-failures"
 
@@ -548,34 +551,6 @@ def _live_schedules(events: list[Event]) -> list[ScheduleInstalledEvent]:
     return [live[key] for key in sorted(live.keys())]
 
 
-def _disabled_hint(artifact_path: Path) -> str:
-    """Per-OS suggestion command for re-enabling a stopped schedule.
-
-    Branches on ``platform.system()`` rather than calling onto the
-    emitter — the spec lists ``schedule/_emitter.py`` as out of scope
-    for PR-8, and the per-OS strings differ only in their argv
-    structure. A future ``wiki doctor --fix`` consumer would justify
-    lifting this onto the ``_Emitter`` Protocol.
-
-    Only called from the ``not-loaded`` branch of ``_check_schedules``,
-    and ``inspect()`` returns ``not-loaded`` only on Darwin and Linux
-    (Windows v1 returns ``not-inspectable`` and the unsupported-OS
-    fallback narrows to ``loaded`` / ``missing-file``). Other platforms
-    therefore can't reach this function; the ``else`` branch is
-    defensive only.
-    """
-
-    system = _platform_system()
-    if system == "Darwin":
-        uid = os.getuid()
-        return f"launchctl bootstrap gui/{uid} {artifact_path}"
-    if system == "Linux":
-        return f"systemctl --user enable --now {artifact_path.name}"
-    # Unreachable in practice; surface the path so a future caller that
-    # broadens the not-loaded branch doesn't crash on a missing return.
-    return f"reinstall via 'wiki schedule install' for {artifact_path}"
-
-
 def _check_schedules(events: list[Event]) -> list[Issue]:
     """Spec §"Doctor integration" — drift + hostname-rename + exec-failure backlog.
 
@@ -592,9 +567,9 @@ def _check_schedules(events: list[Event]) -> list[Issue]:
        reports file presence (emitter returns ``not-inspectable``).
     2. **Hostname rename** — one warning per distinct journaled
        ``machine_id`` that differs from the current host. Doctor cannot
-       distinguish a renamed host from a genuinely-foreign one; both
-       produce the ``--machine <old>`` migration hint per spec
-       §Edge cases.
+       distinguish a renamed host from a legitimate multi-host vault;
+       both produce the neutral ``--machine <old>`` operate-on-them
+       hint per spec §Edge cases.
     3. **Exec-failure backlog** — ``OperationExecFailedEvent``\\ s in
        the last 7 days where ``reason in {non-zero-exit, timeout}``,
        grouped by operation. Other reasons are filtered out at the
@@ -638,13 +613,21 @@ def _check_schedules(events: list[Event]) -> list[Issue]:
                 )
             )
         elif result == "not-loaded":
+            if emitter is not None:
+                hint = emitter.disabled_hint(artifact_path)
+            else:
+                # Unreachable today — the ``emitter is None`` branch
+                # above narrows ``result`` to ``"missing-file"`` /
+                # ``"loaded"``. Reuse the Protocol-default helper so a
+                # future broadening of either path doesn't drift two
+                # copies of the fallback string.
+                hint = default_disabled_hint(artifact_path)
             issues.append(
                 Issue(
                     kind=SCHEDULE_DISABLED,
                     path=event.operation,
                     detail=(
-                        f"schedule for {event.operation} exists on disk but is "
-                        f"not loaded; '{_disabled_hint(artifact_path)}'"
+                        f"schedule for {event.operation} exists on disk but is not loaded; '{hint}'"
                     ),
                     is_warning=True,
                 )
@@ -660,8 +643,8 @@ def _check_schedules(events: list[Event]) -> list[Issue]:
                 path=old,
                 detail=(
                     f"current hostname '{current_host}', journaled schedules for "
-                    f"'{old}'; pass '--machine {old}' to operate on them, or "
-                    f"uninstall+reinstall to migrate"
+                    f"'{old}' (either a rename or a schedule on another host); "
+                    f"pass '--machine {old}' to operate on them"
                 ),
                 is_warning=True,
             )

@@ -35,6 +35,19 @@ from llm_wiki_kit.schedule.dsl import ResolvedCadence
 InspectResult = Literal["loaded", "not-loaded", "missing-file", "not-inspectable"]
 
 
+def default_disabled_hint(artifact_path: Path) -> str:
+    """Generic recover-from-disabled hint for an artifact path.
+
+    The wording is the Protocol-default fallback used by
+    :meth:`_Emitter.disabled_hint` and by ``wiki doctor``'s
+    ``emitter is None`` branch in ``llm_wiki_kit.doctor._check_schedules``
+    — both are unreachable today, but lifting the string here keeps the
+    two sites from drifting silently if a future caller broadens either
+    path.
+    """
+    return f"reinstall via 'wiki schedule install' for {artifact_path}"
+
+
 class _Emitter(Protocol):
     """The per-OS interface ``schedule.install``/``uninstall``/``list_schedules`` dispatch over.
 
@@ -126,3 +139,21 @@ class _Emitter(Protocol):
     def inspect(self, artifact_path: Path) -> InspectResult:
         """Report the artifact's current OS-side liveness."""
         ...
+
+    def disabled_hint(self, artifact_path: Path) -> str:
+        """User-facing command to re-enable a stopped schedule.
+
+        Surfaced by ``wiki doctor`` in the ``schedule-disabled`` warning
+        body when ``inspect()`` returns ``"not-loaded"``. Only Darwin
+        and Linux actually reach that arm today (Windows v1 returns
+        ``"not-inspectable"``), so the default implementation is
+        unreachable in practice.
+
+        ``_Emitter`` is a structural :class:`Protocol` and the three
+        concrete emitter classes do not inherit from it, so this body
+        documents the contract but never executes at runtime — each
+        concrete emitter restates the appropriate string. The default
+        is kept here so the contract is one-place for a future OS
+        emitter that grows a ``"not-loaded"`` branch.
+        """
+        return default_disabled_hint(artifact_path)
