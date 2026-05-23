@@ -696,7 +696,11 @@ def _check_schedules(events: list[Event]) -> list[Issue]:
 
 
 def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
-    """Replay the journal and return every issue, sorted by ``(kind, path)``.
+    """Replay the journal and return issues: failures first, then schedule warnings.
+
+    Failures are sorted by ``(kind, path, detail)``; schedule warnings
+    (``is_warning=True``) are appended last in family-grouped order
+    (drift → hostname-rename → exec-failure backlog).
 
     Uses ``read_events_lenient`` so a malformed line surfaces as a
     ``journal-corrupt`` issue while the remaining checks run against the
