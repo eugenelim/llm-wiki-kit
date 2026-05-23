@@ -859,7 +859,11 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     for issue in issues:
         print(format_issue(issue))
 
-    return DOCTOR_ISSUES_EXIT if issues else 0
+    # Schedule findings carry ``is_warning=True`` and don't fail the doctor
+    # pass — spec ``docs/specs/wiki-schedule/spec.md`` §"Doctor integration"
+    # pins ``wiki doctor`` exiting 0 when only schedule warnings remain.
+    failures = [issue for issue in issues if not issue.is_warning]
+    return DOCTOR_ISSUES_EXIT if failures else 0
 
 
 def _cmd_outcomes(args: argparse.Namespace) -> int:

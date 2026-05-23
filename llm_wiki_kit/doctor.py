@@ -29,16 +29,29 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from platform import system as _platform_system
+from socket import gethostname
 
 from llm_wiki_kit import managed_regions
-from llm_wiki_kit.errors import JournalCorruptError, ManagedRegionError
+from llm_wiki_kit.errors import JournalCorruptError, ManagedRegionError, WikiError
 from llm_wiki_kit.journal import read_events_lenient, replay_state
-from llm_wiki_kit.models import Event, ManagedRegionWriteEvent, PageWriteEvent, VaultState
+from llm_wiki_kit.models import (
+    Event,
+    ManagedRegionWriteEvent,
+    OperationExecFailedEvent,
+    PageWriteEvent,
+    ScheduleInstalledEvent,
+    ScheduleUninstalledEvent,
+    VaultState,
+)
 from llm_wiki_kit.primitives import discover_primitives, load_primitive
 from llm_wiki_kit.recipes import installed_outcome_verbs
+from llm_wiki_kit.schedule import _resolve_emitter
+from llm_wiki_kit.schedule._emitter import InspectResult, _Emitter
 
 # Issue kinds (also serve as the line prefix in the CLI output).
 PAGE_DRIFT = "page-drift"
@@ -49,6 +62,28 @@ MISSING = "missing"
 PRIMITIVE_MISSING = "primitive-missing"
 STALE_LOCK = "stale-lock"
 JOURNAL_CORRUPT = "journal-corrupt"
+
+# Schedule-section warning kinds. These are *warnings*, not failures:
+# spec §"Doctor integration" — ``wiki doctor`` exits 0 when only schedule
+# warnings are present. Warnings carry ``is_warning=True`` on :class:`Issue`
+# so the CLI can partition them out of the exit-code calculation; the
+# kind itself is retained for sort stability and for tests that want to
+# pin a specific drift mode.
+SCHEDULE_MISSING_FILE = "schedule-missing-file"
+SCHEDULE_DISABLED = "schedule-disabled"
+SCHEDULE_HOSTNAME_RENAME = "schedule-hostname-rename"
+SCHEDULE_EXEC_FAILURES = "schedule-exec-failures"
+
+# Spec §"Doctor integration" — exec-failure backlog filters to the two
+# reasons the user can act on. ``conflict-refused`` already surfaces via
+# the ``.proposed`` sidecar (pending-proposal); ``binary-missing`` and
+# ``skill-missing`` are reserved-but-not-emitted at v1 per
+# ``docs/specs/wiki-run-exec/spec.md`` §"Contracts with other modules".
+_EXEC_FAILURE_REASONS_TO_SURFACE = frozenset({"non-zero-exit", "timeout"})
+
+# Spec §"Doctor integration": "the last 7 days". Pinned here so a future
+# change (e.g. configurable via env var) lands in one place.
+_EXEC_FAILURE_WINDOW = timedelta(days=7)
 
 # Default stale-lock threshold per ``journal-locking`` spec §Invariants.
 # Doctor reads ``WIKI_LOCK_STALE_HOURS`` on each run; this default applies
@@ -91,11 +126,21 @@ class Issue:
     kind: str
     path: str
     detail: str = ""
+    is_warning: bool = False
 
 
 def format_issue(issue: Issue) -> str:
-    """Render an :class:`Issue` as one CLI line, prefixed with its kind."""
+    """Render an :class:`Issue` as one CLI line.
 
+    Failure issues render as ``kind: path`` (or ``kind: path (detail)``).
+    Warnings (``is_warning=True``) render as a bare natural-text message
+    pulled from ``detail`` — the Schedules section emits one
+    full-sentence warning per finding rather than the ``kind: path``
+    shape, per ``docs/specs/wiki-schedule/spec.md`` §"Doctor integration".
+    """
+
+    if issue.is_warning:
+        return issue.detail
     if issue.detail:
         return f"{issue.kind}: {issue.path} ({issue.detail})"
     return f"{issue.kind}: {issue.path}"
@@ -483,6 +528,175 @@ def _check_outcome_orphan_stubs(state: VaultState, vault_root: Path, kit_root: P
     return issues
 
 
+def _live_schedules(events: list[Event]) -> list[ScheduleInstalledEvent]:
+    """Most recent ``ScheduleInstalledEvent`` per ``(operation, machine_id)``.
+
+    A schedule is "live" when its most recent install event has no later
+    ``ScheduleUninstalledEvent`` masking it on the same pair. Mirrors
+    the same fold used by ``schedule.list_schedules`` so the two views
+    agree on what's installed.
+    """
+
+    live: dict[tuple[str, str], ScheduleInstalledEvent] = {}
+    for event in events:
+        if isinstance(event, ScheduleInstalledEvent):
+            live[(event.operation, event.machine_id)] = event
+        elif isinstance(event, ScheduleUninstalledEvent):
+            live.pop((event.operation, event.machine_id), None)
+    # Stable order keyed by (operation, machine_id) so warning output is
+    # deterministic across runs.
+    return [live[key] for key in sorted(live.keys())]
+
+
+def _disabled_hint(artifact_path: Path) -> str:
+    """Per-OS suggestion command for re-enabling a stopped schedule.
+
+    Branches on ``platform.system()`` rather than calling onto the
+    emitter — the spec lists ``schedule/_emitter.py`` as out of scope
+    for PR-8, and the per-OS strings differ only in their argv
+    structure. A future ``wiki doctor --fix`` consumer would justify
+    lifting this onto the ``_Emitter`` Protocol.
+    """
+
+    system = _platform_system()
+    if system == "Darwin":
+        uid = os.getuid()
+        return f"launchctl bootstrap gui/{uid} {artifact_path}"
+    if system == "Linux":
+        return f"systemctl --user enable --now {artifact_path.name}"
+    # Windows and unsupported platforms — surface the path so the user
+    # can locate the artifact manually.
+    return f"reinstall via 'wiki schedule install' for {artifact_path}"
+
+
+def _check_schedules(events: list[Event], vault_root: Path) -> list[Issue]:
+    """Spec §"Doctor integration" — drift + hostname-rename + exec-failure backlog.
+
+    Returns warning-flavored :class:`Issue`\\ s (``is_warning=True``); the
+    CLI partitions them out of the exit-code calculation so a stale
+    schedule never fails the doctor pass.
+
+    Three families of warning:
+
+    1. **Current-host artifact drift** — for each live schedule with
+       ``machine_id == socket.gethostname()``, call the platform emitter's
+       ``inspect()`` and emit ``schedule-missing-file`` /
+       ``schedule-disabled`` warnings as appropriate. Windows v1 only
+       reports file presence (emitter returns ``not-inspectable``).
+    2. **Hostname rename** — one warning per distinct journaled
+       ``machine_id`` that differs from the current host. Doctor cannot
+       distinguish a renamed host from a genuinely-foreign one; both
+       produce the ``--machine <old>`` migration hint per spec
+       §Edge cases.
+    3. **Exec-failure backlog** — ``OperationExecFailedEvent``\\ s in
+       the last 7 days where ``reason in {non-zero-exit, timeout}``,
+       grouped by operation. Other reasons are filtered out at the
+       source — see ``_EXEC_FAILURE_REASONS_TO_SURFACE``.
+    """
+
+    del vault_root  # reserved for future per-vault inbox lookups
+
+    issues: list[Issue] = []
+    current_host = gethostname()
+    live = _live_schedules(events)
+
+    emitter: _Emitter | None
+    try:
+        emitter = _resolve_emitter()
+    except WikiError:
+        # Unsupported OS: file-presence is still checkable via stdlib,
+        # but the per-OS subprocess probes aren't. The current-host
+        # drift branch below degrades gracefully.
+        emitter = None
+
+    # 1. Current-host artifact drift.
+    for event in live:
+        if event.machine_id != current_host:
+            continue
+        artifact_path = Path(event.os_artifact_path)
+        if emitter is None:
+            # Fall back to bare file presence on unsupported OSes.
+            result: InspectResult = "missing-file" if not artifact_path.exists() else "loaded"
+        else:
+            result = emitter.inspect(artifact_path)
+        if result == "missing-file":
+            issues.append(
+                Issue(
+                    kind=SCHEDULE_MISSING_FILE,
+                    path=event.operation,
+                    detail=(
+                        f"schedule for {event.operation} missing artifact at "
+                        f"{artifact_path}; reinstall with "
+                        f"'wiki schedule install {event.operation}'"
+                    ),
+                    is_warning=True,
+                )
+            )
+        elif result == "not-loaded":
+            issues.append(
+                Issue(
+                    kind=SCHEDULE_DISABLED,
+                    path=event.operation,
+                    detail=(
+                        f"schedule for {event.operation} exists on disk but is "
+                        f"not loaded; {_disabled_hint(artifact_path)}"
+                    ),
+                    is_warning=True,
+                )
+            )
+        # ``loaded`` and ``not-inspectable`` (Windows v1) emit no warning.
+
+    # 2. Hostname rename — one warning per distinct foreign machine_id.
+    foreign_hosts = sorted({event.machine_id for event in live if event.machine_id != current_host})
+    for old in foreign_hosts:
+        issues.append(
+            Issue(
+                kind=SCHEDULE_HOSTNAME_RENAME,
+                path=old,
+                detail=(
+                    f"current hostname {current_host!r}, journaled schedules for "
+                    f"{old!r}; pass '--machine {old}' to operate on them, or "
+                    f"uninstall+reinstall to migrate"
+                ),
+                is_warning=True,
+            )
+        )
+
+    # 3. Exec-failure backlog — last 7 days, filter by reason, group by op.
+    cutoff = _now() - _EXEC_FAILURE_WINDOW
+    counts: dict[str, int] = defaultdict(int)
+    for exec_event in events:
+        if not isinstance(exec_event, OperationExecFailedEvent):
+            continue
+        if exec_event.reason not in _EXEC_FAILURE_REASONS_TO_SURFACE:
+            continue
+        # Tz-aware compare: the journal carries tz-aware timestamps in
+        # production, but a hand-edited line may be naive — coerce to
+        # UTC the same way ``check_stale_lock`` does so doctor never
+        # crashes on the journal it was built to inspect.
+        ts = exec_event.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        if ts < cutoff:
+            continue
+        counts[exec_event.operation] += 1
+    for operation in sorted(counts):
+        n = counts[operation]
+        issues.append(
+            Issue(
+                kind=SCHEDULE_EXEC_FAILURES,
+                path=operation,
+                detail=(
+                    f"{n} recent scheduled-exec failures for {operation}; "
+                    f"see inbox/scheduled-failures/"
+                ),
+                is_warning=True,
+            )
+        )
+
+    return issues
+
+
 def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     """Replay the journal and return every issue, sorted by ``(kind, path)``.
 
@@ -491,6 +705,11 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     valid-events prefix. Strict ``read_events`` would have raised and
     hidden every other problem in the vault — the opposite of what
     ``wiki doctor`` is for.
+
+    Schedule findings are appended last and tagged ``is_warning=True`` on
+    the returned :class:`Issue`\\ s — callers that care about exit codes
+    (e.g. ``_cmd_doctor``) partition them out so ``wiki doctor`` exits
+    ``0`` when only schedule warnings remain.
     """
 
     journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
@@ -508,5 +727,8 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     issues.extend(check_primitive_missing(state, kit_root))
     issues.extend(check_stale_lock(state, _stale_threshold_hours()))
     issues.extend(_check_outcome_orphan_stubs(state, vault_root, kit_root))
-    issues.sort(key=lambda issue: (issue.kind, issue.path, issue.detail))
+    # Sort by (is_warning, kind, path, detail) so warnings render after
+    # failures regardless of their alphabetical kind position.
+    issues.sort(key=lambda issue: (issue.is_warning, issue.kind, issue.path, issue.detail))
+    issues.extend(_check_schedules(events, vault_root))
     return issues
