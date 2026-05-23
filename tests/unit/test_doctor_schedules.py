@@ -25,18 +25,28 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
 from llm_wiki_kit import cli, doctor
+from llm_wiki_kit.errors import WikiError
 from llm_wiki_kit.journal import append_event
 from llm_wiki_kit.models import (
+    LockAcquiredEvent,
     OperationExecFailedEvent,
     ScheduleInstalledEvent,
     ScheduleUninstalledEvent,
 )
 from llm_wiki_kit.schedule._emitter import InspectResult
+
+_ExecFailureReason = Literal[
+    "non-zero-exit",
+    "timeout",
+    "conflict-refused",
+    "binary-missing",
+    "skill-missing",
+]
 
 NOW = datetime(2026, 5, 23, 12, 0, 0, tzinfo=UTC)
 
@@ -66,23 +76,18 @@ def _journal(vault: Path) -> Path:
 class _StubEmitter:
     """Test double for ``_Emitter`` with a programmable ``inspect`` result.
 
-    Only the methods ``_check_schedules`` actually calls are implemented.
-    Returns a fixed ``InspectResult`` regardless of the path so the test
-    can pin the drift mode without standing up a real OS scheduler.
+    Only the method ``_check_schedules`` actually calls is implemented.
+    Returns the configured ``InspectResult`` verbatim regardless of
+    filesystem state — tests that want ``"missing-file"`` should also
+    not create the artifact, but the stub doesn't enforce that linkage
+    (kept simple so each test owns its setup explicitly).
     """
 
     def __init__(self, inspect_result: InspectResult) -> None:
         self._inspect_result = inspect_result
 
     def inspect(self, artifact_path: Path) -> InspectResult:
-        # Honour ``missing-file`` semantics if the file genuinely is absent:
-        # tests for the ``missing-file`` drift mode rely on the file not
-        # existing on disk. For other modes, the file existing or not is
-        # irrelevant to what ``inspect`` reports.
-        if self._inspect_result == "missing-file" and artifact_path.exists():
-            return "loaded"
-        if self._inspect_result != "missing-file" and not artifact_path.exists():
-            return "missing-file"
+        del artifact_path
         return self._inspect_result
 
 
@@ -108,7 +113,7 @@ def _install_event(
 def _exec_failed_event(
     *,
     operation: str,
-    reason: str,
+    reason: _ExecFailureReason,
     timestamp: datetime,
 ) -> OperationExecFailedEvent:
     return OperationExecFailedEvent(
@@ -117,7 +122,7 @@ def _exec_failed_event(
         operation=operation,
         dispatch_event_id="dispatch-xyz",
         exit_code=1 if reason == "non-zero-exit" else -2,
-        reason=reason,  # type: ignore[arg-type]
+        reason=reason,
         stderr_tail="",
         log_path=None,
         conflict_sidecars=[],
@@ -203,8 +208,10 @@ def test_ct15_doctor_reports_schedule_drift_as_warning(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "weekly-digest" in captured.out
+    # The fix command embeds the operation name, so a single substring
+    # assertion covers both "operation present" and "fix command present".
     assert "wiki schedule install weekly-digest" in captured.out
+    # CT-15 explicitly: "Stderr is empty."
     assert captured.err == ""
 
 
@@ -694,6 +701,279 @@ def test_exec_failure_backlog_groups_by_operation(
 
     assert "1 recent scheduled-exec failures for weekly-digest" in captured.out
     assert "2 recent scheduled-exec failures for meal-planning" in captured.out
+
+
+@pytest.mark.parametrize("reason", ["conflict-refused", "skill-missing", "binary-missing"])
+def test_exec_failure_backlog_filters_all_non_actionable_reasons(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patch_emitter: Any,
+    patch_hostname: Any,
+    patch_now: Any,
+    reason: _ExecFailureReason,
+) -> None:
+    """Spec §"Doctor integration" — only ``non-zero-exit`` and ``timeout`` surface.
+
+    ``conflict-refused`` is user-visible via the ``.proposed`` sidecar;
+    ``binary-missing`` / ``skill-missing`` are reserved-but-not-emitted
+    at v1. None of the three should produce an exec-failure-backlog
+    warning even when they appear in-window on the journal.
+    """
+
+    vault = _vault(tmp_path)
+    journal_path = _journal(vault)
+
+    append_event(
+        journal_path,
+        _exec_failed_event(
+            operation="weekly-digest",
+            reason=reason,
+            timestamp=NOW - timedelta(days=1),
+        ),
+    )
+
+    patch_hostname("this-box")
+    patch_emitter("loaded")
+    patch_now(NOW)
+
+    monkeypatch.chdir(vault)
+    cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
+    captured = capsys.readouterr()
+
+    assert "scheduled-exec failures" not in captured.out
+
+
+def test_exec_failure_backlog_at_window_boundary_inclusive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patch_emitter: Any,
+    patch_hostname: Any,
+    patch_now: Any,
+) -> None:
+    """Boundary: ``timestamp == NOW - 7 days`` is kept; one-second older drops.
+
+    Pins the inclusive/exclusive boundary on the 7-day window so a
+    future ``<`` / ``<=`` swap surfaces in CI rather than as a silent
+    off-by-one. Implementation uses ``ts < cutoff`` so the exact-cutoff
+    event is kept.
+    """
+
+    vault = _vault(tmp_path)
+    journal_path = _journal(vault)
+
+    append_event(
+        journal_path,
+        _exec_failed_event(
+            operation="at-edge",
+            reason="non-zero-exit",
+            timestamp=NOW - timedelta(days=7),
+        ),
+    )
+    append_event(
+        journal_path,
+        _exec_failed_event(
+            operation="just-past-edge",
+            reason="non-zero-exit",
+            timestamp=NOW - timedelta(days=7, seconds=1),
+        ),
+    )
+
+    patch_hostname("this-box")
+    patch_emitter("loaded")
+    patch_now(NOW)
+
+    monkeypatch.chdir(vault)
+    cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
+    captured = capsys.readouterr()
+
+    assert "1 recent scheduled-exec failures for at-edge" in captured.out
+    assert "just-past-edge" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Windows / unsupported-OS branches
+# ---------------------------------------------------------------------------
+
+
+def test_drift_not_inspectable_windows_emits_no_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patch_emitter: Any,
+    patch_hostname: Any,
+) -> None:
+    """Windows v1: ``inspect`` returns ``not-inspectable`` → no warning.
+
+    Spec §"Doctor integration" — Windows skips liveness, file-presence
+    is the only signal at v1. The ``not-inspectable`` arm must NOT
+    produce a ``schedule-disabled`` or ``schedule-missing-file`` warning
+    when the artifact is on disk.
+    """
+
+    vault = _vault(tmp_path)
+    journal_path = _journal(vault)
+    artifact_path = tmp_path / "fake" / "win.xml"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("<Task/>", encoding="utf-8")
+
+    append_event(
+        journal_path,
+        _install_event(
+            operation="weekly-digest",
+            machine_id="this-box",
+            artifact_path=artifact_path,
+        ),
+    )
+
+    patch_hostname("this-box")
+    patch_emitter("not-inspectable")
+
+    monkeypatch.chdir(vault)
+    exit_code = cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "missing artifact" not in captured.out
+    assert "not loaded" not in captured.out
+
+
+def test_unsupported_os_fallback_still_detects_missing_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patch_hostname: Any,
+) -> None:
+    """When ``_resolve_emitter`` raises ``WikiError``, file-presence still surfaces drift.
+
+    Doctor must degrade gracefully on an unsupported platform — see
+    ``_check_schedules`` docstring + spec §"Edge cases / Running on
+    an unsupported OS". File-only check still detects the missing
+    artifact.
+    """
+
+    vault = _vault(tmp_path)
+    journal_path = _journal(vault)
+    artifact_path = tmp_path / "fake" / "missing.xml"
+    # Deliberately do NOT create the file.
+
+    append_event(
+        journal_path,
+        _install_event(
+            operation="weekly-digest",
+            machine_id="this-box",
+            artifact_path=artifact_path,
+        ),
+    )
+
+    patch_hostname("this-box")
+
+    def _raise() -> Any:
+        raise WikiError("scheduling is not supported on FreeBSD; see RFC-0003")
+
+    monkeypatch.setattr(doctor, "_resolve_emitter", _raise)
+
+    monkeypatch.chdir(vault)
+    exit_code = cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "wiki schedule install weekly-digest" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Mixed failure + warning: ordering + exit-code partition
+# ---------------------------------------------------------------------------
+
+
+def test_failure_plus_warning_renders_warnings_under_schedules_section(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patch_emitter: Any,
+    patch_hostname: Any,
+) -> None:
+    """A non-schedule failure renders first; schedule warnings appear under ``Schedules:``."""
+
+    vault = _vault(tmp_path)
+    journal_path = _journal(vault)
+    artifact_path = tmp_path / "fake" / "drift.plist"
+
+    # Stale lock = non-schedule failure. ``LockAcquiredEvent`` is enough —
+    # ``replay_state`` projects it into ``state.held_lock`` and the
+    # subsequent ``check_stale_lock`` reads ``HeldLock.acquired_at``.
+    append_event(
+        journal_path,
+        LockAcquiredEvent(
+            timestamp=NOW - timedelta(hours=48),
+            by="wiki-add",
+            reason="long-gone",
+        ),
+    )
+    # Schedule warning.
+    append_event(
+        journal_path,
+        _install_event(
+            operation="weekly-digest",
+            machine_id="this-box",
+            artifact_path=artifact_path,
+        ),
+    )
+
+    patch_hostname("this-box")
+    patch_emitter("missing-file")
+    monkeypatch.setattr(doctor, "_now", lambda: NOW)
+
+    monkeypatch.chdir(vault)
+    exit_code = cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
+    captured = capsys.readouterr()
+
+    # Non-schedule failure still fails the doctor pass.
+    assert exit_code == cli.DOCTOR_ISSUES_EXIT
+    # Failure rendered first (stale-lock kind).
+    stale_idx = captured.out.find("stale-lock")
+    schedules_idx = captured.out.find("Schedules:")
+    warning_idx = captured.out.find("wiki schedule install weekly-digest")
+    assert stale_idx != -1
+    assert schedules_idx != -1
+    assert warning_idx != -1
+    # Section header precedes the warning, and both come after the failure.
+    assert stale_idx < schedules_idx < warning_idx
+
+
+def test_only_warnings_exits_zero_with_schedules_header(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patch_emitter: Any,
+    patch_hostname: Any,
+) -> None:
+    """No failures, only a schedule warning: exit 0 with ``Schedules:`` section."""
+
+    vault = _vault(tmp_path)
+    journal_path = _journal(vault)
+    artifact_path = tmp_path / "fake" / "missing.plist"
+
+    append_event(
+        journal_path,
+        _install_event(
+            operation="weekly-digest",
+            machine_id="this-box",
+            artifact_path=artifact_path,
+        ),
+    )
+
+    patch_hostname("this-box")
+    patch_emitter("missing-file")
+
+    monkeypatch.chdir(vault)
+    exit_code = cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Schedules:" in captured.out
+    assert "wiki schedule install weekly-digest" in captured.out
 
 
 # ---------------------------------------------------------------------------

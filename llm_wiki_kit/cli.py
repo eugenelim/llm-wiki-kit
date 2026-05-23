@@ -856,13 +856,21 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     issues = run_doctor(vault_root, args.kit_root if args.kit_root is not None else _kit_root())
 
-    for issue in issues:
-        print(format_issue(issue))
-
-    # Schedule findings carry ``is_warning=True`` and don't fail the doctor
-    # pass — spec ``docs/specs/wiki-schedule/spec.md`` §"Doctor integration"
-    # pins ``wiki doctor`` exiting 0 when only schedule warnings remain.
+    # Schedule findings carry ``is_warning=True`` and render under a
+    # ``Schedules:`` section after the existing failure output — per
+    # spec ``docs/specs/wiki-schedule/spec.md`` §"Doctor integration".
+    # The exit code is computed from non-warning issues only, so a
+    # stale schedule never fails the doctor pass.
     failures = [issue for issue in issues if not issue.is_warning]
+    warnings = [issue for issue in issues if issue.is_warning]
+    for issue in failures:
+        print(format_issue(issue))
+    if warnings:
+        if failures:
+            print()
+        print("Schedules:")
+        for issue in warnings:
+            print(f"  {format_issue(issue)}")
     return DOCTOR_ISSUES_EXIT if failures else 0
 
 

@@ -556,6 +556,13 @@ def _disabled_hint(artifact_path: Path) -> str:
     for PR-8, and the per-OS strings differ only in their argv
     structure. A future ``wiki doctor --fix`` consumer would justify
     lifting this onto the ``_Emitter`` Protocol.
+
+    Only called from the ``not-loaded`` branch of ``_check_schedules``,
+    and ``inspect()`` returns ``not-loaded`` only on Darwin and Linux
+    (Windows v1 returns ``not-inspectable`` and the unsupported-OS
+    fallback narrows to ``loaded`` / ``missing-file``). Other platforms
+    therefore can't reach this function; the ``else`` branch is
+    defensive only.
     """
 
     system = _platform_system()
@@ -564,8 +571,8 @@ def _disabled_hint(artifact_path: Path) -> str:
         return f"launchctl bootstrap gui/{uid} {artifact_path}"
     if system == "Linux":
         return f"systemctl --user enable --now {artifact_path.name}"
-    # Windows and unsupported platforms — surface the path so the user
-    # can locate the artifact manually.
+    # Unreachable in practice; surface the path so a future caller that
+    # broadens the not-loaded branch doesn't crash on a missing return.
     return f"reinstall via 'wiki schedule install' for {artifact_path}"
 
 
@@ -652,8 +659,8 @@ def _check_schedules(events: list[Event]) -> list[Issue]:
                 kind=SCHEDULE_HOSTNAME_RENAME,
                 path=old,
                 detail=(
-                    f"current hostname {current_host!r}, journaled schedules for "
-                    f"{old!r}; pass '--machine {old}' to operate on them, or "
+                    f"current hostname '{current_host}', journaled schedules for "
+                    f"'{old}'; pass '--machine {old}' to operate on them, or "
                     f"uninstall+reinstall to migrate"
                 ),
                 is_warning=True,
