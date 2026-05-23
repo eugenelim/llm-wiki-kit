@@ -91,6 +91,26 @@ class LaunchdEmitter:
         }
         return plistlib.dumps(payload, fmt=plistlib.FMT_XML)
 
+    def companion_artifacts(
+        self,
+        *,
+        operation: str,
+        vault_root: Path,
+        vault_id: str,
+        cadence: ResolvedCadence,
+        exec_command: list[str],
+    ) -> list[tuple[Path, str | bytes]]:
+        """Launchd has no companion files — one plist per schedule."""
+        return []
+
+    def install_instruction(self, artifact_path: Path) -> str | None:
+        """``activate()`` already loads the plist; no user-facing instruction needed."""
+        return None
+
+    def uninstall_instruction(self, artifact_path: Path) -> str | None:
+        """``deactivate()`` already unloads the plist; no user-facing instruction needed."""
+        return None
+
     def activate(self, artifact_path: Path) -> None:
         """Bootstrap the plist into the per-user launchd domain.
 

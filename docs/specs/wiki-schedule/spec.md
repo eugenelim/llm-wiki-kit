@@ -258,15 +258,27 @@ mirrors RFC-0003 §"Cadence vocabulary":
      is supported; silent reconfiguration is not.
 8. Compute artifact path; render the artifact body (per-OS template;
    see §"Contracts with other modules"). The install sequence is
-   **write → activate → journal**, executed under
-   `journal.transaction(by="wiki-schedule", reason="install <op>")`
+   **write companions → write primary → activate → journal**, executed
+   under `journal.transaction(by="wiki-schedule", reason="install <op>")`
    which holds the journal flock for the duration so two concurrent
    installs serialise:
-   - **Write** the artifact via `write_os_artifact()` (atomic
-     `os.replace`). Failure → raise `WikiError`, no event journaled.
+   - **Compute companions** via `emitter.companion_artifacts(...)`.
+     Default is `[]`; systemd returns one entry — the `.service`
+     companion to the `.timer`. Each companion is a
+     `(path, content)` pair.
+   - **Write each companion** via `write_os_artifact()` (atomic
+     `os.replace`), in the order the emitter returned them. Failure →
+     raise `WikiError`, no event journaled. Companions written before
+     this point in a multi-companion failure scenario are left on
+     disk as harmless orphans (consistent with §Invariants:
+     "uninstall deletes one file").
+   - **Write the primary artifact** via `write_os_artifact()`.
+     Failure → raise `WikiError`, no event journaled.
    - **Activate** via the OS subprocess (`launchctl bootstrap`,
      `systemctl --user enable --now`). Failure → best-effort
-     `unlink(artifact_path)`, raise `WikiError`, no event journaled.
+     `unlink(<primary artifact_path>)` — **companions are NOT
+     unlinked** (they're orphans, harmless), raise `WikiError`, no
+     event journaled.
    - **Journal** `ScheduleInstalledEvent` last via `append_event`.
      Failure here is the rare post-activation-pre-journal window;
      `wiki doctor` reports the stale OS-side state on the next run.
@@ -351,6 +363,16 @@ mirrors RFC-0003 §"Cadence vocabulary":
   supported on <platform>; see RFC-0003 §'OS coverage'")`.
   `list` works on any OS (read-only); `uninstall` works (file delete
   + journal append). Install is the only OS-gated verb.
+- **Double uninstall.** A second `wiki schedule uninstall <op>` after
+  the first succeeds hits the same "no schedule installed" refusal
+  CT-9 covers, because the most-recent-event scan finds a later
+  `ScheduleUninstalledEvent` masking the earlier
+  `ScheduleInstalledEvent`. Exactly one `ScheduleUninstalledEvent`
+  is appended across the pair of calls; the second exits with
+  `WikiError` and no journal write. This is the intended idempotency
+  shape — re-running uninstall to "make sure" must not silently
+  re-fire OS deactivation or append a second event with
+  `removed_artifact=False`.
 - **Hostname rename / DHCP flap.** `machine_id` is captured at install
   time as `socket.gethostname()`. If the host's hostname later
   changes (laptop rename, mDNS flap, container restart), the journaled
@@ -381,6 +403,16 @@ mirrors RFC-0003 §"Cadence vocabulary":
   re-install path; exactly one on every other surviving path. Pre-load
   failures (vault check, unknown operation, kind mismatch, refused
   cadence, refused `--at`) abort before any journal write.
+- **Idempotent-no-op emits zero events of any type.** The dup-cadence
+  short-circuit (§"install happy path" step 7) runs *before* the
+  `journal.transaction()` opens in step 8, so the no-op path emits no
+  `LockAcquiredEvent` / `LockReleasedEvent` pair either. Contrast
+  CT-12's activation-failure path, which runs *inside* an open
+  transaction and therefore does emit the lock-pair (with no
+  `ScheduleInstalledEvent` between them). The asymmetry is
+  intentional: dup-cadence is detectable from journal-state alone, so
+  there's nothing to bracket; activation failure happens after
+  state-dependent work begins, so the bracket is informative.
 - One `uninstall` invocation appends **at most one**
   `ScheduleUninstalledEvent`. Zero events on the "nothing to uninstall"
   refusal; exactly one on every surviving path.
@@ -474,10 +506,42 @@ mirrors RFC-0003 §"Cadence vocabulary":
           cadence: ResolvedCadence,
           exec_command: list[str],
       ) -> str | bytes: ...
+      def companion_artifacts(
+          self,
+          *,
+          operation: str,
+          vault_root: Path,
+          vault_id: str,
+          cadence: ResolvedCadence,
+          exec_command: list[str],
+      ) -> list[tuple[Path, str | bytes]]:
+          """Additional (path, body) pairs to write *before* the primary artifact.
+
+          Default impl returns []. Systemd returns one entry — the
+          .service companion to the .timer — because systemd's load
+          order requires the unit file to exist before the timer file
+          enables. Uninstall does NOT delete companions (spec
+          §Invariants: "uninstall deletes one file"); a stale .service
+          left on disk is a harmless systemd no-op. Implementations
+          may ignore ``cadence`` if their companion content is
+          cadence-independent (systemd's ``.service`` is the v1
+          example — the timer carries the schedule, the service does
+          not).
+          """
       def activate(self, artifact_path: Path) -> None:
           """Raise WikiError on non-zero exit."""
       def deactivate(self, artifact_path: Path) -> None:
           """Best-effort; log non-zero exit but do not raise."""
+      def install_instruction(self, artifact_path: Path) -> str | None:
+          """Optional user-facing string to append to the install stdout summary.
+
+          Returns ``None`` on macOS / Linux (``activate()`` already loaded
+          the schedule). Returns the ``schtasks /Create /XML ...`` line on
+          Windows v1 (where ``activate()`` is a no-op and the user must
+          run the command by hand). Must never spawn a subprocess.
+          """
+      def uninstall_instruction(self, artifact_path: Path) -> str | None:
+          """Symmetric to install_instruction."""
       def inspect(self, artifact_path: Path) -> Literal[
           "loaded", "not-loaded", "missing-file", "not-inspectable"
       ]: ...
@@ -519,10 +583,13 @@ mirrors RFC-0003 §"Cadence vocabulary":
 - **`llm_wiki_kit/doctor.py`** — gains three new checks (presence,
   liveness, exec-failure-backlog). Spec'd in §"Doctor integration"
   below.
-- **`llm_wiki_kit.run`** — `_resolve_operation_kind` extracted to a
-  shared helper so `schedule.install` can reuse the same installed-
-  primitive + kind check without re-implementing it. Move is a pure
-  refactor with no behavior change.
+- **`llm_wiki_kit.run`** — `_resolve_operation_kind`, `_load_contract`,
+  and `_operation_contract_path` extracted to a new
+  `llm_wiki_kit/operations.py` module so `schedule.install` can reuse
+  the same installed-primitive + kind check plus the same contract
+  loader `wiki run` uses, without re-implementing them. `run.py`
+  re-imports the three names under their existing identifiers; bodies
+  are byte-identical. Move is a pure refactor with no behavior change.
 
 ### Doctor integration
 
@@ -671,11 +738,17 @@ The contract tests below define "done". Construction tests live in
   `not a wiki vault` `WikiError`.
 - [ ] **CT-12: activation failure leaves no install event.** A
   simulated activation failure (subprocess returning non-zero) causes
-  (a) zero `ScheduleInstalledEvent`s in the journal, (b) the artifact
-  file is unlink'd (best-effort — file does not exist on disk after
-  the failed call), (c) a `LockAcquiredEvent` / `LockReleasedEvent`
-  pair is present (the transaction still ran), (d) exit non-zero.
-  This pins the install sequence's "write → activate → journal"
+  (a) zero `ScheduleInstalledEvent`s in the journal, (b) the
+  **primary** artifact file is unlink'd (best-effort — file does not
+  exist on disk after the failed call), (c) a `LockAcquiredEvent` /
+  `LockReleasedEvent` pair is present (the transaction still ran),
+  (d) exit non-zero. **On systemd specifically:** the `.service`
+  companion does NOT get unlinked — it remains on disk as a harmless
+  orphan (consistent with §Invariants "install writes one file (or
+  two on Linux)"; cleanup on activation failure mirrors that
+  single-owned-file shape — the orchestrator's only owned unlink
+  path on failure is the primary artifact). This pins the install
+  sequence's "write companions → write primary → activate → journal"
   ordering against the append-only durability rule (no rollback).
 - [ ] **CT-13: machine_id propagation.** `wiki schedule install
   weekly-digest --machine other-box` writes an event with

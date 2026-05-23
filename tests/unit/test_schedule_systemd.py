@@ -589,3 +589,48 @@ def test_deactivate_stderr_warning_contains_disable_now_and_timer_name(
     err = capsys.readouterr().err
     assert "disable --now" in err
     assert timer.name in err
+
+
+# ---------------------------------------------------------------------------
+# companion_artifacts — added by PR-5's _Emitter Protocol lift
+# ---------------------------------------------------------------------------
+
+
+def test_systemd_emitter_companion_artifacts_returns_service_pair_for_timer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Unit-test the new ``SystemdEmitter.companion_artifacts`` method.
+
+    Returned list has exactly one entry; path equals
+    ``service_path(timer_path)`` and body equals ``render_service(...)``
+    for the same inputs (byte-for-byte). Pins the documented systemd
+    "Orchestrator contract" — call ``render_artifact`` for the
+    ``.timer`` body, ``render_service`` for the ``.service`` body, in
+    that order.
+    """
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    emitter = SystemdEmitter()
+    operation = "weekly-digest"
+    vault_id = "deadbeef0123"
+    vault_root = Path("/srv/vault")
+    cadence = ResolvedCadence(period="daily", hour=7, minute=0)
+    exec_command = ["/usr/local/bin/wiki", "run", "--exec", operation]
+
+    pairs = emitter.companion_artifacts(
+        operation=operation,
+        vault_root=vault_root,
+        vault_id=vault_id,
+        cadence=cadence,
+        exec_command=exec_command,
+    )
+    assert len(pairs) == 1
+    sp, body = pairs[0]
+    timer = emitter.artifact_path(vault_id, operation)
+    assert sp == service_path(timer)
+    assert body == render_service(
+        operation=operation,
+        vault_root=vault_root,
+        vault_id=vault_id,
+        exec_command=exec_command,
+    )

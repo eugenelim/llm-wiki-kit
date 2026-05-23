@@ -60,6 +60,52 @@ class _Emitter(Protocol):
         """Render the artifact body to write to ``artifact_path``."""
         ...
 
+    def companion_artifacts(
+        self,
+        *,
+        operation: str,
+        vault_root: Path,
+        vault_id: str,
+        cadence: ResolvedCadence,
+        exec_command: list[str],
+    ) -> list[tuple[Path, str | bytes]]:
+        """Additional (path, body) pairs to write *before* the primary artifact.
+
+        Defaults to ``[]`` — the no-companion shape that launchd and
+        Task Scheduler use. Systemd returns one entry — the
+        ``.service`` companion to the ``.timer`` — because systemd's
+        load order requires the unit file to exist before the timer
+        file enables. Uninstall does NOT delete companions (spec
+        §Invariants: "install writes one file (or two on Linux)"); a
+        stale ``.service`` left on disk is a harmless systemd no-op.
+        Implementations may ignore ``cadence`` if their companion
+        content is cadence-independent (systemd's ``.service`` is the
+        v1 example — the timer carries the schedule, the service does
+        not). The concrete ``return []`` here is the no-companion
+        contract a new OS emitter inherits unless it overrides.
+        """
+        del operation, vault_root, vault_id, cadence, exec_command  # unused on default path
+        return []
+
+    def install_instruction(self, artifact_path: Path) -> str | None:
+        """Optional user-facing string to append to the install stdout summary.
+
+        Defaults to ``None`` on macOS / Linux (``activate()`` already
+        loaded the schedule). Returns the ``schtasks /Create /XML ...``
+        line on Windows v1 (where ``activate()`` is a no-op and the
+        user must run the command by hand). Must never spawn a
+        subprocess. The concrete ``return None`` here is the
+        no-instruction contract a new OS emitter inherits unless it
+        overrides.
+        """
+        del artifact_path  # unused on default path
+        return None
+
+    def uninstall_instruction(self, artifact_path: Path) -> str | None:
+        """Symmetric to :meth:`install_instruction`; defaults to ``None``."""
+        del artifact_path  # unused on default path
+        return None
+
     def activate(self, artifact_path: Path) -> None:
         """Load the artifact into the OS scheduler.
 

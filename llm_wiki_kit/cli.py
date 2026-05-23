@@ -1542,6 +1542,113 @@ def _cmd_run_exec(
     return WIKI_ERROR_EXIT
 
 
+def _cmd_schedule_install(args: argparse.Namespace) -> int:
+    """``wiki schedule install <op> [--at "<dsl>"] [--machine <name>]``.
+
+    Thin wrapper over :func:`llm_wiki_kit.schedule.install`. The vault
+    + journal-path checks are inside the module; the handler builds the
+    summary block from the returned :class:`InstallResult` per spec
+    §Outputs `install`.
+    """
+
+    from llm_wiki_kit.schedule import install as _install
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    kit_root = args.kit_root if args.kit_root is not None else _kit_root()
+
+    result = _install(
+        args.operation,
+        at=args.at,
+        machine=args.machine,
+        vault_root=vault_root,
+        kit_root=kit_root,
+        journal_path=journal_path,
+        now=datetime.now(UTC),
+    )
+
+    if result.already_installed:
+        print(
+            f"Schedule already installed for {result.operation} on {result.machine_id} (no change)."
+        )
+        return 0
+
+    print(f"Installed schedule for {result.operation} on {result.machine_id}.")
+    print(f"  cadence: {result.cadence_dsl}")
+    print(f"  artifact: {result.os_artifact_path}")
+    print(f"  next run: {result.next_run.isoformat()}")
+    if result.install_instruction is not None:
+        # Windows v1: append the schtasks /Create /XML line so the
+        # user can run it by hand. The kit does not invoke schtasks
+        # itself (spec §"Windows v1 special case").
+        print(f"  activation: {result.install_instruction}")
+    return 0
+
+
+def _cmd_schedule_uninstall(args: argparse.Namespace) -> int:
+    """``wiki schedule uninstall <op> [--machine <name>]``.
+
+    Thin wrapper over :func:`llm_wiki_kit.schedule.uninstall`. Foreign-
+    machine uninstall (the journaled ``machine_id`` differs from
+    ``socket.gethostname()``) prints a stderr warning naming the
+    journaled artifact path so the user can SSH into the foreign host
+    and remove it manually.
+    """
+
+    from llm_wiki_kit.schedule import uninstall as _uninstall
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+
+    result = _uninstall(
+        args.operation,
+        machine=args.machine,
+        vault_root=vault_root,
+        journal_path=journal_path,
+        now=datetime.now(UTC),
+    )
+
+    if result.foreign_machine:
+        print(
+            f"note: schedule was installed on {result.machine_id}; "
+            f"remove the artifact at {result.os_artifact_path} manually on that host",
+            file=sys.stderr,
+        )
+
+    print(f"Uninstalled schedule for {args.operation} on {result.machine_id}.")
+    if result.uninstall_instruction is not None:
+        print(f"  deactivation: {result.uninstall_instruction}")
+    return 0
+
+
+def _cmd_schedule_list(args: argparse.Namespace) -> int:
+    """``wiki schedule list [--machine <name>] [--all-machines]``.
+
+    Renders the tab-separated table per spec §Outputs `list`. Header
+    line first; one row per live ``(operation, machine_id)`` pair.
+    """
+
+    from llm_wiki_kit.schedule import list_schedules as _list
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+
+    rows = _list(
+        machine=args.machine,
+        all_machines=args.all_machines,
+        vault_root=vault_root,
+        journal_path=journal_path,
+    )
+
+    print("OPERATION\tMACHINE\tCADENCE\tARTIFACT\tSTATUS")
+    for row in rows:
+        print(
+            f"{row.operation}\t{row.machine_id}\t{row.cadence_dsl}\t"
+            f"{row.os_artifact_path}\t{row.status}"
+        )
+    return 0
+
+
 RESEARCH_VEHICLE = "wiki-research"
 
 
@@ -2426,6 +2533,79 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     journal_explain.set_defaults(func=_cmd_journal_explain)
+
+    schedule_cmd = subparsers.add_parser(
+        "schedule",
+        help="Install, uninstall, or list OS-native schedules for operations.",
+    )
+    schedule_sub = schedule_cmd.add_subparsers(dest="schedule_command", metavar="<subcommand>")
+    schedule_sub.required = True
+
+    schedule_install = schedule_sub.add_parser(
+        "install",
+        parents=[verbose_parent],
+        help="Install an OS-native schedule for an operation primitive.",
+    )
+    schedule_install.add_argument("operation", help="Operation name (e.g. weekly-digest).")
+    schedule_install.add_argument(
+        "--at",
+        default=None,
+        metavar="<dsl>",
+        help=(
+            "Cadence DSL override. Forms: 'daily HH:MM', '<DAY> HH:MM', "
+            "'monthly <DD> HH:MM', 'quarterly <DD> HH:MM'. Default comes "
+            "from the operation contract's period: field."
+        ),
+    )
+    schedule_install.add_argument(
+        "--machine",
+        default=None,
+        metavar="<name>",
+        help=(
+            "Machine name to attribute the schedule to. Defaults to "
+            "socket.gethostname(). Override to manage schedules on "
+            "another host of a synced vault (out-of-band; the kit "
+            "does not write to that host)."
+        ),
+    )
+    schedule_install.set_defaults(func=_cmd_schedule_install)
+
+    schedule_uninstall = schedule_sub.add_parser(
+        "uninstall",
+        parents=[verbose_parent],
+        help="Uninstall an OS-native schedule for an operation primitive.",
+    )
+    schedule_uninstall.add_argument("operation", help="Operation name.")
+    schedule_uninstall.add_argument(
+        "--machine",
+        default=None,
+        metavar="<name>",
+        help=(
+            "Machine name. Defaults to socket.gethostname(). Foreign "
+            "machine uninstall skips the OS-side deactivation and "
+            "prints a 'remove the artifact manually' warning to stderr."
+        ),
+    )
+    schedule_uninstall.set_defaults(func=_cmd_schedule_uninstall)
+
+    schedule_list = schedule_sub.add_parser(
+        "list",
+        parents=[verbose_parent],
+        help="List installed schedules with drift/liveness status.",
+    )
+    schedule_list.add_argument(
+        "--machine",
+        default=None,
+        metavar="<name>",
+        help="Restrict to a single machine_id.",
+    )
+    schedule_list.add_argument(
+        "--all-machines",
+        dest="all_machines",
+        action="store_true",
+        help=("Show schedules for every machine the journal has seen, not just the current host."),
+    )
+    schedule_list.set_defaults(func=_cmd_schedule_list)
 
     return parser
 
