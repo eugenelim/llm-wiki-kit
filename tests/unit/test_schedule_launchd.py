@@ -760,3 +760,26 @@ def test_inspect_never_returns_not_inspectable(
     monkeypatch.setattr("llm_wiki_kit.schedule.launchd.subprocess.run", mock_run)
     result = emitter.inspect(artifact_file)
     assert result in valid_results, f"inspect() returned unexpected {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# disabled_hint — surfaced by ``wiki doctor`` when inspect() == "not-loaded"
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_hint_names_launchctl_bootstrap_for_current_uid(
+    emitter: LaunchdEmitter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``disabled_hint`` returns the exact ``launchctl bootstrap gui/<uid>`` line.
+
+    Pinned with a fixture UID so the assertion doesn't depend on the
+    runner's actual UID. Doctor's ``schedule-disabled`` warning embeds
+    this string verbatim; a templating drift here would silently mangle
+    the hint without breaking the doctor substring assertion (which
+    only checks ``"launchctl bootstrap"`` presence).
+    """
+    monkeypatch.setattr("llm_wiki_kit.schedule.launchd.os.getuid", lambda: 501)
+    plist_path = Path("/Users/u/Library/LaunchAgents/com.llm-wiki-kit.x.op.plist")
+    assert emitter.disabled_hint(plist_path) == (
+        "launchctl bootstrap gui/501 /Users/u/Library/LaunchAgents/com.llm-wiki-kit.x.op.plist"
+    )

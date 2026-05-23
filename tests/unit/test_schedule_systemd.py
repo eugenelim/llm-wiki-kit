@@ -634,3 +634,22 @@ def test_systemd_emitter_companion_artifacts_returns_service_pair_for_timer(
         vault_id=vault_id,
         exec_command=exec_command,
     )
+
+
+# ---------------------------------------------------------------------------
+# disabled_hint — surfaced by ``wiki doctor`` when inspect() == "not-loaded"
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_hint_names_systemctl_user_enable_with_timer_basename() -> None:
+    """``disabled_hint`` returns ``systemctl --user enable --now <timer-basename>``.
+
+    The hint uses ``artifact_path.name`` rather than the full path —
+    ``systemctl --user`` resolves units by name within the user unit
+    search path.
+    """
+    emitter = SystemdEmitter()
+    timer_path = Path("/home/u/.config/systemd/user/llm-wiki-kit-abc-op.timer")
+    assert emitter.disabled_hint(timer_path) == (
+        "systemctl --user enable --now llm-wiki-kit-abc-op.timer"
+    )

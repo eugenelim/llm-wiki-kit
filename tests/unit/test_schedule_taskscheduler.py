@@ -551,3 +551,29 @@ def test_uri_task_name_matches_activation_instruction_tn_token() -> None:
         f"Task name mismatch: <URI> has {embedded_task_name!r} "
         f"but activation instruction is: {activation_line!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# disabled_hint — Windows never reaches the not-loaded branch (inspect()
+# returns "not-inspectable" or "missing-file" only), but the Protocol
+# contract requires a string for any future broadening of that path.
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_hint_delegates_to_default_helper() -> None:
+    """Windows ``disabled_hint`` returns exactly ``default_disabled_hint(path)``.
+
+    The Windows ``inspect()`` only emits ``"missing-file"`` /
+    ``"not-inspectable"`` at v1, so this branch is unreachable from
+    doctor today. Equality against the shared
+    :func:`default_disabled_hint` helper is the structural pin:
+    any future drive-by that grafts a Windows-specific recovery
+    command (``schtasks /Run``, ``Enable-ScheduledTask``, …) onto
+    this method fails the comparison without the test having to
+    enumerate the forbidden verbs.
+    """
+    from llm_wiki_kit.schedule._emitter import default_disabled_hint
+
+    emitter = TaskSchedulerEmitter()
+    xml_path = Path("C:/Users/u/AppData/Local/llm-wiki-kit/schedules/abc-op.xml")
+    assert emitter.disabled_hint(xml_path) == default_disabled_hint(xml_path)

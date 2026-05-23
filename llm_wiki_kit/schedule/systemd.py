@@ -361,6 +361,10 @@ class SystemdEmitter:
     def inspect(self, timer_path: Path) -> InspectResult:
         return inspect(timer_path)
 
+    def disabled_hint(self, timer_path: Path) -> str:
+        """Return the ``systemctl --user enable --now <timer>`` hint string."""
+        return f"systemctl --user enable --now {timer_path.name}"
+
 
 # Singleton for use by the orchestrator's platform-dispatch table.
 emitter = SystemdEmitter()

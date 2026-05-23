@@ -550,6 +550,84 @@ def test_install_exec_command_prefers_shutil_which_over_argv0(
     assert install_events[0].exec_command[1:] == ["run", "--exec", "weekly-digest"]
 
 
+def test_install_exec_command_falls_back_to_executable_argv0_when_which_misses(
+    tmp_path: Path, install_with_stub: _StubEmitter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``shutil.which`` returns None → fall through to ``sys.argv[0]`` when executable.
+
+    Pins the spec §Invariants fallback: an executable shim at
+    ``sys.argv[0]`` is accepted even when the binary isn't on PATH.
+    The journaled ``exec_command[0]`` is the resolved shim path.
+    """
+    vault, journal_path = _make_vault(tmp_path)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wiki_shim = bin_dir / "wiki"
+    wiki_shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    wiki_shim.chmod(0o755)
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.shutil.which", lambda _name: None)
+    monkeypatch.setattr("llm_wiki_kit.schedule.sys.argv", [str(wiki_shim)])
+
+    schedule.install(
+        "weekly-digest",
+        at=None,
+        machine="this-box",
+        vault_root=vault,
+        kit_root=REPO_ROOT,
+        journal_path=journal_path,
+        now=NOW,
+    )
+
+    events = list(read_events(journal_path))
+    install_events = [e for e in events if isinstance(e, ScheduleInstalledEvent)]
+    assert len(install_events) == 1
+    assert install_events[0].exec_command[0] == str(wiki_shim)
+    assert install_events[0].exec_command[1:] == ["run", "--exec", "weekly-digest"]
+
+
+def test_install_exec_command_raises_when_argv0_not_executable(
+    tmp_path: Path, install_with_stub: _StubEmitter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``shutil.which=None`` + non-executable ``sys.argv[0]`` → documented WikiError.
+
+    Pins the spec §Invariants refusal: a ``python -m llm_wiki_kit``
+    invocation lands ``sys.argv[0]`` at a ``__main__.py`` that the OS
+    scheduler cannot ``exec()``. Install refuses with the canonical
+    message rather than silently journaling a path that fails at 3am.
+    """
+    vault, journal_path = _make_vault(tmp_path)
+
+    # A real file but without the executable bit set — mimics ``argv[0]``
+    # pointing at ``…/__main__.py`` under ``python -m`` invocation.
+    not_executable = tmp_path / "__main__.py"
+    not_executable.write_text("print('hi')\n", encoding="utf-8")
+    not_executable.chmod(0o644)
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.shutil.which", lambda _name: None)
+    monkeypatch.setattr("llm_wiki_kit.schedule.sys.argv", [str(not_executable)])
+
+    events_before = list(read_events(journal_path))
+
+    with pytest.raises(WikiError, match="cannot resolve 'wiki' binary path"):
+        schedule.install(
+            "weekly-digest",
+            at=None,
+            machine="this-box",
+            vault_root=vault,
+            kit_root=REPO_ROOT,
+            journal_path=journal_path,
+            now=NOW,
+        )
+
+    # Spec §Invariants: refusal happens before ``journal.transaction()``
+    # opens, so the journal is byte-identical — no install event, and
+    # no ``LockAcquiredEvent`` / ``LockReleasedEvent`` pair leaks.
+    events_after = list(read_events(journal_path))
+    assert events_after == events_before
+
+
 # ---------------------------------------------------------------------------
 # Windows install_instruction lifts into the result
 # ---------------------------------------------------------------------------

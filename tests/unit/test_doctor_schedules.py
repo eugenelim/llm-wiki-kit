@@ -6,7 +6,8 @@ Covers the checks documented in
 * CT-15 — schedule installed + plist removed out of band; doctor exits ``0``
   and surfaces the operation name + fix command on stdout.
 * CT-17 — hostname rename surfaces an old/new-name one-liner with the
-  ``--machine <old>`` migration hint; exit ``0``; no journal write.
+  ``--machine <old>`` operate-on-them hint; exit ``0``; no journal
+  write.
 * Three drift modes for current-host schedules: ``missing-file``,
   ``disabled``, ``unknown`` (foreign machine — no missing-file/disabled
   warning).
@@ -38,7 +39,9 @@ from llm_wiki_kit.models import (
     ScheduleInstalledEvent,
     ScheduleUninstalledEvent,
 )
-from llm_wiki_kit.schedule._emitter import InspectResult
+from llm_wiki_kit.schedule._emitter import InspectResult, default_disabled_hint
+from llm_wiki_kit.schedule.launchd import LaunchdEmitter
+from llm_wiki_kit.schedule.systemd import SystemdEmitter
 
 _ExecFailureReason = Literal[
     "non-zero-exit",
@@ -76,19 +79,36 @@ def _journal(vault: Path) -> Path:
 class _StubEmitter:
     """Test double for ``_Emitter`` with a programmable ``inspect`` result.
 
-    Only the method ``_check_schedules`` actually calls is implemented.
-    Returns the configured ``InspectResult`` verbatim regardless of
-    filesystem state — tests that want ``"missing-file"`` should also
-    not create the artifact, but the stub doesn't enforce that linkage
-    (kept simple so each test owns its setup explicitly).
+    Only the methods ``_check_schedules`` actually calls are
+    implemented: ``inspect`` and ``disabled_hint``. ``disabled_hint``
+    delegates to a real per-OS emitter (passed via ``hint_source``)
+    so the rendered warning carries the genuine launchctl/systemctl
+    string the substring assertions below depend on. The path-aware
+    assertions (artifact path appears in stdout) double-pin that
+    the hint string was produced by the routed call rather than a
+    hard-coded fallback — the only path that interpolates the
+    test's unique fixture artifact path is
+    ``emitter.disabled_hint(artifact_path)``.
     """
 
-    def __init__(self, inspect_result: InspectResult) -> None:
+    def __init__(
+        self,
+        inspect_result: InspectResult,
+        *,
+        hint_source: LaunchdEmitter | SystemdEmitter | None = None,
+    ) -> None:
         self._inspect_result = inspect_result
+        self._hint_source = hint_source
 
     def inspect(self, artifact_path: Path) -> InspectResult:
         del artifact_path
         return self._inspect_result
+
+    def disabled_hint(self, artifact_path: Path) -> str:
+        if self._hint_source is not None:
+            return self._hint_source.disabled_hint(artifact_path)
+        # Fallback for tests that don't exercise the not-loaded branch.
+        return default_disabled_hint(artifact_path)
 
 
 def _install_event(
@@ -133,8 +153,12 @@ def _exec_failed_event(
 def patch_emitter(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Return a helper that pins ``doctor._resolve_emitter`` to a stub."""
 
-    def _set(inspect_result: InspectResult) -> _StubEmitter:
-        stub = _StubEmitter(inspect_result)
+    def _set(
+        inspect_result: InspectResult,
+        *,
+        hint_source: LaunchdEmitter | SystemdEmitter | None = None,
+    ) -> _StubEmitter:
+        stub = _StubEmitter(inspect_result, hint_source=hint_source)
         monkeypatch.setattr(doctor, "_resolve_emitter", lambda: stub)
         return stub
 
@@ -157,16 +181,6 @@ def patch_now(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     def _set(now: datetime) -> None:
         monkeypatch.setattr(doctor, "_now", lambda: now)
-
-    return _set
-
-
-@pytest.fixture
-def patch_platform(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Return a helper that pins ``platform.system()`` for the disabled-hint branch."""
-
-    def _set(system: str) -> None:
-        monkeypatch.setattr(doctor, "_platform_system", lambda: system)
 
     return _set
 
@@ -308,7 +322,6 @@ def test_drift_disabled_macos_includes_launchctl_bootstrap_hint(
     capsys: pytest.CaptureFixture[str],
     patch_emitter: Any,
     patch_hostname: Any,
-    patch_platform: Any,
 ) -> None:
     """``inspect`` returning 'not-loaded' on Darwin → warning naming launchctl bootstrap."""
 
@@ -328,8 +341,7 @@ def test_drift_disabled_macos_includes_launchctl_bootstrap_hint(
     )
 
     patch_hostname("this-box")
-    patch_emitter("not-loaded")
-    patch_platform("Darwin")
+    patch_emitter("not-loaded", hint_source=LaunchdEmitter())
 
     monkeypatch.chdir(vault)
     exit_code = cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
@@ -337,6 +349,11 @@ def test_drift_disabled_macos_includes_launchctl_bootstrap_hint(
 
     assert exit_code == 0
     assert "weekly-digest" in captured.out
+    # The substring is itself the routing pin: only
+    # ``LaunchdEmitter.disabled_hint`` produces it. If doctor stopped
+    # calling onto the emitter and fell back to the static fallback
+    # at ``doctor._check_schedules`` ("reinstall via 'wiki schedule
+    # install' for …"), this assertion would fail.
     assert "launchctl bootstrap" in captured.out
 
 
@@ -346,7 +363,6 @@ def test_drift_disabled_linux_includes_systemctl_enable_hint(
     capsys: pytest.CaptureFixture[str],
     patch_emitter: Any,
     patch_hostname: Any,
-    patch_platform: Any,
 ) -> None:
     """``inspect`` returning 'not-loaded' on Linux → warning naming systemctl --user enable."""
 
@@ -366,8 +382,7 @@ def test_drift_disabled_linux_includes_systemctl_enable_hint(
     )
 
     patch_hostname("this-box")
-    patch_emitter("not-loaded")
-    patch_platform("Linux")
+    patch_emitter("not-loaded", hint_source=SystemdEmitter())
 
     monkeypatch.chdir(vault)
     exit_code = cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
@@ -375,6 +390,10 @@ def test_drift_disabled_linux_includes_systemctl_enable_hint(
 
     assert exit_code == 0
     assert "weekly-digest" in captured.out
+    # The substring is itself the routing pin: only
+    # ``SystemdEmitter.disabled_hint`` produces it (the static
+    # fallback in ``doctor._check_schedules`` says "reinstall via
+    # 'wiki schedule install' for …" instead).
     assert "systemctl --user enable" in captured.out
 
 

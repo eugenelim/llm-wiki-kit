@@ -215,3 +215,8 @@ class LaunchdEmitter:
         if result.returncode == 0:
             return "loaded"
         return "not-loaded"
+
+    def disabled_hint(self, artifact_path: Path) -> str:
+        """Return the ``launchctl bootstrap`` line that re-enables the plist."""
+        uid = os.getuid()
+        return f"launchctl bootstrap gui/{uid} {artifact_path}"
