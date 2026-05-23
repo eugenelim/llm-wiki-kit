@@ -168,9 +168,10 @@ the OS invokes it independently of how it was authored).
      |CT-13  |`test_list_machine_filter_and_all_machines_flag`                                            |`test_schedule_list.py`               |
      |CT-14  |Already covered by PR-2+3's `test_models_schedule_events.py`.                              |(not in PR-5)                         |
      |CT-15  |PR-8's doctor section.                                                                      |(not in PR-5)                         |
-     |CT-16  |`test_uninstall_foreign_machine_skips_os_deactivation`                                      |`test_schedule_uninstall.py`          |
+     |CT-16  |`test_uninstall_foreign_machine_skips_os_deactivation` + `test_uninstall_foreign_machine_runs_inside_transaction` (lock-pair canary, added in foreign-machine-race follow-up PR)|`test_schedule_uninstall.py`|
      |CT-17  |PR-8's doctor section.                                                                      |(not in PR-5)                         |
      |CT-18  |`test_install_exec_command_prefers_shutil_which_over_argv0` + `…_falls_back_to_executable_argv0_when_which_misses` + `…_raises_when_argv0_not_executable` |`test_schedule_install.py`            |
+     |CT-19  |`test_uninstall_foreign_machine_loses_race_to_concurrent_uninstall`                          |`test_schedule_uninstall.py` (added in foreign-machine-race follow-up PR)|
 
    - **Tests (construction):**
      - `tests/unit/test_schedule_install.py`:

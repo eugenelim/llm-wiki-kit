@@ -14,10 +14,12 @@ from typing import Any
 
 import pytest
 
+from llm_wiki_kit import journal as journal_module
 from llm_wiki_kit import schedule
 from llm_wiki_kit.errors import WikiError
 from llm_wiki_kit.journal import append_event, read_events
 from llm_wiki_kit.models import (
+    LockAcquiredEvent,
     PrimitiveInstallEvent,
     ScheduleUninstalledEvent,
     VaultInitEvent,
@@ -271,6 +273,162 @@ def test_uninstall_foreign_machine_skips_os_deactivation(
     assert len(uninstall_events) == 1
     assert uninstall_events[0].machine_id == "other-box"
     assert uninstall_events[0].removed_artifact is False
+
+
+# ---------------------------------------------------------------------------
+# CT-16 (extended) + CT-19: foreign-machine uninstall is wrapped in
+# ``journal.transaction()`` and serializes against concurrent uninstalls
+# ---------------------------------------------------------------------------
+
+
+def test_uninstall_foreign_machine_runs_inside_transaction(
+    tmp_path: Path, with_stub: _StubEmitter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structural canary for CT-16's lock-pair extension.
+
+    Mirrors the install-side pattern at
+    ``tests/unit/test_schedule_install.py:419-422``: with the
+    ``journal.transaction()`` wrapper in place, a foreign-machine
+    uninstall journals a ``LockAcquiredEvent`` / ``LockReleasedEvent``
+    pair bracketing the ``ScheduleUninstalledEvent``. Without the
+    wrapper this test fails (no lock-pair). It does not exercise the
+    race contract — see ``test_uninstall_foreign_machine_loses_race_
+    to_concurrent_uninstall`` for that — but it pins the wrapper's
+    on-disk shape so an accidental wrapper removal trips immediately.
+    """
+
+    vault, journal_path = _make_vault(tmp_path)
+    monkeypatch.setattr(socket, "gethostname", lambda: "other-box")
+    _install_first(vault, journal_path, machine="other-box")
+    monkeypatch.setattr(socket, "gethostname", lambda: "this-host")
+
+    schedule.uninstall(
+        "weekly-digest",
+        machine="other-box",
+        vault_root=vault,
+        journal_path=journal_path,
+        now=NOW,
+    )
+
+    events = list(read_events(journal_path))
+    types = [e.type for e in events]
+    # One lock-pair bracketing one uninstall event from this caller.
+    uninstall_idx = next(i for i, e in enumerate(events) if isinstance(e, ScheduleUninstalledEvent))
+    # Most-recent LockAcquired before the uninstall; nearest LockReleased after.
+    acquired_idx = max(i for i, t in enumerate(types[:uninstall_idx]) if t == "lock.acquired")
+    released_idx = (
+        uninstall_idx
+        + 1
+        + next(i for i, t in enumerate(types[uninstall_idx + 1 :]) if t == "lock.released")
+    )
+    assert acquired_idx < uninstall_idx < released_idx
+    # No other schedule-related payload between the bracket.
+    bracketed_types = types[acquired_idx + 1 : released_idx]
+    # Membership rather than exact equality — future benign event
+    # types inside a transaction shouldn't break the canary. Mirrors
+    # the install-side canary's looseness.
+    assert "schedule.uninstalled" in bracketed_types
+
+
+def test_uninstall_foreign_machine_loses_race_to_concurrent_uninstall(
+    tmp_path: Path, with_stub: _StubEmitter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CT-19: in-transaction re-check refuses when a concurrent uninstall masked the install.
+
+    Simulates the race the wrapper exists to close: the pre-transaction
+    ``_latest_install`` read finds the install live, but between that
+    read and the lock acquisition a competing ``wiki schedule
+    uninstall`` (in another process) lands its own
+    ``ScheduleUninstalledEvent`` on disk. When this caller's
+    transaction opens and re-reads, it observes the masking event and
+    refuses with WikiError — without appending a second
+    ``ScheduleUninstalledEvent``.
+
+    Technique pinned by CT-19: monkeypatch ``schedule.read_events`` so
+    its first call returns the install-only view (the real read) and,
+    as a side effect before returning, writes the competitor's
+    ``ScheduleUninstalledEvent`` to the on-disk journal via the real
+    ``append_event``. Subsequent calls delegate unchanged. The
+    competitor's event is therefore genuinely on disk by the time the
+    in-transaction re-check runs.
+    """
+
+    vault, journal_path = _make_vault(tmp_path)
+    monkeypatch.setattr(socket, "gethostname", lambda: "other-box")
+    _install_first(vault, journal_path, machine="other-box")
+    monkeypatch.setattr(socket, "gethostname", lambda: "this-host")
+
+    real_read_events = journal_module.read_events
+    call_count = {"n": 0}
+
+    def racing_read_events(path: Path) -> Any:
+        call_count["n"] += 1
+        events = list(real_read_events(path))
+        if call_count["n"] == 1:
+            # Pre-read returned the install-only view. Now the
+            # "competitor" lands its own uninstall on disk before our
+            # caller enters the transaction.
+            append_event(
+                path,
+                ScheduleUninstalledEvent(
+                    timestamp=NOW,
+                    by="wiki-schedule",
+                    operation="weekly-digest",
+                    machine_id="other-box",
+                    removed_artifact=False,
+                ),
+            )
+        return events
+
+    monkeypatch.setattr("llm_wiki_kit.schedule.read_events", racing_read_events)
+
+    # Match on the discriminator suffix specifically — distinguishes
+    # the race-loss refusal from the pre-read refusal (which CT-9
+    # pins) so a future refactor can't silently drop the operator
+    # signal that CT-19 (a) contracts for.
+    with pytest.raises(WikiError, match=r"concurrent uninstall observed under lock"):
+        schedule.uninstall(
+            "weekly-digest",
+            machine="other-box",
+            vault_root=vault,
+            journal_path=journal_path,
+            now=NOW,
+        )
+
+    events = list(read_events(journal_path))
+    # (b) Exactly one ScheduleUninstalledEvent for (op, machine) — the
+    # competitor's, written between the two reads. This caller appended none.
+    uninstall_events = [
+        e
+        for e in events
+        if isinstance(e, ScheduleUninstalledEvent)
+        and e.operation == "weekly-digest"
+        and e.machine_id == "other-box"
+    ]
+    assert len(uninstall_events) == 1
+    # The single event is the competitor's foreign-uninstall (removed_artifact=False);
+    # the "we appended none" claim is already pinned by len==1 + the lock-pair
+    # bracketed-types assertion below.
+
+    # (c) The journal contains this caller's lock-pair bracketing no
+    # ScheduleUninstalledEvent payload — diagnostic shape for "verb
+    # opened the lock and refused after the in-transaction re-check."
+    # Filter by `reason="uninstall weekly-digest"` so the install's
+    # own lock-pair from test setup doesn't conflate.
+    uninstall_acquires = [
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, LockAcquiredEvent) and e.reason == "uninstall weekly-digest"
+    ]
+    assert len(uninstall_acquires) == 1
+    acquired_idx = uninstall_acquires[0]
+    released_idx = next(
+        i
+        for i, e in enumerate(events[acquired_idx + 1 :], start=acquired_idx + 1)
+        if e.type == "lock.released"
+    )
+    bracketed_types = [e.type for e in events[acquired_idx + 1 : released_idx]]
+    assert "schedule.uninstalled" not in bracketed_types
 
 
 # ---------------------------------------------------------------------------
