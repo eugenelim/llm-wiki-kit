@@ -940,6 +940,10 @@ def test_failure_plus_warning_renders_warnings_under_schedules_section(
     assert warning_idx != -1
     # Section header precedes the warning, and both come after the failure.
     assert stale_idx < schedules_idx < warning_idx
+    # Spec §"Doctor integration" pins a blank line between the failure
+    # block and the ``Schedules:`` header — `\n\nSchedules:` proves
+    # exactly one empty line separates them.
+    assert "\n\nSchedules:" in captured.out
 
 
 def test_only_warnings_exits_zero_with_schedules_header(
@@ -973,7 +977,39 @@ def test_only_warnings_exits_zero_with_schedules_header(
 
     assert exit_code == 0
     assert "Schedules:" in captured.out
+    # Spec §"Doctor integration" pins the two-space indent on each
+    # warning line; the literal ``\n  schedule for`` proves both
+    # ordering (under the header) and indent.
+    assert "\n  schedule for weekly-digest missing artifact" in captured.out
     assert "wiki schedule install weekly-digest" in captured.out
+
+
+def test_clean_vault_emits_no_schedules_header(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    patch_emitter: Any,
+    patch_hostname: Any,
+) -> None:
+    """An empty journal produces no ``Schedules:`` header — section is suppressed when empty.
+
+    Spec §"Doctor integration" pins: "The header is suppressed entirely
+    when no schedule warnings fire so a clean vault produces empty
+    stdout." Pinning this here lets a future change that always-emits
+    the header surface in CI.
+    """
+
+    vault = _vault(tmp_path)
+    patch_hostname("this-box")
+    patch_emitter("loaded")
+
+    monkeypatch.chdir(vault)
+    exit_code = cli.main(["doctor"], kit_root=_minimal_kit(tmp_path))
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured.out == ""
+    assert "Schedules:" not in captured.out
 
 
 # ---------------------------------------------------------------------------
