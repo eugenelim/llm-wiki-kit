@@ -249,6 +249,9 @@ def test_ct17_hostname_rename_surfaces_in_doctor(
     assert "old-name" in captured.out
     assert "new-name" in captured.out
     assert "--machine old-name" in captured.out
+    # Schedule warnings render to stdout, not stderr — spec
+    # §"Doctor integration" pins the channel.
+    assert captured.err == ""
     # CT-17 explicitly says "no journal write".
     assert journal_path.stat().st_size == journal_size_before
 

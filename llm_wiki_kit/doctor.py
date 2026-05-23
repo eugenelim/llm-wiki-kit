@@ -569,7 +569,7 @@ def _disabled_hint(artifact_path: Path) -> str:
     return f"reinstall via 'wiki schedule install' for {artifact_path}"
 
 
-def _check_schedules(events: list[Event], vault_root: Path) -> list[Issue]:
+def _check_schedules(events: list[Event]) -> list[Issue]:
     """Spec §"Doctor integration" — drift + hostname-rename + exec-failure backlog.
 
     Returns warning-flavored :class:`Issue`\\ s (``is_warning=True``); the
@@ -593,8 +593,6 @@ def _check_schedules(events: list[Event], vault_root: Path) -> list[Issue]:
        grouped by operation. Other reasons are filtered out at the
        source — see ``_EXEC_FAILURE_REASONS_TO_SURFACE``.
     """
-
-    del vault_root  # reserved for future per-vault inbox lookups
 
     issues: list[Issue] = []
     current_host = gethostname()
@@ -639,7 +637,7 @@ def _check_schedules(events: list[Event], vault_root: Path) -> list[Issue]:
                     path=event.operation,
                     detail=(
                         f"schedule for {event.operation} exists on disk but is "
-                        f"not loaded; {_disabled_hint(artifact_path)}"
+                        f"not loaded; '{_disabled_hint(artifact_path)}'"
                     ),
                     is_warning=True,
                 )
@@ -727,8 +725,12 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     issues.extend(check_primitive_missing(state, kit_root))
     issues.extend(check_stale_lock(state, _stale_threshold_hours()))
     issues.extend(_check_outcome_orphan_stubs(state, vault_root, kit_root))
-    # Sort by (is_warning, kind, path, detail) so warnings render after
-    # failures regardless of their alphabetical kind position.
-    issues.sort(key=lambda issue: (issue.is_warning, issue.kind, issue.path, issue.detail))
-    issues.extend(_check_schedules(events, vault_root))
+    # Sort failures by (kind, path, detail) only. Schedule warnings are
+    # appended after the sort so the "Schedules section after the
+    # Primitives section" ordering in spec §"Doctor integration" holds;
+    # warnings stay in the family-grouped order ``_check_schedules``
+    # produces (drift → hostname-rename → exec-failure backlog), which
+    # is more readable than re-sorting them alphabetically by kind.
+    issues.sort(key=lambda issue: (issue.kind, issue.path, issue.detail))
+    issues.extend(_check_schedules(events))
     return issues
