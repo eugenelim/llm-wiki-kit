@@ -16,8 +16,10 @@
   refusal), [ADR-0009](../../adr/0009-headless-claude-invocation-contract.md)
   (the `claude -p` argv shape this spec emits — pins what CT-13
   previously deferred), [ADR-0010](../../adr/0010-agent-passthrough-via-claude-agent-flag.md)
-  (`--agent <name>` passthrough; **not implemented in v1** — the
-  resolution chain depends on RFC-0004, which has not landed),
+  (`--agent <name>` passthrough; **emitted post RFC-0004
+  wiki-agents PR-5** when the resolution chain produces a
+  non-`None` name — see §"Contracts with other modules" for the
+  signature),
   [`AGENTS.md` §"Runtime dependencies"](../../../AGENTS.md#runtime-dependencies).
 
 ## What this is
@@ -215,10 +217,13 @@ carries the diagnostic in that case).
      `parsed_args` from the journaled `OperationRunEvent.args`
      by `event_id`, **not** from the prompt body — the kit does
      not pin a prompt-side rendering of args. The `[--agent
-     <name>]` insertion ADR-0010 documents is **out of scope for
-     v1** — that resolution chain comes from RFC-0004, which has
-     not landed; v1's `_build_argv` never emits `--agent`. Spawn
-     via `subprocess.run(argv, …)`.
+     <name>]` insertion ADR-0010 documents is **emitted** (post
+     RFC-0004 wiki-agents PR-5) when the kit's agent resolution
+     chain produced a non-`None` name; with no agent resolved the
+     argv shape is byte-identical to the no-agent ADR-0009 form.
+     See [`wiki-agents/spec.md`](../wiki-agents/spec.md)
+     §"Resolution chain" for the chain shape that feeds this
+     insert. Spawn via `subprocess.run(argv, …)`.
      stdout/stderr both redirected to
      `.wiki.journal/exec-logs/<event_id>.log` (truncate-mode,
      UTF-8 — one log per dispatch; new run, new file). Timeout:
@@ -459,6 +464,20 @@ events are emitted for log deletions.
   no exec event. Exit non-zero.
 - Subprocess failures (non-zero exit, timeout) → journaled as
   `OperationExecFailedEvent`. Exit non-zero.
+- Agent-missing at exec time (CLI `--agent <name>` for an
+  uninstalled agent, or a schedule artifact's frozen
+  `--agent <name>` whose primitive was removed between install
+  and fire) → `WikiError` with the prefix
+  `"scheduled run resolved agent '<name>' but it is not
+  installed"` plus one
+  `OperationExecFailedEvent(reason="agent-missing", exit_code=-3)`
+  (no subprocess invoked, no `OperationRunEvent`, no
+  `OperationRunByAgentEvent`). The kit emits the "scheduled run
+  resolved" form regardless of whether the flag came from CLI
+  argv or a schedule artifact's `exec_command` — the resolution
+  chain runs identically and the kit cannot distinguish the two
+  call sites. Pinned by
+  [`wiki-agents/spec.md`](../wiki-agents/spec.md) CT-15.
 - `safe_write` drift on a per-failure file
   (`inbox/scheduled-failures/<event_id>.md`) is impossible by construction
   — each file is named after a single-use dispatch event id and
@@ -563,6 +582,63 @@ events are emitted for log deletions.
   unchanged — no `dispatch_event_id` exists, no exec attempt is
   made, no failure event journaled.
 
+  **`dispatch()` agent signature** (RFC-0004 wiki-agents PR-5
+  amendment). `dispatch()` gains two optional keyword arguments:
+
+  ```python
+  def dispatch(
+      operation: str,
+      raw_args: list[str],
+      *,
+      vault_root: Path,
+      kit_root: Path,
+      journal_path: Path,
+      now: datetime,
+      agent: str | None = None,    # CLI flag value (None = unset)
+      is_exec: bool = False,        # chain shape + agent-missing journal
+  ) -> DispatchResult
+  ```
+
+  `agent` is the user-supplied `--agent <name>` value (or `None`).
+  `is_exec` flips two behaviors: (1) the resolution chain walks
+  recipe binding + contract `preferred_agent` in addition to the
+  CLI flag (dispatch-only mode walks only the CLI flag per
+  [`wiki-agents/spec.md`](../wiki-agents/spec.md) §"Resolution
+  chain (at `wiki run` dispatch-only time)"); (2) an agent-missing
+  validation failure journals one
+  `OperationExecFailedEvent(reason="agent-missing")` (dispatch-only
+  raises `WikiError` with no journal write). When the resolved
+  agent is non-`None` and validates, `dispatch()` pairs the
+  `OperationRunEvent` and `OperationRunByAgentEvent` appends
+  inside one `journal.transaction(...)` so the two events share an
+  `event_id` and the lock-pair brackets both —
+  [CT-16](../wiki-agents/spec.md#acceptance-criteria) pins the
+  on-disk shape. `DispatchResult` carries the resolved agent name
+  back to `dispatch_and_exec` (new `agent: str | None = None`
+  field) so `_build_argv` can insert the two-token `--agent
+  <name>` pair without re-walking the chain.
+
+  **`_build_argv` agent signature** (RFC-0004 wiki-agents PR-5
+  amendment). `_build_argv` gains one optional keyword:
+
+  ```python
+  def _build_argv(
+      *,
+      claude_binary: Path,
+      vault_root: Path,
+      prompt: str,
+      max_budget_usd: str | None,
+      agent: str | None = None,
+  ) -> list[str]
+  ```
+
+  When `agent` is non-`None`, the returned argv contains
+  `["--agent", agent]` immediately before the trailing prompt
+  positional, per
+  [ADR-0010 §Decision](../../adr/0010-agent-passthrough-via-claude-agent-flag.md#decision).
+  When `agent` is `None`, the argv shape is byte-identical to the
+  no-agent ADR-0009 form (CT-13 above).
+
   **`DispatchResult` extension.** `dispatch()` already returns
   `DispatchResult`; this spec adds one new required field
   `dispatch_event_id: str` that carries the `event_id` the kit
@@ -596,14 +672,20 @@ events are emitted for log deletions.
       dispatch_event_id: str
       exit_code: int
       reason: Literal["non-zero-exit", "timeout", "conflict-refused",
-                       "binary-missing", "skill-missing"]
+                       "binary-missing", "skill-missing",
+                       "agent-missing"]
       stderr_tail: str = ""
       log_path: str | None = None
       conflict_sidecars: list[str] = Field(default_factory=list)
   ```
   `conflict_sidecars` is empty for every reason except
   `conflict-refused`; older journal lines (none exist yet at v1)
-  replay unchanged under ADR-0002's additive-schema rule.
+  replay unchanged under ADR-0002's additive-schema rule. The
+  `agent-missing` Literal value lands additively in the RFC-0004
+  wiki-agents PR-5 amendment; the kit emits it with
+  `exit_code=-3`, empty `stderr_tail`, and `log_path=None` (no
+  subprocess invoked). The pre-PR-5 reason set replays
+  byte-identically under the extended Literal.
 
   **Event identity.** `OperationRunEvent` gains one additive field
   `event_id: str | None = None`. The kit populates it via
@@ -813,8 +895,11 @@ plan files for the schedule + exec PRs.
   <prompt>]`. The `--max-budget-usd <cap>` pair is appended
   between `"json"` and `<prompt>` iff a `WIKI_EXEC_MAX_BUDGET_USD`
   env var is set (string-passed verbatim). `--agent <name>` is
-  **never** emitted by v1's `_build_argv` (ADR-0010's resolution
-  chain depends on RFC-0004, which hasn't landed). `<prompt>` is
+  inserted as a two-token pair immediately before the trailing
+  prompt positional when the wiki-agents resolution chain produced
+  a non-`None` name (RFC-0004 PR-5 amendment); see
+  [`wiki-agents/spec.md`](../wiki-agents/spec.md) §"Outputs"
+  CT-14 for the both-halves contract. `<prompt>` is
   the kit's template-rendered string containing the operation
   name, the SKILL path, and the `dispatch_event_id` substring.
   `parsed_args` is **not** rendered into the prompt body — the
@@ -854,16 +939,19 @@ plan files for the schedule + exec PRs.
 
 ## Non-goals
 
-- **Agent passthrough via `--agent <name>`.** ADR-0010 documents
-  the optional flag insertion; the resolution chain (schedule-
-  entry agent → recipe-declared mapping → operation's
-  `preferred_agent`) lives in RFC-0004, which has not landed.
-  v1's `_build_argv` never emits `--agent`. The v2 spec
-  amendment that picks this up will additively extend
-  `OperationExecFailedEvent` with `agent: str | None = None`
-  (so failures can record which agent was active); the field is
-  deliberately omitted at v1 to keep the model surface
-  minimal.
+- **Agent passthrough via `--agent <name>`.** Picked up by RFC-0004
+  wiki-agents PR-5; this Non-goals entry is retained as a
+  back-reference. `_build_argv` now emits `--agent <name>`
+  immediately before the trailing prompt positional whenever the
+  wiki-agents resolution chain produced a non-`None` name; see
+  [`wiki-agents/spec.md`](../wiki-agents/spec.md) §"Outputs" and
+  §"Resolution chain" for the resolved-name source-of-truth, and
+  §"Contracts with other modules" for the model-surface
+  additions (the new `OperationExecFailedEvent.reason="agent-missing"`
+  Literal value carries the kit's refusal when an
+  installed-but-then-removed agent surfaces at exec time; no
+  `OperationExecFailedEvent.agent` field is added — the paired
+  `OperationRunByAgentEvent` is the audit-tag carrier).
 
 - **An `OperationExecSucceededEvent`.** Symmetry with the failure
   event is tempting, but the dispatch event already records the

@@ -467,7 +467,7 @@ class OperationRunByAgentEvent(_EventBase):
 class OperationExecFailedEvent(_EventBase):
     """Recorded by ``wiki run --exec`` when the subprocess attempt fails.
 
-    Three failure shapes (see ``docs/specs/wiki-run-exec/spec.md``
+    Four failure shapes (see ``docs/specs/wiki-run-exec/spec.md``
     §Outputs):
 
     - ``non-zero-exit`` — Claude exited with a non-zero return code.
@@ -478,6 +478,14 @@ class OperationExecFailedEvent(_EventBase):
       because the vault has unresolved ``.proposed`` sidecars.
       ``exit_code`` is ``-1``, ``stderr_tail`` is empty, sidecar
       paths live in ``conflict_sidecars``.
+    - ``agent-missing`` — the resolved agent name (CLI flag, recipe
+      binding, schedule artifact's frozen ``--agent``, or contract
+      ``preferred_agent``) is not installed as a ``kind: agent``
+      primitive at exec time. The kit refuses to spawn; ``exit_code``
+      is ``-3``, ``stderr_tail`` and ``log_path`` are unset. Added
+      additively per ADR-0002 by ``docs/specs/wiki-agents/spec.md``
+      §Outputs and amended into ``wiki-run-exec/spec.md``
+      §"Contracts with other modules" in the same PR.
 
     Two reserved reasons (``binary-missing``, ``skill-missing``)
     appear in the Literal but are **not emitted at v1** — those
@@ -496,6 +504,7 @@ class OperationExecFailedEvent(_EventBase):
         "conflict-refused",
         "binary-missing",
         "skill-missing",
+        "agent-missing",
     ]
     stderr_tail: str = ""
     log_path: str | None = None

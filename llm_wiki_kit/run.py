@@ -45,14 +45,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from llm_wiki_kit.errors import WikiError
-from llm_wiki_kit.journal import append_event, read_events, replay_state
+from llm_wiki_kit.errors import RecipeError, ValidationError, WikiError
+from llm_wiki_kit.journal import append_event, read_events, replay_state, transaction
 from llm_wiki_kit.models import (
     OperationContract,
     OperationExecFailedEvent,
     OperationInputSpec,
+    OperationRunByAgentEvent,
     OperationRunEvent,
+    VaultState,
 )
+from llm_wiki_kit.primitives import is_installed_agent
+from llm_wiki_kit.recipes import load_recipe
 from llm_wiki_kit.write_helper import safe_write
 
 # Hex pattern for ``dispatch_event_id`` shape validation. 12 lowercase
@@ -245,6 +249,12 @@ class DispatchResult:
     dispatch_event_id: str
     error: str | None = None
     produced_pages: list[str] = field(default_factory=list)
+    # Resolved agent name (RFC-0004 wiki-agents PR-5). ``None`` when no
+    # agent declared via CLI, recipe, or contract. Carried back to the
+    # caller so ``dispatch_and_exec`` can thread the value into
+    # ``_build_argv``'s ``--agent <name>`` insert without re-walking
+    # the resolution chain.
+    agent: str | None = None
 
     def __post_init__(self) -> None:
         if self.status == "invalid_args" and self.error is None:
@@ -271,6 +281,145 @@ def _skill_or_default(contract: OperationContract) -> str:
     return contract.name
 
 
+# Sentinel exit code recorded on ``OperationExecFailedEvent.exit_code`` when
+# the kit refuses to spawn ``claude`` because the resolved agent is not
+# installed. Distinct from ``-1`` (conflict-refused) and ``-2`` (timeout)
+# so a future ``wiki doctor`` check can split the failure modes without
+# reading ``reason``.
+_AGENT_MISSING_EXIT_CODE = -3
+
+
+def _agent_missing_message(name: str, *, is_exec: bool) -> str:
+    """Format the ``agent '<name>' not installed`` ``WikiError`` text.
+
+    Two forms by mode:
+
+    - **Dispatch-only** (``is_exec=False``): spec line 192's canonical
+      "``agent '<name>' is not installed; run 'wiki add agent:<name>'
+      or re-run 'wiki init'``". Same shape ``schedule.install`` uses
+      for its ``--agent`` pre-load refusal.
+    - **``--exec``** (``is_exec=True``): CT-15's "``scheduled run
+      resolved agent '<name>' but it is not installed; …``" form.
+      The kit cannot distinguish a manual ``wiki run --exec --agent
+      ghost`` from a scheduled fire whose OS-artifact ``exec_command``
+      injected ``--agent <stale>`` (spec §"Edge cases / Agent
+      removed"); one form covers both.
+    """
+
+    suffix = f"run 'wiki add agent:{name}' or re-run 'wiki init'"
+    if is_exec:
+        return f"scheduled run resolved agent '{name}' but it is not installed; {suffix}"
+    return f"agent '{name}' is not installed; {suffix}"
+
+
+def _resolve_agent_for_run(
+    operation: str,
+    *,
+    state: VaultState,
+    cli_agent: str | None,
+    contract: OperationContract,
+    kit_root: Path,
+    is_exec: bool,
+) -> str | None:
+    """Walk the ``wiki run`` agent resolution chain.
+
+    Mirrors :func:`llm_wiki_kit.schedule._resolve_agent` with one
+    behavioral difference pinned by
+    ``docs/specs/wiki-agents/spec.md`` §"Resolution chain (at
+    ``wiki run`` dispatch-only time)": **dispatch-only mode skips
+    steps 2-3** (recipe binding, contract ``preferred_agent``). The
+    rationale lives in spec §"Resolution chain (at ``wiki run``
+    dispatch-only time)": inferring an agent on a manual hand-off
+    would confuse the audit trail when no ``claude`` invocation
+    carries the name. ``--exec`` mode walks the full chain because a
+    scheduled fire passes ``--agent`` via the OS artifact's
+    ``exec_command`` and a manual ``wiki run --exec`` should resolve
+    the same way the same operation would resolve at schedule-install
+    time.
+
+    Returns the resolved name (already validated against the
+    installed-primitive set) or ``None``. Validation is via
+    :func:`llm_wiki_kit.primitives.is_installed_agent`; failures
+    raise ``WikiError``. The caller (``dispatch``) is responsible
+    for translating that ``WikiError`` into the right journal shape
+    (no journal write in dispatch-only mode; one
+    ``OperationExecFailedEvent(reason="agent-missing")`` in
+    ``--exec`` mode).
+    """
+
+    if cli_agent is not None:
+        if not is_installed_agent(cli_agent, state, kit_root):
+            # Two messages by mode. Dispatch-only uses the canonical
+            # spec line 192 form (mirrors ``schedule.install``'s
+            # ``--agent`` refusal); ``--exec`` uses the
+            # CT-15 form because the same code path serves both
+            # manual ``wiki run --exec --agent ghost`` and a
+            # scheduled fire whose OS artifact's ``exec_command``
+            # injects ``--agent <stale-name>``, and the kit can't
+            # tell the two apart (spec §"Edge cases / Agent removed").
+            raise WikiError(_agent_missing_message(cli_agent, is_exec=is_exec))
+        return cli_agent
+
+    if not is_exec:
+        # Dispatch-only mode: only CLI flag applies. No chain walk.
+        return None
+
+    # --exec mode: full chain. Recipe binding step.
+    if state.recipe is not None:
+        recipe_path = kit_root / "recipes" / f"{state.recipe}.yaml"
+        if recipe_path.is_file():
+            try:
+                recipe = load_recipe(recipe_path)
+            except (RecipeError, ValidationError):
+                # Recipe-load issues surface at ``wiki init`` /
+                # ``wiki upgrade`` time, not here. Fall through to
+                # the contract step. Mirrors
+                # ``schedule._resolve_agent``'s posture.
+                recipe = None
+            if recipe is not None:
+                for agent_name, binding in recipe.agents.items():
+                    if operation in binding.runs:
+                        if not is_installed_agent(agent_name, state, kit_root):
+                            raise WikiError(_agent_missing_message(agent_name, is_exec=True))
+                        return agent_name
+
+    # Contract step. Uninstalled ``preferred_agent`` is skipped silently
+    # per spec §Behavior "Resolution chain" step 3.
+    if contract.preferred_agent is not None:
+        if is_installed_agent(contract.preferred_agent, state, kit_root):
+            return contract.preferred_agent
+
+    return None
+
+
+def _journal_agent_missing(
+    *,
+    journal_path: Path,
+    now: datetime,
+    operation: str,
+) -> None:
+    """Append exactly one ``OperationExecFailedEvent(reason='agent-missing')``.
+
+    Used by ``dispatch`` (when ``is_exec=True`` and the resolved agent
+    fails validation pre-transaction *or* under the in-transaction
+    re-check). Generates a fresh 12-hex ``dispatch_event_id``;
+    no paired ``OperationRunEvent`` is journaled — agent-missing is the
+    "not a partial write" case from
+    ``docs/specs/wiki-agents/spec.md`` §Invariants "Mid-flock agent
+    re-validation."
+    """
+
+    event_id = uuid.uuid4().hex[:12]
+    _append_failure_event(
+        journal_path=journal_path,
+        now=now,
+        operation=operation,
+        dispatch_event_id=event_id,
+        exit_code=_AGENT_MISSING_EXIT_CODE,
+        reason="agent-missing",
+    )
+
+
 def dispatch(
     operation: str,
     raw_args: list[str],
@@ -279,6 +428,8 @@ def dispatch(
     kit_root: Path,
     journal_path: Path,
     now: datetime,
+    agent: str | None = None,
+    is_exec: bool = False,
 ) -> DispatchResult:
     """Validate args against the operation contract and journal the run.
 
@@ -290,6 +441,23 @@ def dispatch(
     ``OperationRunEvent(status="invalid_args")`` and a
     ``DispatchResult`` carrying the error message.
 
+    ``agent`` is the CLI flag value passed via ``--agent <name>``
+    (from ``cli.py:_cmd_run``) or ``None`` for unset. ``is_exec``
+    flips the agent resolution chain shape per
+    ``docs/specs/wiki-agents/spec.md`` §"Resolution chain": in
+    ``--exec`` mode the chain walks CLI flag → recipe binding →
+    contract ``preferred_agent`` → None; in dispatch-only mode only
+    the CLI flag applies. When a non-``None`` agent name resolves and
+    validates, this function journals both the ``OperationRunEvent``
+    and the paired ``OperationRunByAgentEvent`` inside one
+    ``journal.transaction(...)`` (atomic-or-neither, same
+    ``event_id``; see spec §Invariants and CT-16). When validation
+    fails AND ``is_exec`` is true, the function journals one
+    ``OperationExecFailedEvent(reason="agent-missing")`` (no
+    ``OperationRunEvent``) and re-raises ``WikiError`` — see spec
+    §Invariants "Mid-flock agent re-validation" for the
+    "not a partial write" contract.
+
     Vault root is accepted for symmetry with other dispatch-shaped
     handlers (``wiki ingest`` etc.); the function does not currently
     read anything under it beyond what ``journal_path`` covers, but
@@ -297,18 +465,23 @@ def dispatch(
     pre-flight check (e.g. validating that produced-page paths fit
     inside the vault).
 
-    **Installed-state staleness is intentional.** The
-    ``read_events`` → ``_resolve_operation_kind`` → ``append_event``
-    sequence is *not* wrapped in a ``transaction()``. A concurrent
-    ``wiki upgrade`` or ``wiki remove`` could in principle land
-    between the installed-check and the journal append, leaving us
-    journaling a dispatch for a primitive that's just been
+    **Installed-state staleness is intentional for the
+    ``agent=None`` path.** The ``read_events`` →
+    ``_resolve_operation_kind`` → ``append_event`` sequence is *not*
+    wrapped in a ``transaction()`` when no agent resolves. A
+    concurrent ``wiki upgrade`` or ``wiki remove`` could in principle
+    land between the installed-check and the journal append, leaving
+    us journaling a dispatch for a primitive that's just been
     uninstalled. This is by design: ``wiki run`` is read-only on the
     installed catalog, and the journal-append-only model
     (ADR-0002) already accepts this kind of state staleness across
     every command. The single append itself is locked via
     ``append_event``'s ``flock``; that's the only synchronization
-    point.
+    point. The ``agent != None`` path *does* open a transaction
+    because the two-event pairing must be atomic; under that lock,
+    the kit re-reads the journal and re-validates the agent against
+    fresh state, so the agent-missing mid-flock case is closed
+    against a race with concurrent ``wiki remove``.
     """
 
     # vault_root is reserved for future pre-flight checks; reference
@@ -326,6 +499,31 @@ def dispatch(
 
     contract = _load_contract(operation, kit_root)
     skill = _skill_or_default(contract)
+
+    # Agent chain runs after operation kind check (so unknown-operation
+    # errors win over unknown-agent ones) and before arg parsing (so
+    # an agent-missing failure aborts before invalid-args journaling).
+    # In ``--exec`` mode, an agent-missing failure here journals one
+    # ``OperationExecFailedEvent`` (spec §Outputs "wiki run [--exec]
+    # [--agent]"); in dispatch-only mode the WikiError aborts at the
+    # CLI boundary with no journal write (spec §Error cases line 506).
+    try:
+        resolved_agent = _resolve_agent_for_run(
+            operation,
+            state=state,
+            cli_agent=agent,
+            contract=contract,
+            kit_root=kit_root,
+            is_exec=is_exec,
+        )
+    except WikiError:
+        if is_exec:
+            _journal_agent_missing(
+                journal_path=journal_path,
+                now=now,
+                operation=operation,
+            )
+        raise
 
     raw = _parse_op_args(raw_args)
 
@@ -357,21 +555,72 @@ def dispatch(
     )
 
     event_id = uuid.uuid4().hex[:12]
-
-    append_event(
-        journal_path,
-        OperationRunEvent(
-            timestamp=now,
-            by=RUN_VEHICLE,
-            operation=operation,
-            status=status,
-            period=contract.period,
-            produced_pages=[],
-            args=raw,
-            error=error,
-            event_id=event_id,
-        ),
+    run_event = OperationRunEvent(
+        timestamp=now,
+        by=RUN_VEHICLE,
+        operation=operation,
+        status=status,
+        period=contract.period,
+        produced_pages=[],
+        args=raw,
+        error=error,
+        event_id=event_id,
     )
+
+    if resolved_agent is not None:
+        # Paired journal write: ``OperationRunEvent`` then
+        # ``OperationRunByAgentEvent`` inside one
+        # ``journal.transaction(...)``. Spec §Invariants pins
+        # atomic-or-neither and same ``event_id``; CT-16 pins
+        # OperationRunEvent precedes OperationRunByAgentEvent on disk
+        # (the dispatch event must precede the audit tag). The
+        # in-transaction re-validation closes the mid-flock removal
+        # race with ``wiki remove agent:<name>``.
+        with transaction(
+            journal_path,
+            by=RUN_VEHICLE,
+            reason=f"run {operation} agent={resolved_agent}",
+        ):
+            events_locked = list(read_events(journal_path))
+            state_locked = replay_state(events_locked)
+            if not is_installed_agent(resolved_agent, state_locked, kit_root):
+                # Mid-flock removal — agent vanished between the
+                # pre-transaction resolution and the lock acquire.
+                # spec §Invariants "Mid-flock agent re-validation":
+                # in ``--exec`` mode, produce exactly one
+                # ``OperationExecFailedEvent`` (under the same lock
+                # bookend) and raise; do NOT append OperationRunEvent.
+                # Dispatch-only mode raises without any operation-event
+                # append (the lock-pair still bookends via the
+                # transaction's ``finally`` block, the journal-grep
+                # signal for a failed paired-write, matching
+                # wiki-schedule's lock-pair-without-payload convention).
+                if is_exec:
+                    _append_failure_event(
+                        journal_path=journal_path,
+                        now=now,
+                        operation=operation,
+                        dispatch_event_id=event_id,
+                        exit_code=_AGENT_MISSING_EXIT_CODE,
+                        reason="agent-missing",
+                    )
+                raise WikiError(_agent_missing_message(resolved_agent, is_exec=is_exec))
+            append_event(journal_path, run_event)
+            append_event(
+                journal_path,
+                OperationRunByAgentEvent(
+                    timestamp=now,
+                    by=RUN_VEHICLE,
+                    operation=operation,
+                    agent=resolved_agent,
+                    event_id=event_id,
+                ),
+            )
+    else:
+        # Today's shape: single append, no transaction. CT-9 of
+        # ``wiki-run-exec/spec.md`` and the task-17 contract pin
+        # byte-identity for the no-agent case.
+        append_event(journal_path, run_event)
 
     return DispatchResult(
         status=status,
@@ -382,6 +631,7 @@ def dispatch(
         skill=skill,
         dispatch_event_id=event_id,
         error=error,
+        agent=resolved_agent,
     )
 
 
@@ -654,8 +904,9 @@ def _build_argv(
     vault_root: Path,
     prompt: str,
     max_budget_usd: str | None,
+    agent: str | None = None,
 ) -> list[str]:
-    """Build the headless ``claude -p`` argv pinned by ADR-0009.
+    """Build the headless ``claude -p`` argv pinned by ADR-0009 + ADR-0010.
 
     Shape:
 
@@ -663,10 +914,17 @@ def _build_argv(
        "--permission-mode", "dontAsk",
        "--output-format", "json",
        [\"--max-budget-usd\", <cap>],   # only when set
+       [\"--agent\", <name>],            # only when set (ADR-0010)
        <prompt>]``
 
-    ``--agent <name>`` is **not** emitted at v1 (ADR-0010's
-    resolution chain depends on RFC-0004, which has not landed).
+    ``--agent <name>`` is inserted immediately before the trailing
+    prompt positional per
+    `ADR-0010 §Decision <../../adr/0010-agent-passthrough-via-claude-agent-flag.md#decision>`_
+    when the kit's agent resolution chain produced a non-``None``
+    name (``wiki-agents/spec.md`` §"Resolution chain"). When
+    ``agent`` is ``None`` the argv shape is byte-identical to v1's
+    no-agent form, preserving ADR-0009's contract for vaults that
+    declare no agent.
     """
 
     argv: list[str] = [
@@ -681,6 +939,8 @@ def _build_argv(
     ]
     if max_budget_usd is not None:
         argv.extend(["--max-budget-usd", max_budget_usd])
+    if agent is not None:
+        argv.extend(["--agent", agent])
     argv.append(prompt)
     return argv
 
@@ -1034,6 +1294,7 @@ def dispatch_and_exec(
     log_retention_days: int = 30,
     max_budget_usd: str | None = None,
     failure_clock: Callable[[], datetime] | None = None,
+    agent: str | None = None,
 ) -> ExecResult:
     """Orchestrate ``wiki run --exec``.
 
@@ -1080,6 +1341,8 @@ def dispatch_and_exec(
         kit_root=kit_root,
         journal_path=journal_path,
         now=now,
+        agent=agent,
+        is_exec=True,
     )
 
     if dispatch_result.status != "dispatched":
@@ -1155,6 +1418,7 @@ def dispatch_and_exec(
         vault_root=vault_root,
         prompt=prompt,
         max_budget_usd=validated_budget,
+        agent=dispatch_result.agent,
     )
     sp_result = _run_subprocess(
         argv=argv,
