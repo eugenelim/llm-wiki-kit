@@ -30,6 +30,20 @@ The RFC explicitly deferred one item out of v2.0; it has now shipped.
   across three sequential PRs per the plan (event types + replay,
   adopt-aware `safe_write` predicate, `_cmd_init --adopt` end-to-end).
 
+## In flight
+
+- **Agent identity primitives ([RFC-0004](rfc/0004-agent-identity-primitives.md)).**
+  `agent` becomes the fourth primitive kind alongside `ontology`,
+  `content-type`, `operation`, and `infrastructure`. Recipes declare
+  which agent runs which operation; `wiki schedule install` freezes
+  the resolved agent on the journaled event and passes
+  `--agent <name>` to `claude` at exec time per
+  [ADR-0010](adr/0010-agent-passthrough-via-claude-agent-flag.md).
+  Contract in [`docs/specs/wiki-agents/`](specs/wiki-agents/),
+  shipping across eight sequential PRs. **PR-1 (model surface —
+  `PrimitiveKind.AGENT` + `OperationRunByAgentEvent` + extended `Event`
+  union) is in review.**
+
 ## Post-PR-C follow-ups
 
 PR-C of [`wiki-init-adopt`](specs/wiki-init-adopt/) explicitly
