@@ -158,13 +158,24 @@ both return empty lists, the runner is short-circuited (see
   (`<primitive name>` for page writes, `"wiki-upgrade"` for the
   aggregator), so a single per-file event cannot be attributed
   to "this force-render run" by `by` alone. The audit interface
-  is a journal-index bracket: a per-file event at index `i` is
-  attributable to the force-render run whose
-  `PrimitiveForceRenderEvent` is the most recent
-  `Primitive*Event` (force-render, upgrade, install) at index
-  `< i` for the same `primitive` value. AC19 pins this query
-  shape; a future `wiki journal grep --force-render` UX can
-  consume it without payload changes.
+  is a pair of journal-index bracket queries:
+  - **Page-scope events** (`PageWriteEvent`, `PageProposalEvent`):
+    attributable to the `PrimitiveForceRenderEvent` whose
+    `primitive` equals the per-file event's `by` field AND is
+    the most recent `Primitive*Event` for that primitive at a
+    lower index.
+  - **Region-scope events** (`ManagedRegionWriteEvent` and
+    aggregator-phase `PageProposalEvent` on a host file): the
+    aggregator runs once per force-render run, so these are
+    attributed by *index position alone* — every region event
+    in the slice `[k, end_of_run)` where `k` is the LAST
+    `PrimitiveForceRenderEvent` index in the run belongs to
+    that run. No per-primitive bracket applies (region events
+    have no primitive field; multi-contributor host files have
+    no single owning primitive).
+
+  AC19 pins both queries; a future `wiki journal grep
+  --force-render` UX can consume them without payload changes.
 
 ### Stdout
 
@@ -402,10 +413,20 @@ Same as the partial-install path, with two differences:
    `wiki upgrade`'s attribution; the CLI vehicle string does not
    distinguish version-bump upgrades from force-renders — the event
    class discriminator does.
-7. **Pre-flight validates every contributing primitive.**
-   `validate_contributions` runs over `plan.all_installed` before any
-   `PrimitiveForceRenderEvent` is appended (same widened scope
-   `wiki upgrade` uses per its §Invariants bullet 8).
+7. **Pre-flight validates every contributing primitive when the
+   runner is entered.** When the scope guard does NOT short-
+   circuit (i.e., when `_unrendered_closure_paths` or
+   `check_managed_region_drift` is non-empty),
+   `validate_contributions` runs over `plan.all_installed` before
+   any `PrimitiveForceRenderEvent` is appended (same widened
+   scope `wiki upgrade` uses per its §Invariants bullet 8). When
+   the scope guard short-circuits, pre-flight does NOT run — AC1
+   pins this carve-out. The invariant's "before any
+   `PrimitiveForceRenderEvent` is appended" wording is vacuously
+   true under short-circuit (no events appended at all), but the
+   explicit carve-out exists so a future maintainer doesn't
+   reorganise the CLI handler in a way that drops the
+   no-pre-flight-cost-on-clean-closure guarantee.
 8. **No new module boundary.** `--force-render` extends
    `plan_upgrade` (one new keyword arg) and `upgrade_primitives`
    (one new keyword arg + the
@@ -430,15 +451,22 @@ Same as the partial-install path, with two differences:
     VaultState, vault_root: Path, catalog: Sequence[Primitive],
     sources: Mapping[str, Path]) -> list[str]`. Walks
     `state.installed_primitives`, filters to primitives present in
-    `catalog`, computes
-    `enumerate_rendered_paths([primitive], sources)` per primitive,
-    and returns the sorted list of vault-relative POSIX paths
-    where `(vault_root / path).is_file()` is False. Pure function;
-    no I/O outside the file-existence probe. Primitives whose
-    installed name is absent from the catalog are skipped (the
-    closure is undefined when the kit doesn't ship the primitive
-    anymore; `wiki doctor`'s `primitive-missing` check is the
-    surfacing mechanism for that state),
+    `catalog`, computes the closure as
+    `enumerate_rendered_paths([primitive], sources) |
+    set(_required_regions([primitive]))` per primitive — the same
+    union `compute_adoption_set` uses at `adopt.py:171` so a host
+    file whose only kit claim is `contributes_to` is included in
+    the closure. Returns the sorted list of vault-relative POSIX
+    paths where `(vault_root / path).is_file()` is False. Pure
+    function; no I/O outside the file-existence probe. Primitives
+    whose installed name is absent from the catalog are skipped
+    (the closure is undefined when the kit doesn't ship the
+    primitive anymore; `wiki doctor`'s `primitive-missing` check
+    is the surfacing mechanism for that state). The
+    `_required_regions` helper is currently module-private to
+    `adopt.py`; this spec lifts it to an importable name (no
+    behavior change — just lowercase-public so `cli.py` can
+    consume it without an underscore-imports anti-pattern),
   - one new scope-guard call sequence (compute `unrendered =
     _unrendered_closure_paths(...)` + call
     `doctor.check_managed_region_drift(events, vault_root, state)`;
@@ -551,7 +579,10 @@ Same as the partial-install path, with two differences:
   `_unrendered_closure_paths` returns `[]` AND
   `doctor.check_managed_region_drift` returns `[]`;
   `pending-proposal` and `orphan` issues from `wiki doctor` may
-  remain as the underlying user content warrants.
+  remain as the underlying user content warrants; (f) stdout
+  contains `wiki upgrade --force-render: re-rendered 1
+  primitive.` (matches §Outputs.Stdout totals wording for `N
+  == 1`; pins the count-aware singular vs. plural).
 - [ ] **AC3 — Drift on a force-rendered file produces a `.proposed`
   sidecar, never a silent overwrite.** Use the AC2 fixture builder
   with `with_adopt=True`, `cut_after_primitive=<primitive whose
@@ -705,13 +736,48 @@ Same as the partial-install path, with two differences:
   run, since the catalog could bump between recovery and a later
   audit), `by="wiki-upgrade"`, `timestamp` (inherited from
   `_EventBase`). Per-file attribution to "this force-render run"
-  is via the journal-index bracket: every `PageWriteEvent` /
-  `PageProposalEvent` whose index lies between this row and the
-  next non-force-render `Primitive*Event` (or end of journal) is
-  attributable to this run. Document this query shape in
-  §Outputs.Journal events so a maintainer reading the tail knows
-  the rule. (No new payload field; the bracket query is the
-  documented audit interface.)
+  is via two query shapes:
+  - **For `PageWriteEvent` / `PageProposalEvent`:** the per-file
+    event at journal index `i` is attributable to the
+    `PrimitiveForceRenderEvent` at index `j < i` where (a) `j`
+    is the maximum such index whose `primitive` field equals
+    the per-file event's `by` field AND (b) no other
+    `Primitive*Event` for that primitive sits between `j` and
+    `i` (i.e., a later `PrimitiveInstallEvent` / `Primitive-
+    UpgradeEvent` for the same primitive interrupts the bracket).
+  - **For `ManagedRegionWriteEvent`:** the aggregator pass runs
+    once per force-render run; region events are attributable
+    to a run by *index position alone* — every region event
+    whose index lies in the slice `[k, k')` where `k` is the
+    LAST `PrimitiveForceRenderEvent` index in the new-events
+    slice and `k'` is the next non-aggregator-emitted
+    `Primitive*Event` (or end of journal) belongs to that run.
+    There is no per-primitive bracket for region events because
+    `ManagedRegionWriteEvent.by == "wiki-upgrade"` (no
+    `primitive` field) and a host file can have contributions
+    from multiple primitives — "the host file's owning
+    primitive" is undefined.
+  Document both queries in §Outputs.Journal events so a
+  maintainer reading the tail knows the rule. (No new payload
+  field; the bracket queries are the documented audit
+  interface.)
+- [ ] **AC20 — Host-file-only contribution recovery.** Construct
+  a fixture where a primitive's only claim on a host file is via
+  `contributes_to` (the file is NOT in any primitive's `files/`
+  tree but appears in `_required_regions`). Use the AC2 builder
+  with that primitive and an `adopted_paths` entry for the host
+  file (so a `PageAdoptedEvent` lands), then truncate after the
+  install event so the renderer never wrote the host file's
+  body. Pre-call: the host file is absent on disk. Assert:
+  (a) `_unrendered_closure_paths` returns the host file's path
+  (i.e., the helper's union with `_required_regions` is doing
+  its job — without the union, `enumerate_rendered_paths` alone
+  would miss the host file and the scope guard would short-
+  circuit on a vault that genuinely needs recovery);
+  (b) `wiki upgrade --force-render` re-creates the host file
+  (the aggregator pass walks `contributes_to` and writes the
+  composed body via `safe_write_region`);
+  (c) post-run, `_unrendered_closure_paths` returns `[]`.
 
 ## Non-goals
 
