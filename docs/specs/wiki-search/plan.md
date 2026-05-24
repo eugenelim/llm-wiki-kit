@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*; the
 > plan says *how, in what order, with what verification*.
 
-- **Status:** In progress
+- **Status:** Done
 - **Spec:** `docs/specs/wiki-search/spec.md`
 - **Owner:** maintainer
 

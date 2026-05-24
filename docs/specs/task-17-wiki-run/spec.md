@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/run.py`, `llm_wiki_kit/cli.py:_cmd_run`
 - **Related:** RFC-0001 Task 17, ADR-0002 (journal), ADR-0004 (safe-write),
   ADR-0005 (Pydantic), `docs/specs/task-17-wiki-run/plan.md`

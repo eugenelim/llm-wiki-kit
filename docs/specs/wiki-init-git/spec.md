@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit.cli._cmd_init` (orchestration) + `llm_wiki_kit.git_init` (new module)
 - **Related:** RFC-0001 §"CLI surface (target)", PR #65 (README onboarding restructure), `docs/specs/wiki-init-git/plan.md`, `docs/specs/wiki-init-adopt/spec.md` (composition).
 - **Constrained by:** ADR-0002 (journal as state truth), ADR-0008 (init-adopt ownership policy), `docs/specs/safe-write-ordering/spec.md` (the documented-exceptions list — this spec adds no new entry).

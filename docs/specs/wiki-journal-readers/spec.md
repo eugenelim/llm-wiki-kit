@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/cli.py`
 - **Related:** RFC-0001 §"CLI surface (target)" line 140, ADR-0002
   (journal as state truth), `docs/specs/wiki-journal-readers/plan.md`

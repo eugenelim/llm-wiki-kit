@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/search.py`, `llm_wiki_kit/cli.py:_cmd_search`
 - **Related:** RFC-0001 §"CLI surface (target)" line 139,
   `core/files/skills/wiki-search/SKILL.md` (vault-side skill),
