@@ -90,6 +90,7 @@ side effects").
   | `page.proposal` | `path=<path> proposed=<proposed_path>` |
   | `page.conflict_resolved` | `path=<path>` (plus ` region=<region>` when set) |
   | `operation.run` | `operation=<operation> status=<status>` |
+  | `operation.run_by_agent` | `operation=<operation> agent=<agent>` |
   | `research.query` | `provider=<provider> status=<status>` |
   | `lint.run` | `status=<status> issues=<issues>` |
   | `config.set` | `key=<key>` |

@@ -33,6 +33,7 @@ from llm_wiki_kit.models import (
     ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
     OperationExecFailedEvent,
+    OperationRunByAgentEvent,
     OperationRunEvent,
     PageAdoptedEvent,
     PageConflictResolvedEvent,
@@ -630,6 +631,15 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
         "operation=weekly-digest status=dispatched",
     ),
     (
+        OperationRunByAgentEvent,
+        {
+            "operation": "weekly-digest",
+            "agent": "household-manager",
+            "event_id": "0123456789ab",
+        },
+        "operation=weekly-digest agent=household-manager",
+    ),
+    (
         ResearchQueryEvent,
         {"query": "q", "provider": "perplexity"},
         "provider=perplexity status=ok",
@@ -848,6 +858,11 @@ def _build_instance(cls: type) -> typing.Any:
         },
         PageConflictResolvedEvent: {"path": "x.md", "hash": "deadbeef"},
         OperationRunEvent: {"operation": "weekly-digest", "status": "dispatched"},
+        OperationRunByAgentEvent: {
+            "operation": "weekly-digest",
+            "agent": "household-manager",
+            "event_id": "0123456789ab",
+        },
         OperationExecFailedEvent: {
             "operation": "weekly-digest",
             "dispatch_event_id": "0123456789ab",

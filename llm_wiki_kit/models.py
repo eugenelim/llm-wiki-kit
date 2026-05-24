@@ -54,6 +54,7 @@ class PrimitiveKind(StrEnum):
     CONTENT_TYPE = "content-type"
     OPERATION = "operation"
     INFRASTRUCTURE = "infrastructure"
+    AGENT = "agent"
 
 
 class Contribution(_StrictModel):
@@ -403,6 +404,28 @@ class OperationRunEvent(_EventBase):
     event_id: str | None = None
 
 
+class OperationRunByAgentEvent(_EventBase):
+    """Audit tag recorded alongside ``OperationRunEvent`` when an agent name resolved.
+
+    Appended by ``wiki run --exec`` (and dispatch-only ``wiki run`` when
+    ``--agent`` is passed explicitly) inside the same
+    ``journal.transaction(...)`` as the paired ``OperationRunEvent``, so
+    the two events land atomic-or-neither under the journal flock. The
+    ``event_id`` carries the paired ``OperationRunEvent.event_id`` so
+    replay can join them; see ``docs/specs/wiki-agents/spec.md``
+    §Invariants.
+
+    No event is appended when no agent resolves — preserves the
+    no-event-on-no-agent shape for backward compatibility (ADR-0002
+    §Negative's additive-schema rule covers the migration).
+    """
+
+    type: Literal["operation.run_by_agent"] = "operation.run_by_agent"
+    operation: str
+    agent: str
+    event_id: str
+
+
 class OperationExecFailedEvent(_EventBase):
     """Recorded by ``wiki run --exec`` when the subprocess attempt fails.
 
@@ -543,6 +566,7 @@ Event = Annotated[
     | PageProposalEvent
     | PageConflictResolvedEvent
     | OperationRunEvent
+    | OperationRunByAgentEvent
     | OperationExecFailedEvent
     | ResearchQueryEvent
     | LintRunEvent

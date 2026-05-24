@@ -634,6 +634,19 @@ on a manual hand-off would confuse the audit trail.
   vault_root)` function called after `_check_schedules`. Emits
   warnings only (never failures), matching the existing
   `wiki doctor` warning convention.
+- **[`docs/specs/wiki-journal-readers/spec.md`](../wiki-journal-readers/spec.md)**
+  — the summary-fields table for `wiki journal tail` / `wiki journal
+  grep` gains rows for the new and extended events this spec
+  introduces. PR-1 adds the
+  `operation.run_by_agent` row (paired with the
+  `OperationRunByAgentEvent` model class). PR-4 amends the
+  `schedule.installed` row when `ScheduleInstalledEvent.agent` lands;
+  PR-6 amends the `page.proposal` row when
+  `PageProposalEvent.proposed_by_agent` lands. The journal-readers
+  spec calls out "adding a new event class without a row in this
+  table is a spec change" — drift between the table and
+  `_EVENT_SUMMARY_FIELDS` is a bug, and this cross-spec amendment
+  carries the discipline forward.
 - **`core/files/skills/wiki-conflict/SKILL.md`** — updated to read
   `PageProposalEvent.proposed_by_agent` and name the agent in
   user-facing conflict prose (vault-side change, not kit code).
