@@ -298,25 +298,51 @@ def test_recipe_defaults_agents_to_empty_dict_when_absent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Existing shipped recipes load with their new empty ``agents: {}`` blocks
+# Existing shipped recipes load with their ``agents:`` blocks populated
 # ---------------------------------------------------------------------------
 
 
+# PR-7 populated the ``agents:`` blocks per spec §"Default agent catalog".
+# Each entry below mirrors the recipe's ``runs:`` lists; if a recipe edit
+# adds or rebinds an agent, update this table in lockstep.
+_EXPECTED_AGENT_RUNS: dict[str, dict[str, list[str]]] = {
+    "family": {
+        "household-manager": ["weekly-digest", "meal-planning", "follow-up-tracker"],
+        "trip-planner": ["trip-prep"],
+        "care-coordinator": ["medical-summary"],
+    },
+    "personal": {
+        # ``decision-companion`` ships installed-but-unbound — present in
+        # ``personal.yaml``'s ``primitives:`` closure but NOT in its
+        # ``agents:`` block.
+        "personal-coordinator": ["weekly-digest", "follow-up-tracker", "meal-planning"],
+    },
+    "work-os": {
+        "stakeholder-steward": ["stakeholder-map-refresh", "status-synthesis"],
+        "renewals-watch": ["renewal-reminders"],
+        "customer-listener": ["action-item-rollup"],
+    },
+}
+
+
 @pytest.mark.parametrize("name", ["family", "personal", "work-os"])
-def test_existing_recipes_load_with_empty_agents_blocks(name: str) -> None:
-    """PR-3 edits ``recipes/{family,work-os,personal}.yaml`` to ship empty
-    ``agents: {}`` blocks. The loader path must keep working — both
-    ``load_recipe`` and ``resolve_recipe_primitives`` should succeed on
-    every shipped recipe.
+def test_existing_recipes_load_with_populated_agents_blocks(name: str) -> None:
+    """PR-7 populates ``recipes/{family,work-os,personal}.yaml`` ``agents:``
+    blocks per spec §"Default agent catalog". The loader path must keep
+    working — both ``load_recipe`` and ``resolve_recipe_primitives`` should
+    succeed on every shipped recipe, and the loaded ``agents:`` block must
+    match the spec-pinned bindings.
     """
 
     from llm_wiki_kit.primitives import discover_primitives, load_primitive
 
     recipe = load_recipe(RECIPES_DIR / f"{name}.yaml")
-    assert recipe.agents == {}
+    expected = _EXPECTED_AGENT_RUNS[name]
+    assert {agent: binding.runs for agent, binding in recipe.agents.items()} == expected, (
+        f"`{name}` recipe's agents block drifted from spec §Default agent catalog"
+    )
     catalog = [load_primitive(CORE_DIR), *discover_primitives(TEMPLATES_DIR)]
     ordered = resolve_recipe_primitives(recipe, catalog)
-    # Existing live-catalog tests already pin the closure shape per
-    # recipe; this assertion is just "resolution succeeded with the
-    # empty agents block in place."
+    # The closure-walk validator passing here is the actual PR-3 contract;
+    # the closure shape is pinned by per-recipe tests elsewhere.
     assert "core" in {p.name for p in ordered}

@@ -1,0 +1,7 @@
+name: decision-companion
+kind: agent
+version: 0.1.0
+description: >-
+  Personal-audience decision companion. Ships installed but unbound
+  at v1 — reserved for a future `decision-review` operation. Reads
+  the `decision/` content-type as standing context.

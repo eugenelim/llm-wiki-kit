@@ -95,6 +95,9 @@ def test_init_renders_core_only_vault(tmp_path: Path, core_only_kit: Path) -> No
         "wiki-conflict",
         "wiki-doctor",
         "wiki-research",
+        # PR-7 of RFC-0004 wiki-agents ships the vault-side
+        # ``wiki-agent`` SKILL alongside the agent catalog.
+        "wiki-agent",
     }
     skills_dir = vault / "skills"
     assert skills_dir.is_dir()

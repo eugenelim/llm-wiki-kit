@@ -1,0 +1,7 @@
+name: personal-coordinator
+kind: agent
+version: 0.1.0
+description: >-
+  Personal-audience coordinator. Runs the individual's weekly
+  digest, follow-up sweep, and meal plan. Bound by `personal.yaml`
+  to `weekly-digest`, `follow-up-tracker`, and `meal-planning`.

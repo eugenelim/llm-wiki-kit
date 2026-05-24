@@ -1,0 +1,7 @@
+name: renewals-watch
+kind: agent
+version: 0.1.0
+description: >-
+  Work-OS-audience renewals coordinator. Reads vendor contracts and
+  customer pages to surface upcoming renewals before they bite.
+  Bound by `work-os.yaml` to `renewal-reminders`.

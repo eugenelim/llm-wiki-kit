@@ -18,8 +18,10 @@ description: >-
   trip prep, follow-up tracking, medical summaries, weekly digest).
 primitives:
   - action-item
+  - care-coordinator
   - follow-up-tracker
   - food
+  - household-manager
   - meal-planning
   - medical
   - medical-record
@@ -30,14 +32,26 @@ primitives:
   - recipe
   - tax-document
   - trip-doc
+  - trip-planner
   - trip-prep
   - trips
   - vendors
   - weekly-digest
 variables:
   recipe_name: family
-# Populated default bindings ship in PR-7a alongside the default agent
-# catalog (RFC-0004 / wiki-agents). PR-3 ships the empty block so every
-# recipe loader exercises the new ``Recipe.agents`` field — schema
-# regressions surface against the live catalog before any binding lands.
-agents: {}
+# Default agent bindings (RFC-0004 / wiki-agents PR-7). Each binding's
+# ``runs:`` list names operations the recipe's ``primitives:`` closure
+# already installs — the PR-3 closure-walk validator (CT-3/4/5) enforces
+# this at recipe-load.
+agents:
+  household-manager:
+    runs:
+      - weekly-digest
+      - meal-planning
+      - follow-up-tracker
+  trip-planner:
+    runs:
+      - trip-prep
+  care-coordinator:
+    runs:
+      - medical-summary

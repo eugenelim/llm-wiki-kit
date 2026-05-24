@@ -38,6 +38,12 @@ RECIPE = "work-os"
 EXPECTED_PRIMITIVES = {
     "action-item-rollup",
     "core",
+    # PR-7 / RFC-0004 — default agent bindings per spec §Default
+    # agent catalog; the three names land via ``work-os.yaml``'s
+    # ``primitives:`` listing.
+    "customer-listener",
+    "renewals-watch",
+    "stakeholder-steward",
     "customer-feedback",
     "customers",
     "decision",

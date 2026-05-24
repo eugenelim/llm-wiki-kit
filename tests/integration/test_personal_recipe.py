@@ -33,12 +33,20 @@ EXPECTED_PRIMITIVES = {
     "action-item",
     "core",
     "decision",
+    # PR-7 / RFC-0004 — installed-but-unbound; reserved for a future
+    # ``decision-review`` operation. ``personal.yaml``'s ``primitives:``
+    # lists it directly, so the install closure picks it up.
+    "decision-companion",
     "follow-up-tracker",
     "food",
     "identity",
     "meal-planning",
     "meeting",
     "people",
+    # PR-7 / RFC-0004 — bound to ``weekly-digest``,
+    # ``follow-up-tracker``, ``meal-planning`` in ``personal.yaml``'s
+    # ``agents:`` block.
+    "personal-coordinator",
     "recipe",
     "trip-doc",
     "trip-prep",

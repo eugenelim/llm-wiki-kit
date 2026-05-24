@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Shipped
 - **Owner:** `llm_wiki_kit/primitives.py`, `llm_wiki_kit/recipes.py`,
   `llm_wiki_kit/run.py`, `llm_wiki_kit/schedule/`,
   `llm_wiki_kit/doctor.py`, `llm_wiki_kit/cli.py:_cmd_agents`
@@ -395,9 +395,42 @@ operations use. The installer:
    is recoverable from `installed_primitives[<name>]` + the catalog
    walk at any later replay.
 
-`wiki upgrade <name>` and `wiki remove agent:<name>` reuse the
-existing primitive plumbing without modification — the kind tag does
-not affect the install graph beyond `_CATALOG_DIRS` discovery.
+`wiki upgrade --primitive <name>` reuses the existing primitive-upgrade
+plumbing without modification — the kind tag does not affect the
+install graph beyond `_CATALOG_DIRS` discovery.
+
+> **v1 deferral — `wiki remove agent:<name>`.** This spec talks about
+> a dedicated removal verb (e.g. in §Edge cases and §Invariants) that
+> would journal a `PrimitiveRemoveEvent` and drop the AGENT.md file.
+> The shipped CLI as of PR-7 has no `wiki remove` subcommand — the
+> verb is reserved for a follow-on PR.
+>
+> **Two failure modes, two reachability stories — do not conflate.**
+> §Edge cases enumerates them separately:
+>
+> 1. **Agent primitive removed (journaled `PrimitiveRemoveEvent`).**
+>    Dispatch re-validation refuses; one
+>    `OperationExecFailedEvent(reason="agent-missing")` is appended.
+>    *End-user reachability ships with the follow-on `wiki remove`
+>    verb.* Today this path is reachable only via journal-level
+>    fabrication (e.g. CT-15's `tests/unit/test_run_exec_agent.py`
+>    builds the `PrimitiveRemoveEvent` directly to exercise the
+>    dispatch-side refusal).
+> 2. **AGENT.md deleted out-of-band** (`rm -r <vault>/.claude/agents/<name>/`).
+>    The journal still has the install event, so dispatch validation
+>    *passes* and no `OperationExecFailedEvent(reason="agent-missing")`
+>    is journaled; the `claude --agent <name>` subprocess fails at the
+>    CLI side with its own "agent not found" message. The user-facing
+>    recovery is `wiki doctor`'s bindings check (PR-6 surface).
+>
+> The v1 user-side recovery for "stop using an agent" is the file-
+> deletion path above (covered by the vault-side `wiki-agent`
+> SKILL.md). Every spec site referencing `wiki remove agent:<name>`
+> describes the *intended* shape once the verb ships — the
+> kit-side dispatch-refusal behavior is fully implemented (the
+> journal-event surface ships); only the CLI verb that would
+> journal the `PrimitiveRemoveEvent` from a user gesture is
+> deferred.
 
 ### Resolution chain (at `wiki schedule install` time)
 

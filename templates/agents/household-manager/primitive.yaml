@@ -1,0 +1,8 @@
+name: household-manager
+kind: agent
+version: 0.1.0
+description: >-
+  Family-audience coordinator. Reads weekly activity, plans meals, and
+  tracks open follow-ups across the household's shared people, food,
+  and trip pages. Bound by `family.yaml` to `weekly-digest`,
+  `meal-planning`, and `follow-up-tracker`.
