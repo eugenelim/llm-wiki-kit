@@ -68,6 +68,7 @@ from llm_wiki_kit.models import (
     ManagedRegionAdoptedEvent,
     ManagedRegionWriteEvent,
     OperationExecFailedEvent,
+    OperationRunByAgentEvent,
     OperationRunEvent,
     PageAdoptedEvent,
     PageConflictResolvedEvent,
@@ -555,9 +556,9 @@ def _cmd_init(args: argparse.Namespace) -> int:
 def _parse_primitive_spec(spec: str) -> tuple[PrimitiveKind, str]:
     """Split a ``<kind>:<name>`` argument into a validated ``(kind, name)`` pair.
 
-    ``<kind>`` must be one of the four :class:`PrimitiveKind` values in
-    its canonical dash form (``ontology``, ``content-type``,
-    ``operation``, ``infrastructure``); case-sensitive, per the Task 12
+    ``<kind>`` must be one of the :class:`PrimitiveKind` values in its
+    canonical dash form (``ontology``, ``content-type``, ``operation``,
+    ``infrastructure``, ``agent``); case-sensitive, per the Task 12
     spec. Anything else is a one-line :class:`WikiError`.
     """
 
@@ -1905,6 +1906,15 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
     OperationRunEvent: (
         ("operation", "operation", False),
         ("status", "status", False),
+    ),
+    # Audit tag from RFC-0004 wiki-agents: appended paired with the
+    # dispatch's ``OperationRunEvent`` when an agent name resolved. The
+    # summary surfaces the bound agent so a tail/grep row is
+    # self-explanatory. Lands with the model class to keep the "every
+    # concrete event class has a summary mapping" invariant intact.
+    OperationRunByAgentEvent: (
+        ("operation", "operation", False),
+        ("agent", "agent", False),
     ),
     OperationExecFailedEvent: (
         ("operation", "operation", False),
