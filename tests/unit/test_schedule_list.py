@@ -185,3 +185,153 @@ def test_list_machine_filter_and_all_machines_flag(
     assert len(rows_all) == 1
     assert rows_all[0].machine_id == "other-box"
     assert rows_all[0].status == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# CT-20: list rows carry the journaled agent so the CLI can render the column
+# ---------------------------------------------------------------------------
+
+
+def test_schedule_list_renders_agent_column(
+    tmp_path: Path, with_stub: _StubEmitter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CT-20: two installed schedules, one with agent + one without.
+
+    The ``ScheduleStatus`` rows carry the journaled ``agent`` so the
+    CLI's stdout renderer can put ``household-manager`` in the AGENT
+    column for the first row and ``—`` for the second.
+    """
+
+    from llm_wiki_kit.models import ScheduleInstalledEvent
+
+    vault, journal_path = _make_vault(tmp_path)
+    monkeypatch.setattr(socket, "gethostname", lambda: "this-host")
+
+    # Hand-write two install events to bypass the resolution chain
+    # (this test pins read-side surfacing, not resolution).
+    append_event(
+        journal_path,
+        PrimitiveInstallEvent(
+            timestamp=NOW, by="wiki-init", primitive="meal-planning", version="0.1.0"
+        ),
+    )
+    append_event(
+        journal_path,
+        ScheduleInstalledEvent(
+            timestamp=NOW,
+            by="wiki-schedule",
+            operation="weekly-digest",
+            machine_id="this-host",
+            cadence_dsl="SUN 09:00",
+            os_artifact_path=str(with_stub.artifact_path("vid", "weekly-digest")),
+            exec_command=["/usr/local/bin/wiki", "run", "--exec", "weekly-digest"],
+            agent=None,
+        ),
+    )
+    append_event(
+        journal_path,
+        ScheduleInstalledEvent(
+            timestamp=NOW,
+            by="wiki-schedule",
+            operation="meal-planning",
+            machine_id="this-host",
+            cadence_dsl="SUN 10:00",
+            os_artifact_path=str(with_stub.artifact_path("vid", "meal-planning")),
+            exec_command=[
+                "/usr/local/bin/wiki",
+                "run",
+                "--exec",
+                "meal-planning",
+                "--agent",
+                "household-manager",
+            ],
+            agent="household-manager",
+        ),
+    )
+
+    rows = schedule.list_schedules(
+        machine=None,
+        all_machines=False,
+        vault_root=vault,
+        journal_path=journal_path,
+    )
+
+    by_op = {row.operation: row for row in rows}
+    assert by_op["weekly-digest"].agent is None
+    assert by_op["meal-planning"].agent == "household-manager"
+
+
+def test_cli_schedule_list_renders_agent_column_with_em_dash(
+    tmp_path: Path,
+    with_stub: _StubEmitter,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CT-20 rendered: the AGENT column appears between CADENCE and ARTIFACT;
+    ``—`` (U+2014) renders for ``None``, the agent name renders otherwise.
+
+    Pins the CLI's stdout TSV layout — column header, em-dash sentinel,
+    and ordering. The data-layer test
+    (``test_schedule_list_renders_agent_column``) covers the
+    ``ScheduleStatus.agent`` field; this one covers the rendered table.
+    """
+
+    from llm_wiki_kit import cli
+    from llm_wiki_kit.models import ScheduleInstalledEvent
+
+    vault, journal_path = _make_vault(tmp_path)
+    monkeypatch.setattr(socket, "gethostname", lambda: "this-host")
+    append_event(
+        journal_path,
+        PrimitiveInstallEvent(
+            timestamp=NOW, by="wiki-init", primitive="meal-planning", version="0.1.0"
+        ),
+    )
+    append_event(
+        journal_path,
+        ScheduleInstalledEvent(
+            timestamp=NOW,
+            by="wiki-schedule",
+            operation="weekly-digest",
+            machine_id="this-host",
+            cadence_dsl="SUN 09:00",
+            os_artifact_path=str(with_stub.artifact_path("vid", "weekly-digest")),
+            exec_command=["/usr/local/bin/wiki", "run", "--exec", "weekly-digest"],
+            agent=None,
+        ),
+    )
+    append_event(
+        journal_path,
+        ScheduleInstalledEvent(
+            timestamp=NOW,
+            by="wiki-schedule",
+            operation="meal-planning",
+            machine_id="this-host",
+            cadence_dsl="SUN 10:00",
+            os_artifact_path=str(with_stub.artifact_path("vid", "meal-planning")),
+            exec_command=[
+                "/usr/local/bin/wiki",
+                "run",
+                "--exec",
+                "meal-planning",
+                "--agent",
+                "household-manager",
+            ],
+            agent="household-manager",
+        ),
+    )
+
+    monkeypatch.chdir(vault)
+    exit_code = cli.main(["schedule", "list"], kit_root=REPO_ROOT)
+    assert exit_code == 0
+
+    stdout = capsys.readouterr().out
+    lines = stdout.splitlines()
+    # Header carries the new AGENT column between CADENCE and ARTIFACT.
+    assert lines[0] == "OPERATION\tMACHINE\tCADENCE\tAGENT\tARTIFACT\tSTATUS"
+
+    rows_by_op = {line.split("\t")[0]: line.split("\t") for line in lines[1:]}
+    # meal-planning row has the agent name in column index 3.
+    assert rows_by_op["meal-planning"][3] == "household-manager"
+    # weekly-digest row renders the em-dash sentinel.
+    assert rows_by_op["weekly-digest"][3] == "—"  # U+2014 em-dash

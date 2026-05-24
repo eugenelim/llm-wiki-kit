@@ -546,6 +546,17 @@ class ScheduleInstalledEvent(_EventBase):
     cadence_dsl: str
     os_artifact_path: str
     exec_command: list[str]
+    # Additive per ADR-0002 / RFC-0004 wiki-agents PR-4: the agent name
+    # resolved at install time via the CLI flag → recipe → contract chain
+    # (``docs/specs/wiki-agents/spec.md`` §"Resolution chain"). ``None``
+    # is both the pre-RFC-4 baseline (no field on the JSON line) and the
+    # explicit "no agent declared" outcome of the chain; replay treats
+    # them identically. Frozen at install time — recipe or catalog
+    # changes after install do not auto-rebind. Pattern-validated against
+    # ``NAME_PATTERN`` for symmetry with other agent-name fields; the
+    # name is also re-validated against the installed-primitive set
+    # pre-transaction by ``schedule.install``.
+    agent: str | None = Field(default=None, pattern=NAME_PATTERN)
 
 
 class ScheduleUninstalledEvent(_EventBase):

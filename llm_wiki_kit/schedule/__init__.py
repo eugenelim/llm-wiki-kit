@@ -55,14 +55,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from llm_wiki_kit.errors import WikiError
+from llm_wiki_kit.errors import RecipeError, ValidationError, WikiError
 from llm_wiki_kit.journal import append_event, read_events, replay_state, transaction
 from llm_wiki_kit.models import (
     Event,
+    OperationContract,
     ScheduleInstalledEvent,
     ScheduleUninstalledEvent,
+    VaultState,
 )
 from llm_wiki_kit.operations import _load_contract, _resolve_operation_kind
+from llm_wiki_kit.primitives import is_installed_agent
+from llm_wiki_kit.recipes import load_recipe
 from llm_wiki_kit.schedule._emitter import InspectResult, _Emitter
 from llm_wiki_kit.schedule.dsl import (
     ResolvedCadence,
@@ -247,6 +251,85 @@ def _latest_install(
     return latest
 
 
+def _resolve_agent(
+    operation: str,
+    *,
+    state: VaultState,
+    cli_agent: str | None,
+    kit_root: Path,
+    contract: OperationContract,
+) -> str | None:
+    """Walk the four-step agent resolution chain.
+
+    Per ``docs/specs/wiki-agents/spec.md`` §"Resolution chain (at
+    ``wiki schedule install`` time)":
+
+    1. ``cli_agent`` if non-None. Validated against
+       :func:`primitives.is_installed_agent`; ``WikiError`` on miss
+       (CT-12).
+    2. Recipe binding. Loads
+       ``<kit_root>/recipes/<state.recipe>.yaml`` and scans its
+       ``agents:`` block for an entry whose ``runs:`` list contains
+       the operation. Recipe-load failure (file missing, malformed
+       YAML, Pydantic shape error) is treated as "no recipe binding"
+       — those surface at ``wiki init`` / ``wiki upgrade`` time, not
+       here. Closure-walk validation runs in
+       ``resolve_recipe_primitives``, which this helper does not
+       call. The resolved name is validated; ``WikiError`` on miss.
+    3. Operation-contract ``preferred_agent``. **Skipped silently**
+       when the named agent is not installed (CT-13) — the contract
+       author's suggestion doesn't apply to every vault that runs
+       this operation.
+    4. ``None``.
+
+    Returns the resolved name (already validated against the
+    installed-primitive set) or ``None``. Single function, four
+    branches, per ``spec.md`` §Constraints "no new abstraction layer".
+    """
+
+    if cli_agent is not None:
+        if not is_installed_agent(cli_agent, state, kit_root):
+            raise WikiError(
+                f"agent '{cli_agent}' is not installed; "
+                f"run 'wiki add agent:{cli_agent}' or re-run 'wiki init'"
+            )
+        return cli_agent
+
+    if state.recipe is not None:
+        recipe_path = kit_root / "recipes" / f"{state.recipe}.yaml"
+        if recipe_path.is_file():
+            try:
+                recipe = load_recipe(recipe_path)
+            except (RecipeError, ValidationError):
+                # Recipe-load issues surface at ``wiki init`` /
+                # ``wiki upgrade`` time. Don't block schedule install
+                # on them here — fall through to the contract step.
+                # A future ``wiki doctor`` check (out of scope for
+                # RFC-0004) should flag a vault whose journaled
+                # recipe name no longer loads cleanly; the resulting
+                # silent loss of recipe-step resolution would
+                # otherwise be invisible at install time.
+                recipe = None
+            if recipe is not None:
+                for agent_name, binding in recipe.agents.items():
+                    if operation in binding.runs:
+                        if not is_installed_agent(agent_name, state, kit_root):
+                            raise WikiError(
+                                f"agent '{agent_name}' bound by recipe "
+                                f"'{state.recipe}' to operation '{operation}' "
+                                f"is not installed; run 'wiki add "
+                                f"agent:{agent_name}' or re-run 'wiki init'"
+                            )
+                        return agent_name
+
+    if contract.preferred_agent is not None:
+        if is_installed_agent(contract.preferred_agent, state, kit_root):
+            return contract.preferred_agent
+        # Contract suggestion not applicable to this vault — skip silently.
+
+    return None
+
+
 def _require_vault(journal_path: Path, vault_root: Path) -> None:
     """Raise WikiError with the standard ``not a wiki vault`` message."""
 
@@ -270,7 +353,8 @@ class InstallResult:
     events appended); ``install_instruction`` carries the Windows
     ``schtasks /Create /XML`` line when the emitter provides one, or
     ``None`` on macOS/Linux. ``next_run`` is advisory per spec
-    §Outputs.
+    §Outputs. ``agent`` is the resolved agent name (RFC-0004 PR-4),
+    frozen on the journaled event; ``None`` when no agent declared.
     """
 
     operation: str
@@ -279,6 +363,7 @@ class InstallResult:
     os_artifact_path: Path
     exec_command: list[str]
     next_run: datetime
+    agent: str | None = None
     already_installed: bool = False
     install_instruction: str | None = None
 
@@ -318,6 +403,10 @@ class ScheduleStatus:
     cadence_dsl: str
     os_artifact_path: str
     status: Literal["ok", "drift:missing-file", "drift:disabled", "unknown"]
+    # Resolved agent name on the journaled ``ScheduleInstalledEvent``
+    # (RFC-0004 wiki-agents PR-4). ``None`` on pre-RFC-4 events and on
+    # post-RFC-4 events where no agent resolved at install time.
+    agent: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +423,7 @@ def install(
     kit_root: Path,
     journal_path: Path,
     now: datetime,
+    agent: str | None = None,
 ) -> InstallResult:
     """Install (or idempotent re-install) a schedule for ``operation``.
 
@@ -386,25 +476,68 @@ def install(
 
     # Idempotent / changed-cadence check runs BEFORE the transaction
     # opens, so the no-op path emits zero events (spec §Invariants).
+    # The agent resolution chain runs **after** this short-circuit so
+    # that a same-cadence re-install (which is a no-op anyway) doesn't
+    # trip on recipe-bound-to-uninstalled-agent drift. Spec wiki-agents
+    # §"Edge cases / Recipe edits during a live vault" pins this:
+    # "the journaled agent is frozen at install time" → recipe drift
+    # post-install does not retro-rebind, and certainly does not break
+    # idempotent re-install.
     prior = _latest_install(events, operation, machine_id)
     if prior is not None:
-        if prior.cadence_dsl == cadence_dsl:
-            return InstallResult(
-                operation=operation,
-                machine_id=machine_id,
-                cadence_dsl=cadence_dsl,
-                os_artifact_path=Path(prior.os_artifact_path),
-                exec_command=list(prior.exec_command),
-                next_run=_next_run(cadence, now),
-                already_installed=True,
-                install_instruction=None,
+        if prior.cadence_dsl != cadence_dsl:
+            raise WikiError(
+                f"schedule already installed for {operation} on {machine_id} "
+                f"with cadence {prior.cadence_dsl!r}; "
+                f"uninstall first or pass --at to change"
             )
-        raise WikiError(
-            f"schedule already installed for {operation} on {machine_id} "
-            f"with cadence {prior.cadence_dsl!r}; uninstall first or pass --at to change"
+        # Spec wiki-schedule §"install" step 7: "silent reconfiguration
+        # is not supported." An explicit ``--agent`` that disagrees with
+        # the prior journaled agent must refuse rather than silently
+        # discard the user's intent. When ``--agent`` is unset (and the
+        # recipe / contract chain *would* now resolve to something
+        # different), the journaled agent stays frozen — auto-rebind
+        # is the explicit non-goal (spec §Non-goals).
+        if agent is not None and agent != prior.agent:
+            prior_clause = (
+                f"with agent {prior.agent!r}" if prior.agent is not None else "with no bound agent"
+            )
+            raise WikiError(
+                f"schedule already installed for {operation} on "
+                f"{machine_id} {prior_clause}; "
+                f"uninstall first to change the bound agent"
+            )
+        return InstallResult(
+            operation=operation,
+            machine_id=machine_id,
+            cadence_dsl=cadence_dsl,
+            os_artifact_path=Path(prior.os_artifact_path),
+            exec_command=list(prior.exec_command),
+            next_run=_next_run(cadence, now),
+            agent=prior.agent,
+            already_installed=True,
+            install_instruction=None,
         )
 
+    # No prior install → resolve the full chain + validate before
+    # opening the transaction (CT-12 zero-event invariant).
+    resolved_agent = _resolve_agent(
+        operation,
+        state=state,
+        cli_agent=agent,
+        kit_root=kit_root,
+        contract=contract,
+    )
+
     exec_command = _resolve_exec_command(operation)
+    if resolved_agent is not None:
+        # Spec §Outputs "wiki schedule install outputs": the OS-side
+        # artifact's exec_command gains two trailing tokens so the
+        # OS scheduler dispatches the kit with the agent flag at
+        # fire time. The flag survives a recipe edit (the artifact
+        # carries the frozen name) — see spec §Invariants
+        # "OS-side artifact's exec_command is the authoritative carrier".
+        exec_command = [*exec_command, "--agent", resolved_agent]
 
     companions = emitter.companion_artifacts(
         operation=operation,
@@ -438,7 +571,27 @@ def install(
                     f"(installed concurrently by another process); "
                     f"uninstall first or pass --at to change"
                 )
-            # Concurrent winner had the same cadence — race-induced
+            # Race-loss mirror of the pre-transaction
+            # silent-reconfiguration refusal: if the user passed
+            # ``--agent`` and a concurrent install bound a different
+            # agent, refuse under the flock so the journal stays honest
+            # about who claimed the binding first. ``resolved_agent``
+            # here came from the full chain because the lockless
+            # pre-read saw no prior — a race-loss case.
+            if agent is not None and resolved_agent != prior_in_tx.agent:
+                prior_clause = (
+                    f"with agent {prior_in_tx.agent!r}"
+                    if prior_in_tx.agent is not None
+                    else "with no bound agent"
+                )
+                raise WikiError(
+                    f"schedule already installed for {operation} on "
+                    f"{machine_id} {prior_clause} "
+                    f"(installed concurrently by another process); "
+                    f"uninstall first to change the bound agent"
+                )
+            # Concurrent winner had the same cadence; agent matches or
+            # user passed no flag (frozen-agent invariant) — race-induced
             # idempotent. Skip the writes/activate/journal append and
             # return as the no-op variant. The enclosing transaction
             # still emits its lock-pair; we accept that noise as the
@@ -473,6 +626,7 @@ def install(
                     cadence_dsl=cadence_dsl,
                     os_artifact_path=str(artifact_path),
                     exec_command=exec_command,
+                    agent=resolved_agent,
                 ),
             )
 
@@ -489,6 +643,7 @@ def install(
             os_artifact_path=Path(race_winner.os_artifact_path),
             exec_command=list(race_winner.exec_command),
             next_run=_next_run(cadence, now),
+            agent=race_winner.agent,
             already_installed=True,
             install_instruction=None,
         )
@@ -500,6 +655,7 @@ def install(
         os_artifact_path=artifact_path,
         exec_command=exec_command,
         next_run=_next_run(cadence, now),
+        agent=resolved_agent,
         install_instruction=emitter.install_instruction(artifact_path),
     )
 
@@ -719,6 +875,7 @@ def list_schedules(
                 cadence_dsl=event.cadence_dsl,
                 os_artifact_path=event.os_artifact_path,
                 status=status,
+                agent=event.agent,
             )
         )
     return rows
