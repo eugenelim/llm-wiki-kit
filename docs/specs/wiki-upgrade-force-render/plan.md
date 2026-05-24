@@ -107,10 +107,14 @@ an explicit dispatch branch grep-able in `journal.py`), the
 
 ## Steps
 
-> **Verification mode.** Every step is TDD: the construction tests
-> land first (red), then the implementation makes them green. The
+> **Verification mode.** Steps that introduce new behavior are
+> TDD-first: the construction tests land first (red), then the
+> implementation makes them green. Steps that pin invariants of
+> behavior already shipped earlier in the PR are marked
+> "**Mode:** invariant pin against wiring from steps X, Y —
+> passes on first run" and turn green without a red phase. The
 > contract tests in `spec.md` §Acceptance criteria are the
-> end-of-PR gate.
+> end-of-PR gate either way.
 
 1. **`PrimitiveForceRenderEvent` round-trips through Pydantic and
    dispatches through the discriminated `Event` union.**
@@ -274,8 +278,8 @@ an explicit dispatch branch grep-able in `journal.py`), the
        seed a `VaultState` with `installed_primitives={"core":
        "0.1.0"}`; pre-place every path in
        `enumerate_rendered_paths([core], sources) |
-       set(_required_regions([core]))` on disk; assert the helper
-       returns `[]`.
+       set(compute_required_regions([core]))` on disk; assert
+       the helper returns `[]`.
      - `test_unrendered_closure_paths_lists_missing_paths_sorted` —
        same seed; delete two paths from disk; assert the helper
        returns them in sorted order (vault-relative POSIX).
@@ -283,12 +287,17 @@ an explicit dispatch branch grep-able in `journal.py`), the
        — seed a state where a primitive's only claim on
        `frontmatter.schema.yaml` is via `contributes_to` (file
        NOT in any primitive's `files/` tree but appears in
-       `_required_regions`). Delete the host file from disk.
-       Assert the helper includes `frontmatter.schema.yaml` in
-       its return. Pins the Blocker-2 fix: without the union
-       with `_required_regions`, the helper would miss
-       host-file-only contributions and the scope guard would
-       short-circuit on a vault that genuinely needs recovery.
+       `compute_required_regions`). Delete the host file from
+       disk. Assert the helper includes
+       `frontmatter.schema.yaml` in its return. Pins the
+       defense-in-depth value of the
+       `compute_required_regions` union: the kit's current
+       aggregator pre-condition (`install.py:280-283`) requires
+       the host file already exist, so today this scenario
+       crashes inside the aggregator rather than being healable;
+       the union ensures that if the kit ever evolves to allow
+       host-file-only contributions, the closure helper handles
+       them without a downstream regression.
      - `test_unrendered_closure_paths_skips_primitive_missing_from_catalog`
        — `installed_primitives={"gone": "0.0.1"}` with `gone`
        absent from `catalog`; assert the helper returns `[]`.
@@ -303,31 +312,42 @@ an explicit dispatch branch grep-able in `journal.py`), the
      fails at import.
    - **Implementation:**
      (a) lift `_required_regions` in `adopt.py` to a public name
-     (`required_regions`) so `cli.py` can import it without an
-     underscore-imports anti-pattern. No behavior change; one
-     rename. `adopt.py` keeps a `_required_regions =
-     required_regions` alias for one release cycle in case any
-     external caller imports it (none today; precaution).
+     `compute_required_regions`. The `compute_` prefix avoids
+     shadowing the local variable `required_regions` already in
+     use inside `compute_adoption_set` (`adopt.py:161`). No
+     behavior change; one rename + one-cycle alias
+     `_required_regions = compute_required_regions` at module
+     level for any external caller (none today; precaution
+     against in-flight branches). The local variable at
+     `adopt.py:161` (`required_regions = _required_regions(
+     primitives)`) becomes `required_regions =
+     compute_required_regions(primitives)` — the local name is
+     unchanged; the call site reads the new public name.
+     Confirmed by `grep _required_regions llm_wiki_kit tests`
+     returning only `adopt.py` matches (no external imports).
      (b) add `_unrendered_closure_paths(state, vault_root,
      catalog, sources)` to `cli.py` (module-private):
      ```python
      def _unrendered_closure_paths(state, vault_root, catalog, sources):
          catalog_by_name = {p.name: p for p in catalog}
-         missing: list[str] = []
+         missing: set[str] = set()
          for name in state.installed_primitives:
              if name not in catalog_by_name:
                  continue
              p = catalog_by_name[name]
+             # compute_required_regions returns
+             # {host_file: {region_id, ...}}; set(...) over a
+             # dict gives its keys — host file paths.
              closure = (
                  enumerate_rendered_paths([p], sources)
-                 | set(required_regions([p]))
+                 | set(compute_required_regions([p]))
              )
              for rel in closure:
                  if not (vault_root / rel).is_file():
-                     missing.append(rel)
-         # Trailing sort is the determinism source — iteration
-         # over the per-primitive set is not ordering-stable.
-         return sorted(set(missing))
+                     missing.add(rel)
+         # Trailing sort is the determinism source — per-
+         # primitive set iteration is not ordering-stable.
+         return sorted(missing)
      ```
    - **Verify (green):** the unit-test file passes.
 1. **Shared partial-install fixture builder (used by AC2, AC3,
@@ -345,9 +365,11 @@ an explicit dispatch branch grep-able in `journal.py`), the
        — call the helper with two primitives and
        `cut_after_primitive="core"`; assert
        `read_events(journal_path)[-1]` is the
-       `PrimitiveInstallEvent` whose `primitive == "core"`; the
-       second primitive's `PrimitiveInstallEvent` and renders
-       are absent.
+       `PrimitiveInstallEvent` whose `primitive == "core"` (i.e.,
+       core's install event is durable, no page writes for core
+       follow, and the second primitive's `PrimitiveInstallEvent`
+       and renders are absent — by construction of "last event
+       is core's install").
      - `test_make_partial_install_vault_with_adopt_preserves_adopt_events`
        — `with_adopt=True`, `adopted_paths={path: bytes}`;
        assert the journal contains exactly one
@@ -365,15 +387,6 @@ an explicit dispatch branch grep-able in `journal.py`), the
        won't short-circuit"). Without this pin, every downstream
        AC that relies on the runner being entered could pass
        vacuously via short-circuit.
-     - `test_make_partial_install_vault_cut_inside_primitive_files_tree`
-       — pin that the `cut_after_primitive` argument cuts the
-       journal AFTER the named primitive's
-       `PrimitiveInstallEvent` but BEFORE that primitive's
-       page writes — i.e., the named primitive has its install
-       event durable but partial-or-zero file renders. The
-       helper's contract: `cut_after_primitive=X` produces a
-       state where X is in `state.installed_primitives` but
-       X's `files/` tree is partially or wholly missing on disk.
      - `test_make_partial_install_vault_rejects_adopted_paths_outside_surviving_primitives`
        — call the helper with `adopted_paths={path: bytes}`
        where `path` does NOT lie under any primitive in
@@ -401,6 +414,9 @@ an explicit dispatch branch grep-able in `journal.py`), the
        Used by AC18 — keeps the init-in-progress fixture in
        the same shared module rather than hand-seeded in the
        test body.
+   - **Verify (red):** `pytest tests/fixtures/test_partial_install.py`
+     fails at import — `tests.fixtures.partial_install` does
+     not exist yet.
    - **Implementation:** new module
      `tests/fixtures/partial_install.py`:
      ```python
@@ -599,6 +615,8 @@ an explicit dispatch branch grep-able in `journal.py`), the
      vs. the standard `wiki upgrade: upgraded N primitive(s).`).
    - **Verify (green):** AC2 + AC11 + AC15 pass.
 1. **`--force-render --primitive <name>` restricts scope (AC5).**
+   - **Mode:** invariant pin against wiring from steps 5, 7, 9 —
+     passes on first run.
    - **Tests** (same integration file):
      - `test_wiki_upgrade_force_render_primitive_restricts_event_count`
        — use the step 6 fixture builder with
@@ -658,6 +676,9 @@ an explicit dispatch branch grep-able in `journal.py`), the
    - **Verify (green):** test passes.
 1. **`--force-render` works on a non-adopt-initialized partial
    install (AC7).**
+   - **Mode:** invariant pin against wiring from steps 6-9 —
+     passes on first run (the adopt-aware predicate degrades
+     gracefully when no `PageAdoptedEvent`s are present).
    - **Tests:**
      - `test_wiki_upgrade_force_render_recovers_non_adopt_init`
        — use the step 6 fixture builder with `with_adopt=False`,
@@ -674,6 +695,8 @@ an explicit dispatch branch grep-able in `journal.py`), the
      no `PageAdoptedEvent`s are present.
    - **Verify (green):** test passes.
 1. **Event ordering invariants (AC10, AC12).**
+   - **Mode:** invariant pin against wiring from steps 4, 9 —
+     passes on first run.
    - **Tests** (extend the integration suite):
      - `test_wiki_upgrade_force_render_event_ordering_within_primitive`
        (AC12) — fixture with a partial install; run
@@ -708,6 +731,9 @@ an explicit dispatch branch grep-able in `journal.py`), the
    - **Implementation:** none beyond step 5's wiring.
    - **Verify (green):** structural pin passes.
 1. **Vault-boundary refusal (AC14).**
+   - **Mode:** invariant pin against `_cmd_upgrade`'s pre-existing
+     vault-boundary check — passes on first run (the check fires
+     before any `--force-render` logic; no new code).
    - **Tests:**
      - `test_wiki_upgrade_force_render_outside_vault_exits_2` —
        run `wiki upgrade --force-render` from a directory with
@@ -747,33 +773,33 @@ an explicit dispatch branch grep-able in `journal.py`), the
      (step 6's CLI structure pins this ordering).
    - **Verify (green):** both tests pass.
 1. **Per-file audit attribution via journal-index brackets (AC19).**
+   - **Mode:** invariant pin against wiring from steps 1, 4, 9
+     — passes on first run (the tests are consumers of the
+     spec's documented query shapes; no new implementation).
    - **Tests:**
      - `test_wiki_upgrade_force_render_page_events_attributable_via_per_primitive_bracket`
        — use the step 7 fixture; capture `events_pre`. Run
        `--force-render`; capture `events_post`. For each
-       `PageWriteEvent` / `PageProposalEvent` (per-primitive-
-       phase only — exclude region-host proposals) in the new-
-       events slice, look up the most recent
-       `PrimitiveForceRenderEvent` at a lower index whose
-       `primitive` equals the per-file event's `by` field;
-       assert such a row exists in the new-events slice AND
-       that no other `Primitive*Event` for that primitive sits
-       between them. Pins the page-scope bracket query.
+       `PageWriteEvent` AND for each `PageProposalEvent` with
+       `event.by != "wiki-upgrade"` (the page-scope partition
+       — per `render.py:166`, per-primitive renders attribute
+       to the primitive name; the aggregator attributes to
+       `"wiki-upgrade"`) in the new-events slice, look up the
+       most recent `PrimitiveForceRenderEvent` at a lower
+       index whose `primitive` equals the per-file event's
+       `by` field; assert such a row exists in the new-events
+       slice AND that no other `Primitive*Event` for that
+       primitive sits between them.
      - `test_wiki_upgrade_force_render_region_events_attributable_via_run_slice`
-       — same setup. For each `ManagedRegionWriteEvent` and
-       each aggregator-phase `PageProposalEvent` (a proposal
-       whose `path` equals a region-host file declared by any
-       installed primitive's `contributes_to`) in the new-
-       events slice, assert the event's index lies in
+       — same setup. For each `ManagedRegionWriteEvent` AND
+       each `PageProposalEvent` with `event.by ==
+       "wiki-upgrade"` (the region-scope partition — the
+       aggregator emits both kinds during its pass) in the
+       new-events slice, assert the event's index lies in
        `[last_force_render_index, end_of_slice)` where
        `last_force_render_index` is the maximum index of a
        `PrimitiveForceRenderEvent` in the new-events slice.
-       Pins the region-scope index-position query (no per-
-       primitive bracket; the aggregator runs once per run).
-   - **Implementation:** none beyond existing wiring — the
-     tests are consumers of the spec's documented query
-     shapes.
-   - **Verify (green):** both tests pass.
+       No per-primitive bracket; the aggregator runs once.
 1. **Host-file-only contribution recovery (AC20).**
    - **Tests:**
      - `test_wiki_upgrade_force_render_recovers_host_file_only_contribution`
@@ -805,6 +831,9 @@ an explicit dispatch branch grep-able in `journal.py`), the
      existing aggregator pass handles the recovery write.
    - **Verify (green):** the test passes.
 1. **Drift on force-rendered file (AC3).**
+   - **Mode:** invariant pin against wiring from steps 7, 9 and
+     the adopt-aware `safe_write` predicate (already shipped by
+     `wiki-init-adopt` PR-B) — passes on first run.
    - **Tests:**
      - `test_wiki_upgrade_force_render_drift_produces_proposal_not_silent_overwrite`
        — use the step 6 fixture builder with
