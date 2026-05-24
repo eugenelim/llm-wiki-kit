@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*; the
 > plan says *how, in what order, with what verification*.
 
-- **Status:** In progress (v1 complete; v2 awaits RFC-0004)
+- **Status:** Done
 - **Spec:** [`docs/specs/wiki-run-exec/spec.md`](spec.md)
 - **Owner:** `llm_wiki_kit/run.py`, `llm_wiki_kit/cli.py:_cmd_run`
 
@@ -30,50 +30,7 @@ Already satisfied for v1; carried forward for the queued task:
 
 ## Steps
 
-(v1 is shipped. The list below is the queued v2 work the spec's
-§Non-goals explicitly defers.)
-
-1. **`_build_argv` emits the ADR-0010 `--agent <name>` pair when
-   RFC-0004's resolution chain produces a non-`None` name; the
-   model and CLI surfaces follow in the same PR.**
-   - **Depends on:** RFC-0004 accepted (resolution-chain inputs).
-   - **Verification mode:** TDD. The spec amendment lands in this
-     same PR (it is not a prerequisite handed off elsewhere): it
-     adds new CTs covering each sub-concern listed below, and the
-     construction tests below ride alongside the production code.
-   - **Sub-concern (a) — argv emission.** `_build_argv` learns to
-     accept an optional resolved agent name and emit
-     `["--agent", <name>]` immediately before the trailing prompt
-     positional (per ADR-0010 §Decision step 2).
-     **Construction tests:** `test_build_argv_emits_agent_pair`
-     and `test_build_argv_omits_agent_when_none` in
-     `tests/unit/test_run_exec.py` (the latter reinforces v1's
-     CT-13 invariant under the new code path).
-   - **Sub-concern (b) — model additive field.** Extend
-     `OperationExecFailedEvent` with `agent: str | None = None`
-     (ADR-0002 additive-schema rule), so failures record the
-     active agent.
-     **Construction tests:**
-     `test_legacy_exec_failed_event_without_agent_replays_as_none`
-     (legacy line with no `agent` key replays as `None`) in
-     `tests/unit/test_run_exec.py`.
-   - **Sub-concern (c) — CLI surface.** The CLI exposes
-     `wiki run --agent <name>`; `dispatch_and_exec` gains an
-     `agent: str | None` keyword that flows from CLI through to
-     `_build_argv`. Resolution order matches RFC-0004 §4
-     (schedule-entry → recipe `agents:<>:runs` → operation
-     `preferred_agent` → no agent).
-     **Construction tests:** `test_cli_agent_flag_flows_through`
-     in `tests/integration/test_cli_run_exec.py` driving the
-     subprocess with `--agent` and asserting the captured argv;
-     resolution-chain coverage lands wherever RFC-0004 places the
-     chain (probably `tests/unit/test_run_dispatch.py` if the
-     chain is dispatch-adjacent).
-   - **Spec edits in the same PR:** flip §Non-goals "Agent
-     passthrough" entry from "deferred" to a back-reference to the
-     v2 CT(s); update §Outputs §"Exec phase" step 4 to mention the
-     optional flag insertion; add new contract tests under
-     §"Acceptance criteria" — one CT per sub-concern above.
+Shipped in PR #102 (wiki-agents PR-5).
 
 ## Verification gate
 

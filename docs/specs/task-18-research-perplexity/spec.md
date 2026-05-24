@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit.research`, `templates/infrastructure/research`,
   `templates/infrastructure/research-perplexity`
 - **Related:** RFC-0001 §"Task 18 — Research dispatch + Perplexity",
