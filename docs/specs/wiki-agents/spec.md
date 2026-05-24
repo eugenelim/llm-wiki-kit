@@ -484,6 +484,19 @@ on a manual hand-off would confuse the audit trail.
   the `claude --agent <name>` invocation fails at the CLI side with
   its own "agent not found" message. `wiki doctor`'s bindings check
   is the user-facing recovery path.
+- **Malformed recipe at schedule-install or `wiki run --exec` time.**
+  `RecipeError` / `ValidationError` raised while loading
+  `recipes/<VaultInitEvent.recipe>.yaml` during chain step 2 is
+  swallowed at the resolution site; the chain falls through to
+  step 3 (contract `preferred_agent`). This matches
+  `schedule._resolve_agent`'s posture and keeps schedule install
+  / exec invocations from breaking when a recipe-side typo lands
+  between `wiki init` / `wiki upgrade` and the install/fire — the
+  recipe-load error is the upstream verb's contract, not this
+  spec's. A future `wiki doctor` check (out of scope here) should
+  flag a vault whose journaled recipe name no longer loads
+  cleanly; today the resulting silent loss of recipe-step
+  resolution is invisible at install/run time.
 - **Two recipes in `recipes/*.yaml` bind the same operation to
   different agents.** Schedule install resolution loads only the
   vault's recorded recipe (`VaultInitEvent.recipe`), so only that
@@ -527,6 +540,26 @@ on a manual hand-off would confuse the audit trail.
   exactly one when an agent resolves *and* validates. The event is
   paired with the dispatch's `OperationRunEvent` inside the same
   `journal.transaction(...)` — either both are appended or neither.
+- **Mid-flock agent re-validation.** When the resolved agent is
+  non-`None`, the kit re-reads `VaultState` inside the dispatch
+  `journal.transaction(...)` and re-runs `is_installed_agent`
+  against the locked view *before* appending
+  `OperationRunEvent` + `OperationRunByAgentEvent`. A
+  `wiki remove agent:<name>` landing between pre-transaction
+  resolution and lock acquire (the post-resolution race) produces
+  **exactly one** `OperationExecFailedEvent(reason="agent-missing")`
+  under the same lock-pair (`exit_code = -3`, no subprocess
+  invoked) and **no** `OperationRunEvent` — the "not a partial
+  write" rule. The lock-pair brackets only the failure event;
+  dispatch-only mode (no `--exec`) re-validates and raises
+  `WikiError` without journaling the failure event (the lock-pair
+  emits via the transaction's `finally` block, matching
+  `wiki-schedule`'s lock-pair-without-payload convention for a
+  failed paired-write). Pinned by CT-15's mid-flock sibling test
+  (`test_run_exec_agent_missing_mid_flock_journals_exec_failed_under_lock`).
+  A future contributor must not consolidate the in-transaction
+  re-check out of `run.py:dispatch`; it closes a race the pre-load
+  validator cannot reach.
 - One `wiki run` (dispatch-only) invocation appends at most one
   `OperationRunByAgentEvent` (only when `--agent` is passed); the
   paired `OperationRunEvent` shape is unchanged from today.

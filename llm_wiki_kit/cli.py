@@ -1432,6 +1432,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         kit_root=kit_root,
         journal_path=journal_path,
         now=datetime.now(UTC),
+        agent=getattr(args, "agent", None),
     )
 
     if result.status == "invalid_args":
@@ -1514,6 +1515,7 @@ def _cmd_run_exec(
         timeout_seconds=timeout_seconds,
         log_retention_days=log_retention_days,
         max_budget_usd=max_budget_usd,
+        agent=getattr(args, "agent", None),
     )
 
     dispatch_result = result.dispatch
@@ -2427,6 +2429,21 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Override the SKILL.md path the executor passes to claude. Default "
             "resolves to <vault>/.claude/skills/<contract.skill or operation>/SKILL.md."
+        ),
+    )
+    run.add_argument(
+        "--agent",
+        default=None,
+        metavar="<name>",
+        help=(
+            "Agent name to dispatch the operation under (RFC-0004 "
+            "wiki-agents). Overrides recipe binding and operation "
+            "contract preferred_agent. Must be installed as a "
+            "kind: agent primitive; refused with WikiError if not. "
+            "Dispatch-only: only the CLI flag applies (no recipe / "
+            "contract walk). With --exec: the kit additionally inserts "
+            "'--agent <name>' immediately before the prompt positional "
+            "in the claude argv per ADR-0010."
         ),
     )
     run.add_argument("operation", help="Operation name (e.g. weekly-digest).")

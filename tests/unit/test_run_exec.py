@@ -444,8 +444,12 @@ def test_build_argv_inserts_max_budget_when_set(tmp_path: Path) -> None:
     assert argv[-3:] == ["--max-budget-usd", "5.00", "x"]
 
 
-def test_build_argv_never_emits_agent_at_v1(tmp_path: Path) -> None:
-    # ADR-0010 deferred to v2 — v1's _build_argv never adds --agent.
+def test_build_argv_omits_agent_when_none(tmp_path: Path) -> None:
+    # CT-14 (negative half): the ADR-0010 ``--agent <name>`` insert
+    # only fires when wiki-agents' resolution chain produced a
+    # non-None name. With ``agent=None`` (the default), the argv is
+    # byte-identical to the ADR-0009 shape — preserves the no-agent
+    # contract for vaults that declare no agent.
     binary = _make_executable(tmp_path)
     vault_root = tmp_path / "vault"
     vault_root.mkdir()
