@@ -94,7 +94,18 @@ mirrors RFC-0003 §"Cadence vocabulary":
   cadence_dsl: "<resolved DSL>"
   os_artifact_path: "<absolute path to plist/timer/xml>"
   exec_command: ["<absolute path to wiki binary>", "run", "--exec", "<operation>"]
+  agent: "<resolved agent>" | null
   ```
+
+  The `agent` field is additive per
+  [RFC-0004 wiki-agents](../wiki-agents/spec.md) PR-4: `null` (default)
+  when no agent resolves at install time; a name when the CLI flag /
+  recipe binding / contract `preferred_agent` chain produces one. When
+  non-null, the `exec_command` array gains two trailing tokens
+  (`"--agent", "<name>"`) so the OS scheduler dispatches the kit with
+  the flag at fire time. Pre-RFC-4 journal lines lack the field and
+  replay with `agent is None` (ADR-0002 §Negative's additive-schema
+  rule).
 
   Appended **last**, after the OS-artifact file is written *and* the
   OS-side activation subprocess returns success. The journal is
@@ -174,12 +185,15 @@ mirrors RFC-0003 §"Cadence vocabulary":
   ```
   Installed schedule for <operation> on <machine>.
     cadence: <resolved DSL>
+    agent: <resolved agent>           # omitted when no agent resolves
     artifact: <absolute path>
     next run: <ISO local timestamp>
   ```
   (`next run` is computed from the DSL; documented as advisory, not
   promised to match the OS scheduler exactly — DST transitions, system
-  sleep, etc.)
+  sleep, etc.) The `agent:` line is emitted iff
+  `ScheduleInstalledEvent.agent` is non-null per
+  [RFC-0004 wiki-agents](../wiki-agents/spec.md) §Outputs.
 
 ### `uninstall`
 
@@ -255,13 +269,26 @@ mirrors RFC-0003 §"Cadence vocabulary":
    `socket.gethostname()`.
 7. Check for a prior unrevoked `ScheduleInstalledEvent` with the same
    `(operation, machine_id)`. If present:
-   - If `cadence_dsl` matches the new one → no-op; print
+   - If `cadence_dsl` matches the new one **and** `--agent` is unset
+     or matches the prior journaled `agent` → no-op; print
      `Schedule already installed for <op> on <machine> (no change).`
-     Exit `0`, **no journal event**.
+     Exit `0`, **no journal event**. The agent-resolution chain
+     (RFC-0004 wiki-agents) is **not re-run** on a same-cadence
+     reinstall — the journaled `agent` is frozen at first install per
+     [wiki-agents §Invariants](../wiki-agents/spec.md), and a recipe
+     edit or `wiki remove agent:<name>` after install does not break
+     the idempotent no-op.
    - If `cadence_dsl` differs → refuse with `WikiError("schedule
      already installed for <op> on <machine> with cadence '<old>';
      uninstall first or pass --at to change")`. Idempotent re-install
      is supported; silent reconfiguration is not.
+   - If `cadence_dsl` matches but `--agent` is set to a value other
+     than the prior journaled `agent` → refuse with
+     `WikiError("schedule already installed for <op> on <machine>
+     with agent '<old>' (or 'with no bound agent' when prior.agent
+     is None); uninstall first to change the bound agent")`. Same
+     "no silent reconfiguration" rule as the cadence-mismatch refusal
+     — pinned by RFC-0004 wiki-agents PR-4.
 8. Compute artifact path; render the artifact body (per-OS template;
    see §"Contracts with other modules"). The install sequence is
    **write companions → write primary → activate → journal**, executed
@@ -636,6 +663,10 @@ mirrors RFC-0003 §"Cadence vocabulary":
       cadence_dsl: str
       os_artifact_path: str
       exec_command: list[str]
+      # Additive per RFC-0004 wiki-agents PR-4; ``None`` is the
+      # pre-RFC-4 baseline and the explicit "no agent declared"
+      # outcome of the resolution chain.
+      agent: str | None = None
 
   class ScheduleUninstalledEvent(_EventBase):
       type: Literal["schedule.uninstalled"] = "schedule.uninstalled"

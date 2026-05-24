@@ -680,6 +680,29 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
         },
         "operation=weekly-digest machine=tower.local cadence=SUN 09:00",
     ),
+    # RFC-0004 wiki-agents PR-4: with-agent case pins the
+    # ``(plus ` agent=<agent>` when set)`` clause in
+    # ``docs/specs/wiki-journal-readers/spec.md``. The without-agent
+    # row above pins the omit-when-None branch.
+    (
+        ScheduleInstalledEvent,
+        {
+            "operation": "weekly-digest",
+            "machine_id": "tower.local",
+            "cadence_dsl": "SUN 09:00",
+            "os_artifact_path": "/Users/me/Library/LaunchAgents/x.plist",
+            "exec_command": [
+                "/usr/local/bin/wiki",
+                "run",
+                "--exec",
+                "weekly-digest",
+                "--agent",
+                "household-manager",
+            ],
+            "agent": "household-manager",
+        },
+        "operation=weekly-digest machine=tower.local cadence=SUN 09:00 agent=household-manager",
+    ),
     (
         ScheduleUninstalledEvent,
         {

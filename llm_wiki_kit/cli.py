@@ -1579,6 +1579,7 @@ def _cmd_schedule_install(args: argparse.Namespace) -> int:
         kit_root=kit_root,
         journal_path=journal_path,
         now=datetime.now(UTC),
+        agent=args.agent,
     )
 
     if result.already_installed:
@@ -1589,6 +1590,13 @@ def _cmd_schedule_install(args: argparse.Namespace) -> int:
 
     print(f"Installed schedule for {result.operation} on {result.machine_id}.")
     print(f"  cadence: {result.cadence_dsl}")
+    # Spec wiki-agents §Outputs "wiki schedule install outputs": the
+    # ``agent:`` line appears between ``cadence:`` and ``artifact:``
+    # iff the resolution chain produced a non-None agent. When None,
+    # the line is omitted (no ``agent: (none)`` noise on pre-RFC-4
+    # installs or unbound operations).
+    if result.agent is not None:
+        print(f"  agent: {result.agent}")
     print(f"  artifact: {result.os_artifact_path}")
     print(f"  next run: {result.next_run.isoformat()}")
     if result.install_instruction is not None:
@@ -1654,11 +1662,15 @@ def _cmd_schedule_list(args: argparse.Namespace) -> int:
         journal_path=journal_path,
     )
 
-    print("OPERATION\tMACHINE\tCADENCE\tARTIFACT\tSTATUS")
+    print("OPERATION\tMACHINE\tCADENCE\tAGENT\tARTIFACT\tSTATUS")
     for row in rows:
+        # Spec wiki-agents §Outputs "wiki schedule list outputs":
+        # AGENT column between CADENCE and ARTIFACT; ``None`` renders
+        # as ``—`` (U+2014, em dash).
+        agent_cell = row.agent if row.agent is not None else "—"
         print(
             f"{row.operation}\t{row.machine_id}\t{row.cadence_dsl}\t"
-            f"{row.os_artifact_path}\t{row.status}"
+            f"{agent_cell}\t{row.os_artifact_path}\t{row.status}"
         )
     return 0
 
@@ -1943,6 +1955,12 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
         ("operation", "operation", False),
         ("machine_id", "machine", False),
         ("cadence_dsl", "cadence", False),
+        # RFC-0004 wiki-agents PR-4: ``agent`` is additive on the event
+        # and surfaces here with the "plus ... when set" pattern (see
+        # ``docs/specs/wiki-journal-readers/spec.md`` §"summary fields"
+        # row for ``schedule.installed``). ``omit_when_none=True`` keeps
+        # pre-RFC-4 tail/grep rows byte-identical.
+        ("agent", "agent", True),
     ),
     ScheduleUninstalledEvent: (
         ("operation", "operation", False),
@@ -2589,6 +2607,20 @@ def build_parser() -> argparse.ArgumentParser:
             "socket.gethostname(). Override to manage schedules on "
             "another host of a synced vault (out-of-band; the kit "
             "does not write to that host)."
+        ),
+    )
+    schedule_install.add_argument(
+        "--agent",
+        default=None,
+        metavar="<name>",
+        help=(
+            "Agent name to dispatch the operation under (RFC-0004 "
+            "wiki-agents). Overrides any recipe binding or operation "
+            "contract preferred_agent. Must be installed as a "
+            "kind: agent primitive; refused with WikiError if not. "
+            "The resolved name is frozen on the journaled "
+            "ScheduleInstalledEvent.agent and appended to the OS-side "
+            "artifact's exec_command as '--agent <name>'."
         ),
     )
     schedule_install.set_defaults(func=_cmd_schedule_install)

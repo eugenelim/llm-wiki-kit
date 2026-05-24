@@ -412,6 +412,14 @@ journaled `ScheduleInstalledEvent.agent`. The chain is:
    one-agent-per-op-per-recipe (CT-5), so at most one binding
    can match within that recipe. If the recipe's `agents:` block
    has no binding for this operation, continue to step 3.
+   When the recipe *does* bind the operation but the named agent
+   is **not** in `state.installed_primitives`, **refuse** with
+   `WikiError("agent '<name>' bound by recipe '<recipe>' to
+   operation '<op>' is not installed; run 'wiki add agent:<name>'
+   or re-run 'wiki init'")` — recipe binding is explicit user
+   composition and mirrors step 1's CLI-flag rigor (it does **not**
+   share step 3's silent-skip semantics, which is reserved for the
+   contract author's per-vault-optional suggestion).
 3. Operation contract. Load
    `templates/operations/<op>/contract.yaml`; if
    `preferred_agent: <name>` is set and the name resolves to an
