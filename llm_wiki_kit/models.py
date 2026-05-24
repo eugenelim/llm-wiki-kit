@@ -110,6 +110,30 @@ class Primitive(_StrictModel):
 # ---------------------------------------------------------------------------
 
 
+class AgentBinding(_StrictModel):
+    """One entry inside a recipe's ``agents:`` block.
+
+    ``runs`` is the required list of operation primitive names this
+    agent is the preferred dispatcher for in the recipe. The
+    ``min_length=1`` constraint pins ``docs/specs/wiki-agents/spec.md``
+    CT-6: an empty list is a recipe-author bug (a recipe declaring an
+    agent with no operations is dead weight) and Pydantic rejects it
+    at recipe-load time, *before* the closure-walk validator
+    (CT-3 / CT-4 / CT-5) runs. The two validation layers are distinct
+    and must not be consolidated — load-shape vs. recipe-semantics.
+
+    Names inside ``runs`` are pattern-validated against
+    :data:`NAME_PATTERN` at the Pydantic layer per ``spec.md``
+    §"Contracts with other modules". This catches authoring typos
+    (capitals, underscores) at recipe-load before the closure walk
+    runs; the closure walk then cross-checks each name against the
+    resolved catalog. The two checks are complementary — Pydantic
+    rejects illegal shapes, the closure walk rejects unbound names.
+    """
+
+    runs: list[Annotated[str, Field(pattern=NAME_PATTERN)]] = Field(min_length=1)
+
+
 class Recipe(_StrictModel):
     """The schema of a ``recipes/<name>.yaml`` file."""
 
@@ -118,6 +142,12 @@ class Recipe(_StrictModel):
     description: str
     primitives: list[str]
     variables: dict[str, str] = Field(default_factory=dict)
+    # Additive per ADR-0002: absent or ``{}`` is the v2.0.0 baseline
+    # ("no agent bindings"). The closure-walk validator in
+    # :mod:`llm_wiki_kit.recipes` cross-checks every key and every
+    # operation against the recipe's resolved primitives closure; see
+    # ``docs/specs/wiki-agents/spec.md`` §Inputs §"Recipe surface".
+    agents: dict[str, AgentBinding] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +207,14 @@ class OperationContract(_StrictModel):
     # ADR-0002 §Negative — existing contracts that omit the field validate
     # unchanged.
     default_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    # Optional operation-author hint for the agent resolution chain
+    # (``docs/specs/wiki-agents/spec.md`` §"Resolution chain"). Used at
+    # step 3 of the chain when no CLI flag and no recipe binding
+    # resolve. ``None`` is the v2.0.0 baseline — the operation author
+    # makes no agent suggestion. Names validate against ``NAME_PATTERN``
+    # at contract-load (CT-7); cross-checking against the installed
+    # primitive set happens at chain-resolution time, not here.
+    preferred_agent: str | None = Field(default=None, pattern=NAME_PATTERN)
 
 
 # ---------------------------------------------------------------------------

@@ -572,7 +572,7 @@ on a manual hand-off would confuse the audit trail.
   call sites. Recipe-load validation (PR-3) is a *distinct*
   validation path — it walks the recipe's `primitives:` closure
   before any install has happened, so no `VaultState` exists to
-  pass to the helper; CT-4 / CT-5 pin the closure-walk check
+  pass to the helper; CT-3 / CT-4 / CT-5 pin the closure-walk check
   separately. The single-helper rule across the two `VaultState`
   sites is a code-organization discipline enforced by review,
   not a runtime invariant. The helper lives in `primitives.py`
