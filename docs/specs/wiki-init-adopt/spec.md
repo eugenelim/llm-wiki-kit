@@ -417,22 +417,16 @@ The differing-bytes case the ADR's §Positive describes:
   `PrimitiveInstallEvent` landed)** — the already-a-vault refusal
   fires; `wiki init --adopt` is no longer the recovery path. The
   vault is in a partial state: some primitives' `PrimitiveInstallEvent`
-  rows are journaled with their renders incomplete, the adopt
-  baselines from the same run are durable, and `wiki doctor`
-  reports `missing` for any kit-owned path the renderer didn't
-  reach. `wiki upgrade` does NOT re-attempt the failed renders
-  unless the kit catalog bumps a primitive's version
-  (`plan_upgrade` short-circuits when every installed version
-  matches the catalog — `llm_wiki_kit/upgrade.py:plan_upgrade`),
-  so today's recovery story is: (1) run `wiki doctor` to surface
-  the missing files, (2) the user re-runs `wiki init --adopt`
-  after manually deleting `.wiki.journal/` (destructive — last
-  resort), or waits for the next catalog version bump to drive
-  `wiki upgrade` over the existing adopt baselines. A proper
-  `wiki init --adopt --resume` (or `wiki upgrade --force-render`)
-  surface is deferred to a follow-on spec; the current PR's
-  acceptance criteria do not pin a green test for this recovery
-  path because the kit cannot deliver it yet.
+  rows are journaled with their renders incomplete, and the adopt
+  baselines from the same run are durable. `wiki doctor`'s
+  existing `check_missing` walks `state.page_writes` only
+  (`doctor.py:281-288`), so it surfaces `missing` ONLY for paths
+  that previously got a `PageWriteEvent` — paths the renderer
+  never reached are NOT in `state.page_writes` and `check_missing`
+  does not surface them. The recovery surface for un-rendered
+  closure paths is `wiki upgrade --force-render`, specified at
+  [`docs/specs/wiki-upgrade-force-render/`](../wiki-upgrade-force-render/spec.md)
+  and tracked in `docs/ROADMAP.md` §"Post-PR-C follow-ups".
 
 ### Error cases
 

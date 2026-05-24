@@ -779,14 +779,14 @@ explicitly.
      does NOT do today (`upgrade.py` short-circuits when every
      installed version equals the catalog version). Spec
      §Edge cases was amended in PR-C to acknowledge the gap;
-     the test lands when a follow-on spec ships
-     `wiki upgrade --force-render` (or equivalent). Failing
-     loudly here today would gate PR-C on a contract change
-     outside its scope. **Follow-on tracking:** see
-     `docs/ROADMAP.md` "Post-PR-C follow-ups"; the future spec
-     slug is `wiki-upgrade-force-render` (TBD) — a maintainer
-     grepping for `wiki upgrade --force-render` lands here AND
-     in the ROADMAP entry.
+     the test lands when the follow-on spec
+     `wiki upgrade --force-render` ships its implementation.
+     Failing loudly here today would gate PR-C on a contract
+     change outside its scope. **Follow-on tracking:** spec
+     drafted at
+     [`docs/specs/wiki-upgrade-force-render/`](../wiki-upgrade-force-render/spec.md);
+     ROADMAP entry at `docs/ROADMAP.md` "Post-PR-C follow-ups"
+     (until the spec is accepted).
 1. **Ordering invariant: adoption events strictly before
    install-pipeline events (AC18).**
    - **Tests:**

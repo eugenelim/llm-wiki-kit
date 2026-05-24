@@ -11,19 +11,23 @@
 
 One landing PR. The surface area is small — one new event class, two
 new keyword args on `upgrade.py`'s entry points, one new `argparse`
-flag on `_cmd_upgrade`, and one new pre-flight call sequence (the
-scope guard). The dependency arrow inside the PR is:
+flag on `_cmd_upgrade`, one new module-private helper
+`_unrendered_closure_paths` in `cli.py`, and one new pre-flight call
+sequence (the scope guard). The dependency arrow inside the PR is:
 `PrimitiveForceRenderEvent` + replay no-op dispatch → `upgrade.py`
-keyword args + event-swap branch → `_cmd_upgrade` flag + scope guard
-+ conflict check.
+keyword args + event-swap branch → shared `partial_install` fixture
+builder → `_cmd_upgrade` flag + scope guard + conflict check.
 
 TDD-first throughout. The contract pin lives at the integration
-layer: a fixture vault with a simulated partial install (truncate the
-journal mid-`PrimitiveInstallEvent` so the closure's files are
-missing on disk), drive `wiki upgrade --force-render`, assert the
-closure heals. Unit tests pin the Pydantic round-trip, the
-`replay_state` no-op, the `plan_upgrade(force_render=True)` planner
-output, and the `upgrade_primitives` event-swap behavior.
+layer: a fixture vault produced by a SHARED helper
+(`tests/fixtures/partial_install.py:make_partial_install_vault`)
+that drops every journal event after a chosen `cut_after_primitive`,
+drive `wiki upgrade --force-render`, assert the closure heals. Unit
+tests pin the Pydantic round-trip, the `replay_state` no-op (with
+an explicit dispatch branch grep-able in `journal.py`), the
+`plan_upgrade(force_render=True)` planner output, the
+`upgrade_primitives` event-swap behavior, and
+`_unrendered_closure_paths`'s closure-presence semantics.
 
 ### Declined patterns (commitments for REVIEW)
 
@@ -50,6 +54,18 @@ output, and the `upgrade_primitives` event-swap behavior.
   unconditional. A user who wants to re-render a clean vault has
   no recovery to do; they want a different feature (one that
   doesn't exist yet). Defer until real demand surfaces.
+- **Tempted to lift `_unrendered_closure_paths` into
+  `doctor.check_unrendered_closure` in this PR.** Declined: the
+  scope guard is the CLI's decision about whether to enter the
+  runner — co-located with `_cmd_upgrade` it's grep-locatable
+  from one place. Lifting into doctor surfaces it as a user-facing
+  diagnostic, which is the right shape ONLY if `wiki doctor` is
+  going to report it — and that's a sibling-spec design decision
+  (does doctor add a new `Issue` kind? does it widen `MISSING`?
+  what's the user message?). Doing both in one PR mixes the
+  recovery-tool contract with a diagnostic contract. The spec's
+  §Risks "Doctor doesn't surface this state" names the sibling
+  spec; this PR doesn't pre-empt it.
 - **Tempted to fork a `force_render.py` module rather than extend
   `upgrade.py`.** Declined per spec §Constraints "No new module
   under `llm_wiki_kit/`." The change is two keyword args + one
@@ -75,10 +91,13 @@ output, and the `upgrade_primitives` event-swap behavior.
   on is in place).
 - `llm_wiki_kit/upgrade.py` carries `plan_upgrade` and
   `upgrade_primitives` in their current shape.
-- `llm_wiki_kit/doctor.py` exposes `check_missing` and
-  `check_managed_region_drift` as importable functions (verify
-  before drafting the CLI handler; if either is a method on a
-  class, the plan grows one refactor task to lift the predicate).
+- `llm_wiki_kit/doctor.py` exposes `check_managed_region_drift` as
+  an importable function with signature `(events: list[Event],
+  vault_root: Path, state: VaultState) -> list[Issue]` (verified
+  at `doctor.py:220-222`).
+- `llm_wiki_kit/install.py` exposes `enumerate_rendered_paths` as
+  an importable function (verified — it landed in
+  `wiki-init-adopt`'s PR-C).
 - `llm_wiki_kit/models.py`'s discriminated `Event` union accepts
   one new class via the `Annotated[... | NewClass, Field(
   discriminator="type")]` shape (the wiki-init-adopt PR-A change
@@ -223,16 +242,12 @@ output, and the `upgrade_primitives` event-swap behavior.
      ```
    - **Verify (green):** new tests pass.
 1. **`_cmd_upgrade` recognises the `--force-render` flag and
-   threads it into the runner.**
-   - **Tests** (extend `tests/integration/test_wiki_upgrade.py` or
-     a new `tests/integration/test_wiki_upgrade_force_render.py`):
+   threads it into the runner end-to-end.**
+   - **Tests** (new file
+     `tests/integration/test_wiki_upgrade_force_render.py`):
      - `test_wiki_upgrade_force_render_flag_recognised` — smoke:
        `wiki upgrade --force-render --help` returns 0 and the
        help text mentions the flag.
-     - `test_wiki_upgrade_force_render_threads_to_planner` — pin
-       via a counting monkeypatch on `plan_upgrade` that the CLI
-       calls it with `force_render=True` when the flag is set,
-       and `force_render=False` otherwise.
    - **Verify (red):** unknown flag.
    - **Implementation:** add the `argparse` flag to
      `_cmd_upgrade`'s subparser (`upgrade_parser.add_argument(
@@ -240,103 +255,283 @@ output, and the `upgrade_primitives` event-swap behavior.
      installed primitive closure to recover from a partial
      install. See docs/specs/wiki-upgrade-force-render.")`).
      Thread `args.force_render` through to `plan_upgrade` and
-     `upgrade_primitives`.
-   - **Verify (green):** tests pass.
-1. **Scope guard short-circuits on a clean vault (AC1, AC4, AC16).**
-   - **Tests** (same integration file):
-     - `test_wiki_upgrade_force_render_clean_vault_short_circuits`
+     `upgrade_primitives`. (No wiring of the scope guard yet —
+     that lands in step 6 atop step 7's fixture; this step's
+     contract is "the flag passes through to the runner without
+     a TypeError.")
+   - **Verify (green):** the smoke test passes. Note: the
+     behavior contract (planner narrowing, event-swap) is
+     pinned by step 3 + step 4's unit tests; this step is the
+     wiring smoke only. We do NOT add a "counting monkeypatch on
+     `plan_upgrade` asserts force_render=True was passed" test
+     — that would pin the implementation rather than the
+     contract (the planner narrowing is already pinned at the
+     unit level).
+1. **`_unrendered_closure_paths` returns the vault-relative paths
+   missing from the installed-primitive closure on disk.**
+   - **Tests** (new file `tests/unit/test_unrendered_closure_paths.py`):
+     - `test_unrendered_closure_paths_empty_when_all_present` —
+       seed a `VaultState` with `installed_primitives={"core":
+       "0.1.0"}`; pre-place every path
+       `enumerate_rendered_paths([core], sources)` would produce
+       on disk; assert the helper returns `[]`.
+     - `test_unrendered_closure_paths_lists_missing_paths_sorted` —
+       same seed; delete two paths from disk; assert the helper
+       returns them in sorted order (vault-relative POSIX).
+     - `test_unrendered_closure_paths_skips_primitive_missing_from_catalog`
+       — `installed_primitives={"gone": "0.0.1"}` with `gone`
+       absent from `catalog`; assert the helper returns `[]`
+       (the kit can't enumerate paths for a primitive it
+       doesn't ship).
+     - `test_unrendered_closure_paths_empty_when_no_installed_primitives`
+       — `installed_primitives={}`; assert `[]` regardless of
+       on-disk content.
+     - `test_unrendered_closure_paths_is_pure_no_journal_writes`
+       — call the helper against a tmp-path vault; assert the
+       journal file's mtime is unchanged (no I/O outside the
+       file-existence probe).
+   - **Verify (red):** the helper doesn't exist.
+   - **Implementation:** add `_unrendered_closure_paths(state,
+     vault_root, catalog, sources)` to `cli.py` (module-private):
+     ```python
+     def _unrendered_closure_paths(state, vault_root, catalog, sources):
+         catalog_by_name = {p.name: p for p in catalog}
+         missing: list[str] = []
+         for name in state.installed_primitives:
+             if name not in catalog_by_name:
+                 continue
+             p = catalog_by_name[name]
+             for rel in enumerate_rendered_paths([p], sources):
+                 if not (vault_root / rel).is_file():
+                     missing.append(rel)
+         return sorted(missing)
+     ```
+   - **Verify (green):** the unit-test file passes.
+1. **Shared partial-install fixture builder (used by AC2, AC3,
+   AC5, AC7, AC10, AC12, AC15, AC17).**
+   - **Tests** (new file
+     `tests/fixtures/test_partial_install.py` — the
+     self-tests that pin the helper's contract):
+     - `test_make_partial_install_vault_cuts_after_named_primitive`
+       — call the helper with two primitives and
+       `cut_after_primitive="core"`; assert
+       `read_events(journal_path)[-1]` is the
+       `PrimitiveInstallEvent` whose `primitive == "core"`; the
+       second primitive's `PrimitiveInstallEvent` and renders
+       are absent.
+     - `test_make_partial_install_vault_with_adopt_preserves_adopt_events`
+       — `with_adopt=True`, `adopted_paths={path: bytes}`;
+       assert the journal contains exactly one
+       `PageAdoptedEvent(path=...)` per entry, in the
+       interleaved order wiki-init-adopt spec §Outputs Journal
+       events names, BEFORE any `PrimitiveInstallEvent`.
+     - `test_make_partial_install_vault_no_adopt_emits_no_adopted_events`
+       — `with_adopt=False`, `adopted_paths={}`; assert zero
+       `PageAdoptedEvent` rows in the journal.
+     - `test_make_partial_install_vault_unrendered_closure_non_empty`
+       — pin the postcondition: after the helper builds the
+       vault, `_unrendered_closure_paths(state, vault_root,
+       catalog, sources)` returns a NON-empty list (the helper's
+       contract is "produce a vault where the scope guard
+       won't short-circuit"). Without this pin, every downstream
+       AC that relies on the runner being entered could pass
+       vacuously via short-circuit.
+     - `test_make_partial_install_vault_cut_inside_primitive_files_tree`
+       — pin that the `cut_after_primitive` argument cuts the
+       journal AFTER the named primitive's
+       `PrimitiveInstallEvent` but BEFORE that primitive's
+       page writes — i.e., the named primitive has its install
+       event durable but partial-or-zero file renders. The
+       helper's contract: `cut_after_primitive=X` produces a
+       state where X is in `state.installed_primitives` but
+       X's `files/` tree is partially or wholly missing on disk.
+   - **Implementation:** new module
+     `tests/fixtures/partial_install.py`:
+     ```python
+     @dataclass(frozen=True)
+     class PartialInstallVault:
+         vault_root: Path
+         journal_path: Path
+         pre_call_journal_bytes: bytes
+         pre_call_unrendered: list[str]
+         adopted_path_inodes: dict[str, int]  # for AC2(c) inode pin
+
+     def make_partial_install_vault(
+         tmp_path: Path,
+         *,
+         with_adopt: bool,
+         primitives: list[str],
+         cut_after_primitive: str,
+         adopted_paths: dict[str, bytes] = {},
+         recipe: str = "core",
+     ) -> PartialInstallVault:
+         # 1. Run `wiki init [--adopt]` over tmp_path with the named
+         #    recipe (constructed inline to include `primitives`).
+         # 2. Truncate the journal: read events, find the index of
+         #    the `PrimitiveInstallEvent` whose `primitive ==
+         #    cut_after_primitive`, drop every event after it.
+         #    Delete on-disk files corresponding to events that were
+         #    dropped (so disk state matches the truncated journal).
+         # 3. Snapshot journal bytes, compute pre_call_unrendered,
+         #    capture inodes for adopted_paths.
+         ...
+     ```
+     Lives under `tests/fixtures/` because it's test-only and not
+     shipped to users. The helper is the single source of truth
+     for "what does a partial install look like" — sibling specs
+     can reuse it.
+   - **Verify (green):** the self-test module passes.
+1. **Scope guard short-circuits on a clean closure (AC1, AC4,
+   AC16, AC18).**
+   - **Tests** (the new integration file from step 5):
+     - `test_wiki_upgrade_force_render_clean_closure_short_circuits`
        (AC1) — initialize a vault with `wiki init --recipe core`
-       (no partial install). Run `wiki upgrade --force-render`.
-       Assert exit 0, stdout contains `no recovery needed (vault
-       is clean).`, the journal byte-content is unchanged from
-       the pre-call snapshot.
+       (no partial install). Pre-call: snapshot journal bytes;
+       assert `_unrendered_closure_paths` returns `[]` and
+       `check_managed_region_drift` returns `[]`. Count-monkeypatch
+       on `install.validate_contributions` to confirm it is NOT
+       called. Run `wiki upgrade --force-render`. Assert exit 0,
+       stdout `no recovery needed (closure is complete).`,
+       journal bytes unchanged, zero `.proposed` sidecars under
+       `vault_root`, `validate_contributions` call count == 0.
      - `test_wiki_upgrade_force_render_pending_proposal_alone_does_not_trigger`
        (AC16) — initialize a vault with `--adopt` over content
-       that produces one `.proposed` sidecar; run `wiki upgrade
-       --force-render`. Assert short-circuit fires (zero new
-       events; the sidecar is still on disk; stdout contains
-       `no recovery needed`).
+       that produces EXACTLY ONE `.proposed` sidecar AND ZERO
+       missing closure paths. Pre-call assertions:
+       `_unrendered_closure_paths == []`,
+       `check_managed_region_drift == []`, `wiki doctor` reports
+       exactly one `pending-proposal` and zero of every other
+       issue type (catches a vacuously-passing fixture). Run
+       `wiki upgrade --force-render`. Assert short-circuit
+       (zero new events, exit 0, sidecar bytes unchanged,
+       stdout `no recovery needed (closure is complete).`).
      - `test_wiki_upgrade_force_render_idempotent_across_invocations`
-       (AC4) — run `--force-render` against a partial-install
-       fixture (constructed in step 7's test below); after it
-       heals, run `--force-render` again. Assert zero new events,
-       exit 0, stdout `no recovery needed`.
-   - **Verify (red):** the scope guard does not yet exist.
+       (AC4) — drive the partial-install fixture from step 6's
+       builder, run `--force-render` (the heal); snapshot
+       `events_first = read_events(journal_path)`; run
+       `--force-render` again. Assert
+       `read_events(journal_path) == events_first` (value-equal
+       list), exit 0, stdout `no recovery needed (closure is
+       complete).`, every `.proposed` sidecar from the first
+       invocation byte-identical, `_unrendered_closure_paths
+       == []` post-second-run.
+     - `test_wiki_upgrade_force_render_empty_installed_primitives_hint`
+       (AC18) — hand-seed a journal containing only
+       `VaultInitEvent` (no `PrimitiveInstallEvent`s). Run
+       `wiki upgrade --force-render`. Assert exit 0, stdout
+       contains `no recovery needed (closure is complete).`,
+       stderr contains `note: this vault has no installed
+       primitives; if init was interrupted, run 'wiki init
+       --adopt' to resume.`, zero new journal events.
    - **Implementation:** in `_cmd_upgrade`, after `state` load and
      catalog resolve, when `args.force_render`:
      ```python
-     missing = doctor.check_missing(state, vault_root)
-     region_drift = doctor.check_managed_region_drift(state, vault_root)
-     if not missing and not region_drift:
-         print("wiki upgrade --force-render: no recovery needed (vault is clean).")
+     unrendered = _unrendered_closure_paths(
+         state, vault_root, catalog, sources)
+     region_drift = doctor.check_managed_region_drift(
+         events, vault_root, state)
+     if not unrendered and not region_drift:
+         print("wiki upgrade --force-render: no recovery needed "
+               "(closure is complete).")
+         if not state.installed_primitives:
+             print(
+                 "note: this vault has no installed primitives; "
+                 "if init was interrupted, run 'wiki init --adopt' "
+                 "to resume.",
+                 file=sys.stderr,
+             )
          return 0
      ```
-     This sits BEFORE `validate_contributions` so a clean vault
-     short-circuits without paying the pre-flight cost.
-   - **Verify (green):** all three tests pass.
+     This sits BEFORE `validate_contributions` so a clean-closure
+     invocation does not pay the pre-flight cost (AC1).
+   - **Verify (green):** all four tests pass.
 1. **Partial-install recovery heals the missing-files gap (AC2,
    AC11, AC15).**
-   - **Tests** (same integration file):
+   - **Tests** (the integration file):
      - `test_wiki_upgrade_force_render_recovers_missing_files`
-       (AC2) — fixture builder:
-       ```python
-       def make_partial_install_vault(tmp_path, recipe="core"):
-           # Init with --adopt over a small pre-existing set
-           # (one byte-identical, one byte-differing).
-           # Then truncate the journal at byte-offset chosen to
-           # cut mid-PrimitiveInstallEvent so half the closure's
-           # files are missing on disk.
-           ...
-       ```
+       (AC2) — use the step 6 fixture builder with
+       `with_adopt=True`, `primitives=["core", "people"]`,
+       `cut_after_primitive="core"`, and
+       `adopted_paths={byte_identical_rel: <kit-render bytes>,
+       byte_differing_rel: <user bytes>}` where both rel paths
+       lie under `core`'s `files/` tree (the primitive that
+       survives in `state.installed_primitives`
+       post-truncation). Pre-call: capture
+       `target.stat().st_ino` for the byte-identical path,
+       snapshot pre-call bytes for both paths,
+       `pre_unrendered = _unrendered_closure_paths(...)`
+       (asserted non-empty by step 6's fixture-self-test).
        Run `wiki upgrade --force-render`. Assert:
-       (a) every missing kit-owned file is now on disk;
-       (b) journal contains one `PrimitiveForceRenderEvent` per
-           primitive in the closure;
-       (c) the byte-identical adopted file's bytes + inode are
-           unchanged (adopt-match no-rewrite branch);
-       (d) the byte-differing adopted file has a `.proposed`
-           sidecar (adopt-differ proposal branch); the original
-           file is unchanged;
-       (e) `wiki doctor` post-run reports zero `missing` /
-           `managed-region-drift`; only `pending-proposal` for
-           the differing file (AC15).
+       (a) every path in `pre_unrendered` is on disk post-call;
+       (b) journal contains EXACTLY ONE
+           `PrimitiveForceRenderEvent(primitive=p.name)` per
+           primitive in `state.installed_primitives`
+           post-truncation (i.e., one for `core`; none for
+           `people` because `people`'s install event was dropped
+           by the cut);
+       (c) byte-identical adopted path: bytes unchanged AND
+           `target.stat().st_ino` unchanged (adopt-match
+           no-rewrite branch fired — wiki-init-adopt AC14's
+           inode-preservation pin replicated here);
+       (d) byte-differing adopted path: original bytes AND inode
+           unchanged; `<path>.proposed` exists with the kit's
+           would-render content; `PageProposalEvent(path)` is
+           the latest event for the path;
+       (e) post-run, `_unrendered_closure_paths(post_state, ...)
+           == []` AND `check_managed_region_drift == []`. `wiki
+           doctor` may report `pending-proposal` (for AC2(d))
+           and `orphan` (for user-territory files in kit-owned
+           dirs); those issue kinds are inherited from user
+           content, not introduced by force-render.
      - `test_wiki_upgrade_force_render_by_attribution` (AC11) —
        same fixture, assert each event's `by` matches spec
        §Invariants bullet 6.
-   - **Verify (red):** scope guard short-circuits everywhere
-     (because the runner isn't wired to honour
-     `force_render=True` yet — wait, it IS wired by step 4, but
-     the `_cmd_upgrade` thread-through in step 5 didn't yet pass
-     the flag past the scope guard. Wire that in this step too).
-   - **Implementation:** thread `force_render=args.force_render`
-     into both `plan_upgrade(...)` and `upgrade_primitives(...)`
-     in `_cmd_upgrade` (the call sites already exist; the new
-     keyword needs to be passed). Also: ensure the totals row
-     is the `--force-render` variant when the flag is set
+   - **Implementation:** in `_cmd_upgrade`, after the scope-guard
+     short-circuit doesn't fire, call `validate_contributions`
+     over `plan.all_installed`, then
+     `plan_upgrade(state, catalog, only=args.primitive,
+     force_render=args.force_render)`, then
+     `upgrade_primitives(plan=..., ..., force_render=
+     args.force_render, ...)`. Ensure the totals row is the
+     `--force-render` variant when the flag is set
      (`wiki upgrade --force-render: re-rendered N primitive(s).`
      vs. the standard `wiki upgrade: upgraded N primitive(s).`).
    - **Verify (green):** AC2 + AC11 + AC15 pass.
 1. **`--force-render --primitive <name>` restricts scope (AC5).**
    - **Tests** (same integration file):
      - `test_wiki_upgrade_force_render_primitive_restricts_event_count`
-       — construct a fixture with two primitives both partially
-       rendered. Run `wiki upgrade --force-render --primitive
-       people`. Assert: (a) one
-       `PrimitiveForceRenderEvent(primitive="people")` and zero
-       for any other primitive; (b) the aggregator pass still
+       — use the step 6 fixture builder with
+       `primitives=["core", "people"]` and
+       `cut_after_primitive` chosen so BOTH primitives have
+       missing closure paths (truncate further back than AC2 to
+       drop both `PrimitiveInstallEvent`s — actually, the
+       fixture's contract is `cut_after_primitive=X` means "X
+       is in installed_primitives, X's renders partial"; to
+       cover BOTH, the builder needs a second invocation or a
+       different shape — pin in the fixture self-tests: an
+       extra fixture method `make_two_primitive_partial_install`
+       that ensures both primitives are in
+       `state.installed_primitives` AND both have missing
+       closure paths). Run `wiki upgrade --force-render
+       --primitive people`. Assert: (a) EXACTLY ONE
+       `PrimitiveForceRenderEvent(primitive="people")` row in
+       the new-events slice and ZERO `PrimitiveForceRenderEvent`
+       rows for any other primitive; (b) ZERO
+       `PageWriteEvent.by == "core"` (or any non-`people`
+       primitive name) rows in the new-events slice — pins the
+       planner-narrowing contract directly rather than via
+       "files still missing" inference; (c) the aggregator pass
        walked `plan.all_installed` (assert via a region whose
-       composed body includes the other primitive's contribution
-       even though the other primitive was not force-rendered);
-       (c) the other primitive's missing files remain missing.
-   - **Verify (red):** the scope guard short-circuits unless
-     `check_missing` returns non-empty — which it will for the
-     two-primitive partial fixture; the test fails because
-     `_cmd_upgrade` doesn't yet handle the `--primitive` narrow
-     scope under `force_render`. Step 4 wired the planner; step
-     5 wired the CLI; this step validates the integration.
+       composed body includes `core`'s snippet contribution
+       even though `core` was not re-rendered).
    - **Implementation:** confirm no implementation change beyond
-     step 5's threading; the test exists to pin the spec's
-     "scope-narrowing under force-render" behavior.
+     step 5's threading. Add a second helper to step 6's
+     fixture module: `make_two_primitive_partial_install_vault(
+     tmp_path, *, primitives, ...)` that produces a vault where
+     BOTH named primitives are in `state.installed_primitives`
+     but both have missing closure paths. The helper achieves
+     this by truncating AFTER both install events but BEFORE
+     both primitives' render-phase `PageWriteEvent`s.
    - **Verify (green):** test passes.
 1. **`--force-render --primitive <name>` refuses on pending
    catalog version bump (AC6).**
@@ -357,11 +552,15 @@ output, and the `upgrade_primitives` event-swap behavior.
    install (AC7).**
    - **Tests:**
      - `test_wiki_upgrade_force_render_recovers_non_adopt_init`
-       — construct a fixture by running `wiki init` (no
-       `--adopt`) and truncating the journal mid-render. Run
-       `wiki upgrade --force-render`. Assert (a) missing files
-       are written; (b) zero `PageProposalEvent`s (no adopt
-       baselines); (c) `wiki doctor` reports clean.
+       — use the step 6 fixture builder with `with_adopt=False`,
+       `adopted_paths={}`, `primitives=["core"]`,
+       `cut_after_primitive="core"`. Run `wiki upgrade
+       --force-render`. Assert: (a) every path in pre-call
+       `_unrendered_closure_paths` is on disk post-call;
+       (b) ZERO `PageProposalEvent` rows in the new-events
+       slice (no adopt baselines to disagree with); (c) post-run
+       `_unrendered_closure_paths == []` AND
+       `check_managed_region_drift == []`.
    - **Implementation:** no code change beyond the existing
      wiring — the adopt-aware predicate degrades gracefully when
      no `PageAdoptedEvent`s are present.
@@ -383,16 +582,23 @@ output, and the `upgrade_primitives` event-swap behavior.
    - **Implementation:** no code change beyond what step 4 +
      step 7 wire.
    - **Verify (green):** tests pass.
-1. **Cache discipline (AC13).**
-   - **Tests:**
-     - `test_wiki_upgrade_force_render_runs_inside_journal_cache`
-       — counting monkeypatch on `journal.read_events` observes
-       the same one-cache-load shape `wiki upgrade` enforces.
-   - **Implementation:** the CLI already wraps `_cmd_upgrade`'s
-     runner call in `journal.use_journal_cache`; the
-     `--force-render` path inherits the scope. Confirm via the
-     test.
-   - **Verify (green):** test passes.
+1. **Cache discipline inherited (AC13).**
+   - **Tests:** none new at the runtime level — the existing
+     `wiki upgrade` AC14 test in
+     `tests/integration/test_wiki_upgrade.py` already exercises
+     the one-cache-load shape via a counting monkeypatch on
+     `journal.read_events`. The `--force-render` path reuses
+     `upgrade_primitives` unchanged, so it inherits the cache
+     scope.
+   - **Structural pin** (one assertion in the integration
+     suite): `test_wiki_upgrade_force_render_uses_journal_cache_scope`
+     — `inspect.getsource(_cmd_upgrade)` contains
+     `use_journal_cache` and the `--force-render` branch's
+     runner call sits inside that `with` block (grep-by-AST
+     check, NOT a runtime count). Cheap, structural, robust to
+     future runner refactors.
+   - **Implementation:** none beyond step 5's wiring.
+   - **Verify (green):** structural pin passes.
 1. **Vault-boundary refusal (AC14).**
    - **Tests:**
      - `test_wiki_upgrade_force_render_outside_vault_exits_2` —
@@ -402,39 +608,78 @@ output, and the `upgrade_primitives` event-swap behavior.
    - **Implementation:** the existing vault-boundary check
      fires before any `--force-render` logic.
    - **Verify (green):** test passes.
-1. **Pre-flight `validate_contributions` (AC17).**
+1. **Pre-flight `validate_contributions` on the non-clean-closure
+   path (AC17).**
    - **Tests:**
-     - `test_wiki_upgrade_force_render_validates_contributions_over_all_installed`
-       — construct a fixture where an unchanged-version
-       primitive's `contributes_to` snippet is missing on disk
-       (the kit got into a broken state via a partial pip
-       upgrade). Run `wiki upgrade --force-render`. Assert exit
-       2 with `PrimitiveError`, zero `PrimitiveForceRenderEvent`s
-       in the journal.
+     - `test_wiki_upgrade_force_render_validates_contributions_when_closure_partial`
+       — combine the step 6 fixture builder (a partial install,
+       so `_unrendered_closure_paths` is non-empty AND the scope
+       guard passes through) with a kit-side breakage: an
+       unchanged-version primitive's `contributes_to` snippet
+       file is removed from the kit's templates directory before
+       the call. Run `wiki upgrade --force-render`. Assert exit
+       2 with `PrimitiveError`, ZERO `PrimitiveForceRenderEvent`
+       rows in the new-events slice.
+     - `test_wiki_upgrade_force_render_does_not_validate_when_closure_clean`
+       — clean-closure fixture (an empty closure, e.g.,
+       `wiki init --recipe core`) PLUS the same kit-side
+       breakage. Pre-call: monkeypatch
+       `install.validate_contributions` with a counter. Run
+       `wiki upgrade --force-render`. Assert exit 0, stdout
+       `no recovery needed (closure is complete).`,
+       `validate_contributions` call count == 0 (the scope
+       guard short-circuited before pre-flight could discover
+       the broken kit). The user is recommended to run
+       `wiki doctor` for the kit-side problem — that's the
+       diagnostic surface, not `--force-render`'s.
    - **Implementation:** the existing `validate_contributions`
      call in `_cmd_upgrade` already runs over
-     `plan.all_installed`; the `--force-render` path inherits
-     it (after the scope guard fires; the guard's
-     `check_missing` will report the missing snippet as a
-     `missing` issue or the primitive's downstream files won't
-     be reachable, so the scope guard passes through to the
-     pre-flight).
+     `plan.all_installed`; the `--force-render` path enters that
+     pre-flight ONLY when the scope guard does NOT short-circuit
+     (step 6's CLI structure pins this ordering).
+   - **Verify (green):** both tests pass.
+1. **Per-file audit attribution via journal-index bracket (AC19).**
+   - **Tests:**
+     - `test_wiki_upgrade_force_render_per_file_events_attributable_to_run_via_bracket`
+       — use the step 6 fixture builder; capture
+       `events_pre = read_events(journal_path)`. Run
+       `wiki upgrade --force-render`. Capture
+       `events_post = read_events(journal_path)`. For each
+       `PageWriteEvent` / `PageProposalEvent` / `ManagedRegion
+       WriteEvent` in `events_post[len(events_pre):]`,
+       implement the documented bracket query — find the most
+       recent `PrimitiveForceRenderEvent` whose `primitive`
+       matches the per-file event's owning primitive (the page
+       event's `by` field for `PageWriteEvent`; the host file's
+       owning primitive for region events) — and assert that
+       row exists in `events_post[len(events_pre):]` (i.e.,
+       every per-file event in the new-events slice is
+       attributable to a `PrimitiveForceRenderEvent` in the
+       same slice). Pins the §Outputs.Journal events
+       "per-file attribution" query shape.
+   - **Implementation:** none beyond existing wiring — the test
+     is a consumer of the spec's documented query shape.
    - **Verify (green):** test passes.
 1. **Drift on force-rendered file (AC3).**
    - **Tests:**
      - `test_wiki_upgrade_force_render_drift_produces_proposal_not_silent_overwrite`
-       — construct a vault with a `PageAdoptedEvent(hash=h_user)`
-       baseline whose kit-would-render content hashes to
-       `h_kit != h_user`. Pre-place the file on disk with bytes
-       hashing to `h_user`. Truncate the journal to make the
-       file's `PrimitiveInstallEvent` durable but the
-       corresponding `PageWriteEvent` absent (simulating a
-       partial install AFTER the install event landed).
-       Run `wiki upgrade --force-render`. Assert: (a) original
-       file is byte-identical to pre-call; (b)
+       — use the step 6 fixture builder with
+       `with_adopt=True`, `primitives=["core"]`,
+       `cut_after_primitive="core"`,
+       `adopted_paths={drift_path: <user bytes hashing to
+       h_user>}` where `drift_path` lies under `core`'s
+       `files/` tree AND the kit's would-render bytes for
+       `drift_path` hash to `h_kit != h_user`. Capture
+       pre-call `target.stat().st_ino` and bytes. Run
+       `wiki upgrade --force-render`. Assert: (a) original
+       file bytes AND inode unchanged across the call; (b)
        `<path>.proposed` exists with `h_kit` content; (c)
-       `PageProposalEvent(path)` is journaled; (d) stdout
-       contains the `Wrote ... drift detected on ...` line.
+       `PageProposalEvent(path)` is journaled with `path ==
+       drift_path`; (d) stdout contains the `Wrote ... drift
+       detected on ...` line; (e) the new-events slice
+       contains at least one `PrimitiveForceRenderEvent` row
+       (proves the runner was entered; the test does not pass
+       via short-circuit — pinned per spec AC3(e)).
    - **Implementation:** no code change — the adopt-aware
      `safe_write` predicate (already shipped) handles this case.
    - **Verify (green):** test passes.
@@ -442,16 +687,27 @@ output, and the `upgrade_primitives` event-swap behavior.
    - `docs/ROADMAP.md`: keep §"Post-PR-C follow-ups" pointer
      intact for this PR (per user instruction); the entry gets
      updated when the spec is accepted (separate PR).
-   - `docs/specs/wiki-init-adopt/spec.md`: amend §Edge cases
-     "Crash inside the install pipeline" to point at
-     `docs/specs/wiki-upgrade-force-render/spec.md` as the
-     recovery surface (replace the "deferred to a follow-on
-     spec" wording with a forward pointer). One-line edit; not a
-     contract change.
-   - `docs/specs/wiki-init-adopt/plan.md`: PR-C step 13
-     "DEFERRED RATIONALE" — update the follow-on tracking
-     pointer to name the now-existing spec (link
-     `docs/specs/wiki-upgrade-force-render/`).
+   - `docs/specs/wiki-init-adopt/spec.md` §Edge cases "Crash
+     inside the install pipeline":
+     (a) amend the deferral pointer to name the now-existing
+     spec at `docs/specs/wiki-upgrade-force-render/`;
+     (b) **corrigendum** — the current wording overclaims that
+     "`wiki doctor` surfaces `missing` for any kit-owned path
+     the renderer didn't reach." That's only true for paths
+     with prior `PageWriteEvent`s; paths the renderer never
+     reached are NOT in `state.page_writes` and `check_missing`
+     does not surface them. Fix: replace the overclaiming
+     sentence with "`wiki doctor`'s `check_missing` walks
+     `state.page_writes` only and will not surface paths the
+     renderer never reached; the recovery surface for
+     un-rendered closure paths is `wiki upgrade --force-render`
+     (see `docs/specs/wiki-upgrade-force-render/`)." This is a
+     scope-adjacent correction landing in the same PR per
+     AGENTS.md "Fix small scope-adjacent gaps in-session"
+     guidance.
+   - `docs/specs/wiki-init-adopt/plan.md` PR-C step 13
+     "DEFERRED RATIONALE": update the follow-on tracking pointer
+     to name the now-existing spec.
    - `CHANGELOG.md` `[Unreleased]` section: add a `### Added`
      entry `wiki upgrade --force-render — re-render the installed
      primitive closure to recover from a partial install. See
@@ -460,7 +716,9 @@ output, and the `upgrade_primitives` event-swap behavior.
    - **Verify:** `git grep -n "wiki upgrade --force-render"
      docs llm_wiki_kit` returns the spec, the wiki-init-adopt
      pointers, and (post-implementation) the CLI help text and
-     CHANGELOG entry.
+     CHANGELOG entry. `git grep -n "for any kit-owned path the
+     renderer didn't reach" docs` returns zero matches (the
+     overclaim is gone).
 1. **Patterns capture.**
    - Append one entry to `docs/knowledge/patterns.jsonl` (when
      the implementation PR lands; not in this spec-only PR)
