@@ -40,9 +40,9 @@ The RFC explicitly deferred one item out of v2.0; it has now shipped.
   `--agent <name>` to `claude` at exec time per
   [ADR-0010](adr/0010-agent-passthrough-via-claude-agent-flag.md).
   Contract in [`docs/specs/wiki-agents/`](specs/wiki-agents/),
-  shipping across eight sequential PRs. **PR-1 (model surface —
-  `PrimitiveKind.AGENT` + `OperationRunByAgentEvent` + extended `Event`
-  union) is in review.**
+  shipping across eight sequential PRs. **PR-1 (model surface) and
+  PR-2 (catalog discovery + `is_installed_agent` helper) merged;
+  PR-3 (recipe `agents:` block validation) is next.**
 
 ## Post-PR-C follow-ups
 
