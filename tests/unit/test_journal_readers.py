@@ -616,6 +616,19 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
         "path=x.md proposed=x.md.proposed",
     ),
     (
+        # RFC-0004 wiki-agents PR-6: when ``proposed_by_agent`` is
+        # populated, the summary row gains ``agent=<name>`` (omit-when-None
+        # mirrors the schedule.installed.agent row from PR-4).
+        PageProposalEvent,
+        {
+            "path": "x.md",
+            "proposed_path": "x.md.proposed",
+            "hash": "abc",
+            "proposed_by_agent": "household-manager",
+        },
+        "path=x.md proposed=x.md.proposed agent=household-manager",
+    ),
+    (
         PageConflictResolvedEvent,
         {"path": "x.md", "hash": "abc"},  # region is None → omitted
         "path=x.md",

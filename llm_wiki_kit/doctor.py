@@ -42,7 +42,10 @@ from llm_wiki_kit.models import (
     Event,
     ManagedRegionWriteEvent,
     OperationExecFailedEvent,
+    OperationRunByAgentEvent,
     PageWriteEvent,
+    PrimitiveKind,
+    PrimitiveUpgradeEvent,
     ScheduleInstalledEvent,
     ScheduleUninstalledEvent,
     VaultState,
@@ -68,6 +71,14 @@ JOURNAL_CORRUPT = "journal-corrupt"
 # so the CLI can partition them out of the exit-code calculation; the
 # kind itself is retained for sort stability and for tests that want to
 # pin a specific drift mode.
+# Agents-section warning kinds (RFC-0004 wiki-agents PR-6). Same warning
+# convention as the Schedules section — ``wiki doctor`` exits 0 when only
+# agent warnings remain (``docs/specs/wiki-agents/spec.md`` §Outputs
+# ``wiki doctor``). Distinct ``agent-*`` prefixes let the CLI partition
+# warnings into the right output section (Agents vs. Schedules).
+AGENT_BINDING_MISSING = "agent-binding-missing"
+AGENT_VERSION_DRIFT = "agent-version-drift"
+
 SCHEDULE_MISSING_FILE = "schedule-missing-file"
 SCHEDULE_DISABLED = "schedule-disabled"
 # The kind name predates the spec rephrasing — the rendered warning
@@ -685,6 +696,137 @@ def _check_schedules(events: list[Event]) -> list[Issue]:
     return issues
 
 
+def _check_agents(
+    state: VaultState, events: list[Event], vault_root: Path, kit_root: Path
+) -> list[Issue]:
+    """RFC-0004 wiki-agents spec §Outputs ``wiki doctor`` — Agents section.
+
+    Two warning families (both ``is_warning=True``; ``wiki doctor`` exits
+    ``0`` when only agent warnings remain — same convention as the
+    Schedules section):
+
+    1. **Bindings.** For each live schedule with ``agent`` set and
+       ``machine_id == socket.gethostname()``, verify
+       ``<vault>/.claude/agents/<agent>/AGENT.md`` exists. The check
+       reads zero bytes of the file — only ``path.is_file()`` per spec
+       §Constraints ("No kit-side reading or parsing of AGENT.md
+       bodies").
+    2. **Version drift.** For each installed ``kind: agent`` primitive
+       that is bound to a still-active schedule **or** has ever
+       produced an ``OperationRunByAgentEvent``, compare the most
+       recent ``PrimitiveUpgradeEvent`` for the agent against the most
+       recent ``OperationRunByAgentEvent`` referencing it. If the
+       upgrade is newer (or no run-by-agent event has happened since),
+       warn — the next firing will see a different voice.
+
+    This function walks ``events`` **once** to collect its two
+    per-agent indices (latest upgrade timestamp; latest run-by-agent
+    timestamp) and the live-schedule view once via :func:`_live_schedules`.
+    The catalog is walked once via :func:`discover_primitives` to
+    recover each installed primitive's kind. Doctor performance is
+    a recurring concern — see PR-6's drift-watch note in
+    ``docs/specs/wiki-agents/plan.md`` §Risks; the function is
+    O(events + catalog), not O(events * agents).
+
+    The "single walk" promise is scoped to this function's internal
+    indices. The broader ``run_doctor`` pass walks ``events`` once
+    per check function (``_check_schedules``, ``_check_agents``, and
+    each of the page-/managed-region-level checks); a future "walk
+    once across all checks" refactor would consolidate them.
+    """
+
+    issues: list[Issue] = []
+    current_host = gethostname()
+    live = _live_schedules(events)
+
+    # 1. Bindings — AGENT.md presence on the current host.
+    for schedule_event in live:
+        if schedule_event.agent is None:
+            continue
+        if schedule_event.machine_id != current_host:
+            continue
+        agent_md = vault_root / ".claude" / "agents" / schedule_event.agent / "AGENT.md"
+        if agent_md.is_file():
+            continue
+        issues.append(
+            Issue(
+                kind=AGENT_BINDING_MISSING,
+                path=schedule_event.operation,
+                detail=(
+                    f"schedule for {schedule_event.operation} bound to agent "
+                    f"'{schedule_event.agent}' but AGENT.md missing at "
+                    f"{agent_md}; run 'wiki add agent:{schedule_event.agent}' "
+                    f"or re-run 'wiki init'"
+                ),
+                is_warning=True,
+            )
+        )
+
+    # 2. Version drift — single journal walk to gather both indices.
+    latest_upgrade: dict[str, PrimitiveUpgradeEvent] = {}
+    latest_run_by_agent: dict[str, datetime] = {}
+    for event in events:
+        if isinstance(event, PrimitiveUpgradeEvent):
+            latest_upgrade[event.primitive] = event
+        elif isinstance(event, OperationRunByAgentEvent):
+            ts = event.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            previous = latest_run_by_agent.get(event.agent)
+            if previous is None or ts > previous:
+                latest_run_by_agent[event.agent] = ts
+
+    # Agents bound to a still-active schedule or any run-by-agent event.
+    # Spec §Outputs: "Suppressed when the agent has never been bound to
+    # a still-active schedule or run."
+    bound_agents: set[str] = {ev.agent for ev in live if ev.agent is not None}
+    bound_agents.update(latest_run_by_agent.keys())
+
+    # Recover kind per installed primitive via a single catalog walk.
+    catalog = discover_primitives(kit_root / "templates")
+    kind_by_name: dict[str, PrimitiveKind] = {p.name: p.kind for p in catalog}
+
+    for agent_name in sorted(state.installed_primitives):
+        if kind_by_name.get(agent_name) is not PrimitiveKind.AGENT:
+            continue
+        if agent_name not in bound_agents:
+            continue
+        upgrade = latest_upgrade.get(agent_name)
+        if upgrade is None:
+            continue
+        upgrade_ts = upgrade.timestamp
+        if upgrade_ts.tzinfo is None:
+            upgrade_ts = upgrade_ts.replace(tzinfo=UTC)
+        last_run = latest_run_by_agent.get(agent_name)
+        # Strict ``>`` so equal-timestamp ties resolve in favor of the
+        # warning. The next-firing nudge is non-blocking; a false
+        # positive on a tie is cheaper than a false negative.
+        if last_run is not None and last_run > upgrade_ts:
+            continue
+        bound_ops = sorted({ev.operation for ev in live if ev.agent == agent_name})
+        operations_clause = (
+            f"bound operations: {', '.join(bound_ops)}"
+            if bound_ops
+            else "no active scheduled operations"
+        )
+        agent_md = vault_root / ".claude" / "agents" / agent_name / "AGENT.md"
+        issues.append(
+            Issue(
+                kind=AGENT_VERSION_DRIFT,
+                path=agent_name,
+                detail=(
+                    f"agent '{agent_name}' was upgraded {upgrade.from_version} → "
+                    f"{upgrade.to_version} since the last scheduled run; review "
+                    f"'{agent_md}' before the next firing changes voice "
+                    f"({operations_clause})"
+                ),
+                is_warning=True,
+            )
+        )
+
+    return issues
+
+
 def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     """Replay the journal and return issues: failures first, then schedule warnings.
 
@@ -727,4 +869,5 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     # is more readable than re-sorting them alphabetically by kind.
     issues.sort(key=lambda issue: (issue.kind, issue.path, issue.detail))
     issues.extend(_check_schedules(events))
+    issues.extend(_check_agents(state, events, vault_root, kit_root))
     return issues

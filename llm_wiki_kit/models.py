@@ -395,11 +395,27 @@ class PageAdoptedEvent(_EventBase):
 
 
 class PageProposalEvent(_EventBase):
+    """Recorded when ``safe_write`` lands a ``.proposed`` sidecar.
+
+    ``proposed_by_agent`` is additive per ADR-0002 / RFC-0004 wiki-agents
+    PR-6: when a scheduled / agent-bound dispatch produces the proposal,
+    the resolved agent name is journaled here so the vault-side
+    ``wiki-conflict`` SKILL can name the agent in the user-facing prose
+    (see ``docs/specs/wiki-agents/spec.md`` §"Conflict-aware UX (vault-side
+    SKILL)"). ``None`` is both the pre-RFC-4 baseline (no field on the
+    JSON line) and the explicit "no agent declared" outcome — replay
+    treats them identically. Pattern-validated against ``NAME_PATTERN``
+    for symmetry with other agent-name fields; the kit does not
+    cross-check against the installed-primitive set here (consumers
+    that care about kind/install do so at their own boundary).
+    """
+
     type: Literal["page.proposal"] = "page.proposal"
     path: str
     proposed_path: str
     hash: str
     hash_algo: str = "sha256"
+    proposed_by_agent: str | None = Field(default=None, pattern=NAME_PATTERN)
 
 
 class PageConflictResolvedEvent(_EventBase):

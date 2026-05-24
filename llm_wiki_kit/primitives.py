@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -101,6 +102,7 @@ RESERVED_OUTCOME_VERBS: frozenset[str] = frozenset(
         "search",
         "journal",
         "schedule",
+        "agents",
         # Discovery aliases — never registered as subparsers but
         # reserved so a primitive cannot claim them.
         "help",
@@ -465,6 +467,203 @@ def is_installed_agent(name: str, state: VaultState, kit_root: Path) -> bool:
         if primitive.name == name:
             return primitive.kind is PrimitiveKind.AGENT
     return False
+
+
+@dataclass(frozen=True)
+class AgentRow:
+    """One row in the ``wiki agents`` table.
+
+    Frozen — every consumer treats the row as a value. Per
+    ``docs/specs/wiki-agents/spec.md`` §"Contracts with other modules":
+    a small dataclass, not a registry/factory. The fields land verbatim
+    in the TSV output rendered by ``cli._cmd_agents``.
+
+    ``recipes`` and ``operations`` are sorted alphabetically (the
+    rendering shape pinned by spec §Outputs ``wiki agents``); the
+    empty-list shape renders as ``—`` at the CLI boundary.
+    """
+
+    name: str
+    recipes: list[str] = field(default_factory=list)
+    operations: list[str] = field(default_factory=list)
+
+
+def list_agents(vault_root: Path, kit_root: Path) -> list[AgentRow]:
+    """Enumerate installed agent primitives with their recipe + operation bindings.
+
+    Driven by ``cli._cmd_agents`` (``wiki agents``). The function:
+
+    1. Reads the vault's journal to derive ``state.installed_primitives``.
+       A vault with no journal returns ``[]`` (matches the
+       ``recipes.installed_outcome_verbs`` precedent — the helper is
+       pure and the dispatcher handles "not a vault" at its boundary).
+    2. Walks the catalog at ``kit_root / "templates"`` **once** via
+       :func:`discover_primitives` and builds a ``name → Primitive``
+       map. The kind for each installed name is recovered from this
+       map — :class:`VaultState.installed_primitives` is
+       ``dict[str, str]`` (name → version) and carries no kind. The
+       single-walk shape keeps the call O(catalog-size), not
+       O(catalog-size * installed-agents).
+    3. Walks the catalog's recipes at ``kit_root / "recipes"`` once
+       via :func:`recipes.discover_recipes`, resolving each recipe's
+       closure to support the spec's two-rule RECIPES contribution
+       (§Outputs ``wiki agents``):
+
+       - Rule (a): the recipe's ``agents:`` block contains an entry
+         for this agent name.
+       - Rule (b): the agent name appears in the recipe's
+         ``primitives:`` closure (via
+         :func:`recipes.resolve_recipe_primitives`).
+
+       Rule (b) covers the installed-but-unbound case (e.g.
+       ``decision-companion`` shipped in ``personal.yaml``'s closure
+       with no ``agents:`` binding — see ``docs/specs/wiki-agents/spec.md``
+       CT-19).
+    4. Builds the OPERATIONS column as the union of:
+
+       - Every ``runs:`` operation across every recipe binding this
+         agent (rule (i)).
+       - Every operation whose ``contract.preferred_agent`` matches
+         this agent name (rule (ii)).
+
+    Recipes / operations lists are sorted alphabetically and
+    deduplicated. The empty case is the empty list (the CLI renders
+    ``—`` at its boundary; the helper returns the raw shape).
+
+    ``kit_root`` follows the same convention as
+    :func:`is_installed_agent`, :func:`recipes.installed_outcome_verbs`,
+    :func:`cli._kit_paths`, and :func:`operations._load_contract` —
+    the repo-side catalog root (the directory containing ``templates/``,
+    ``recipes/``, ``core/``).
+
+    **Cost.** O(journal-events + catalog-primitives + recipes *
+    closure-size + operations * contract-load). The per-agent inner
+    loop below is set-membership only — no catalog re-walk per agent.
+    A refactor that accidentally moves :func:`discover_primitives` or
+    :func:`recipes.resolve_recipe_primitives` inside the per-agent
+    loop is a documented regression.
+
+    **Catalog-level errors mostly propagate; closure-mismatch errors do
+    not.** Like :func:`is_installed_agent`, the helper delegates to
+    :func:`discover_primitives` and :func:`recipes.discover_recipes` —
+    both raise on a corrupt catalog (malformed ``primitive.yaml``,
+    malformed recipe YAML, outcome-verb-uniqueness violations), and
+    those errors propagate so ``wiki agents`` fails loudly the same
+    way every other surface that touches the catalog does. The one
+    asymmetry is :class:`~llm_wiki_kit.errors.RecipeError` from
+    :func:`recipes.resolve_recipe_primitives` (e.g. an
+    ``agents.X.runs`` entry pointing at an out-of-closure operation):
+    the helper swallows that per-recipe and contributes only the
+    recipe's ``agents:`` block half to the RECIPES column. Spec
+    §Outputs ``wiki agents`` doesn't pin closure-walk failure
+    behavior; this best-effort posture keeps a vault listable
+    against a partially-broken recipe (PR-3's recipe-load CTs and
+    ``wiki doctor``'s primitive checks already surface the failure
+    elsewhere).
+    """
+
+    # Lazy import to avoid the ``recipes`` ↔ ``primitives`` import cycle
+    # (``recipes`` imports :func:`resolve_dependencies` /
+    # :func:`load_operation_contract` from this module at module-import
+    # time; we can only consume ``recipes`` from inside a function).
+    from llm_wiki_kit.errors import RecipeError
+    from llm_wiki_kit.journal import read_events, replay_state
+    from llm_wiki_kit.recipes import discover_recipes, resolve_recipe_primitives
+
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        return []
+    state = replay_state(read_events(journal_path))
+
+    templates_dir = kit_root / "templates"
+    catalog = discover_primitives(templates_dir)
+    catalog_by_name: dict[str, Primitive] = {primitive.name: primitive for primitive in catalog}
+
+    # Short-circuit when the vault has no installed agents — the
+    # downstream recipe + contract walks are pure waste in that case
+    # (every installed-primitive name in the inner loop would filter
+    # out at the ``kind is AGENT`` gate). The pre-PR-7a state and any
+    # opt-out vault hits this path.
+    if not any(
+        catalog_by_name.get(name) is not None and catalog_by_name[name].kind is PrimitiveKind.AGENT
+        for name in state.installed_primitives
+    ):
+        return []
+
+    # Recipes contribute to RECIPES + OPERATIONS by both binding rule
+    # (a) (agents: block) and rule (b) (primitives: closure). Walk once,
+    # collect both relations, then per-agent fold below.
+    recipes_dir = kit_root / "recipes"
+    recipes_catalog: list[Primitive] = list(catalog)
+    core_dir = kit_root / "core"
+    if (core_dir / "primitive.yaml").is_file():
+        # ``resolve_recipe_primitives`` requires ``core`` in its catalog
+        # input. Add it if the kit root exposes one; the fixture-kit
+        # tests construct a minimal ``core/`` so this branch fires.
+        recipes_catalog.append(load_primitive(core_dir))
+    all_recipes = discover_recipes(recipes_dir)
+
+    # Per-recipe view: (a) the agent names declared in ``agents:``;
+    # (b) the set of agent-kind primitive names in the closure; the
+    # union of ``runs:`` lists keyed by agent name.
+    block_by_recipe: dict[str, set[str]] = {}
+    closure_agents_by_recipe: dict[str, set[str]] = {}
+    runs_by_recipe_agent: dict[tuple[str, str], list[str]] = {}
+    for recipe in all_recipes:
+        block_by_recipe[recipe.name] = set(recipe.agents.keys())
+        for agent_name, binding in recipe.agents.items():
+            runs_by_recipe_agent[(recipe.name, agent_name)] = list(binding.runs)
+        try:
+            closure = resolve_recipe_primitives(recipe, recipes_catalog)
+        except RecipeError:
+            # Narrow catch: only closure-mismatch errors surface here.
+            # YAML / schema errors die earlier in ``discover_recipes`` /
+            # ``load_recipe``. The ``agents:`` block view filed above
+            # is still the recipe-author-visible contribution.
+            # Closure-walk errors surface separately at ``wiki doctor``
+            # / recipe-load time (PR-3's CTs); silently dropping the
+            # closure half here keeps a partial-catalog vault listable.
+            closure_agents_by_recipe[recipe.name] = set()
+            continue
+        closure_agents_by_recipe[recipe.name] = {
+            p.name for p in closure if p.kind is PrimitiveKind.AGENT
+        }
+
+    # Operation contracts: which ones declare ``preferred_agent``?
+    contract_preferred_by_agent: dict[str, set[str]] = {}
+    for primitive in catalog:
+        if primitive.kind is not PrimitiveKind.OPERATION:
+            continue
+        contract = load_operation_contract(templates_dir / "operations" / primitive.name)
+        if contract is None or contract.preferred_agent is None:
+            continue
+        contract_preferred_by_agent.setdefault(contract.preferred_agent, set()).add(primitive.name)
+
+    rows: list[AgentRow] = []
+    for installed_name in sorted(state.installed_primitives):
+        catalog_entry = catalog_by_name.get(installed_name)
+        if catalog_entry is None or catalog_entry.kind is not PrimitiveKind.AGENT:
+            continue
+
+        recipe_names: set[str] = set()
+        operation_names: set[str] = set()
+        for recipe in all_recipes:
+            via_block = installed_name in block_by_recipe.get(recipe.name, set())
+            via_closure = installed_name in closure_agents_by_recipe.get(recipe.name, set())
+            if via_block or via_closure:
+                recipe_names.add(recipe.name)
+            if via_block:
+                operation_names.update(runs_by_recipe_agent.get((recipe.name, installed_name), []))
+        operation_names.update(contract_preferred_by_agent.get(installed_name, set()))
+
+        rows.append(
+            AgentRow(
+                name=installed_name,
+                recipes=sorted(recipe_names),
+                operations=sorted(operation_names),
+            )
+        )
+    return rows
 
 
 def resolve_dependencies(primitives: list[Primitive]) -> list[Primitive]:

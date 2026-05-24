@@ -162,6 +162,8 @@ _LEAF_SUBCOMMANDS: list[list[str]] = [
     ["journal", "tail"],
     ["journal", "grep"],
     ["journal", "explain"],
+    ["outcomes"],
+    ["agents"],
 ]
 
 
