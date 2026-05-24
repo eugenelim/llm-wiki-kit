@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from llm_wiki_kit.models import (
     PageProposalEvent,
     PageWriteEvent,
     Primitive,
+    PrimitiveForceRenderEvent,
     PrimitiveKind,
     PrimitiveUpgradeEvent,
     VaultState,
@@ -189,6 +191,80 @@ def test_upgrade_primitives_rejects_sources_missing_all_installed(
             state_versions=dict(state.installed_primitives),
             now=datetime.now(UTC),
         )
+
+
+# ---------------------------------------------------------------------------
+# plan_upgrade(force_render=True) — wiki-upgrade-force-render spec
+# ---------------------------------------------------------------------------
+
+
+def test_plan_upgrade_force_render_lifts_short_circuit() -> None:
+    """``force_render=True`` lifts the matching-version short-circuit.
+
+    Spec §Behavior step 7: ``to_upgrade = plan.all_installed`` even
+    when every installed version matches the catalog.
+    """
+
+    state = _state({"core": "0.1.0", "people": "0.1.0"})
+    catalog = [_prim("core", "0.1.0"), _prim("people", "0.1.0")]
+    plan = plan_upgrade(state, catalog, only=None, force_render=True)
+    assert [p.name for p in plan.to_upgrade] == ["core", "people"]
+    assert plan.to_upgrade == plan.all_installed
+    assert plan.no_op_target is None
+
+
+def test_plan_upgrade_force_render_with_only_returns_single_primitive() -> None:
+    """``force_render=True --primitive`` returns a single-entry ``to_upgrade``.
+
+    The aggregator still runs over ``plan.all_installed`` (verified
+    via the runner contract, not the planner — the planner only
+    narrows ``to_upgrade``).
+    """
+
+    state = _state({"core": "0.1.0", "people": "0.1.0"})
+    catalog = [_prim("core", "0.1.0"), _prim("people", "0.1.0")]
+    plan = plan_upgrade(state, catalog, only="core", force_render=True)
+    assert [p.name for p in plan.to_upgrade] == ["core"]
+    assert [p.name for p in plan.all_installed] == ["core", "people"]
+    assert plan.no_op_target is None
+
+
+def test_plan_upgrade_force_render_with_only_uninstalled_raises() -> None:
+    """``force_render=True`` does not relax the not-installed check.
+
+    Spec §Error cases inherits ``wiki upgrade --primitive``'s refusal:
+    a name absent from ``state.installed_primitives`` raises
+    ``WikiError`` regardless of ``force_render``.
+    """
+
+    state = _state({"core": "0.1.0"})
+    catalog = [_prim("core", "0.1.0"), _prim("absent", "0.1.0")]
+    with pytest.raises(WikiError, match="primitive 'absent' is not installed"):
+        plan_upgrade(state, catalog, only="absent", force_render=True)
+
+
+def test_plan_upgrade_force_render_default_false_unchanged() -> None:
+    """``force_render=False`` (default) reproduces today's behavior.
+
+    Two regression scenarios — no-op state and a one-bump state —
+    return planner output byte-equal to omitting the kwarg entirely.
+    """
+
+    # Scenario 1: every installed version matches the catalog.
+    state_noop = _state({"core": "0.1.0", "people": "0.1.0"})
+    catalog_noop = [_prim("core", "0.1.0"), _prim("people", "0.1.0")]
+    plan_default = plan_upgrade(state_noop, catalog_noop, only=None)
+    plan_explicit = plan_upgrade(state_noop, catalog_noop, only=None, force_render=False)
+    assert plan_default == plan_explicit
+    assert plan_default.to_upgrade == []
+
+    # Scenario 2: one version bumped.
+    state_bump = _state({"core": "0.1.0", "people": "0.1.0"})
+    catalog_bump = [_prim("core", "0.2.0"), _prim("people", "0.1.0")]
+    plan_default_b = plan_upgrade(state_bump, catalog_bump, only=None)
+    plan_explicit_b = plan_upgrade(state_bump, catalog_bump, only=None, force_render=False)
+    assert plan_default_b == plan_explicit_b
+    assert [p.name for p in plan_default_b.to_upgrade] == ["core"]
 
 
 def test_plan_upgrade_all_installed_includes_only_catalog_primitives() -> None:
@@ -540,6 +616,185 @@ def test_upgrade_primitives_warns_when_uncached(
         f"second uncached call must not double-warn for the same journal path; "
         f"got {[r.getMessage() for r in warnings_second]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# upgrade_primitives(force_render=True) — wiki-upgrade-force-render spec
+# ---------------------------------------------------------------------------
+
+
+def test_upgrade_primitives_force_render_emits_force_render_event(
+    tmp_path: Path, kit_root: Path
+) -> None:
+    """Force-render runs emit ``PrimitiveForceRenderEvent``, not ``PrimitiveUpgradeEvent``.
+
+    Spec §Outputs Journal events: one event per primitive in
+    ``plan.to_upgrade`` with ``primitive`` + ``version`` (installed)
+    payload, ``by == "wiki-upgrade"``.
+    """
+
+    vault = _init_vault(tmp_path, kit_root)
+    plan = _make_plan_for_kit_force_render(kit_root, vault)
+    sources = _sources_for_plan(plan, kit_root)
+    from llm_wiki_kit.journal import replay_state
+
+    state = replay_state(read_events(_journal_path(vault)))
+    before = len(read_events(_journal_path(vault)))
+
+    upgrade_primitives(
+        plan=plan,
+        sources=sources,
+        journal_path=_journal_path(vault),
+        context={"vault_name": "v", "recipe_name": "minimal"},
+        state_versions=dict(state.installed_primitives),
+        now=datetime.now(UTC),
+        force_render=True,
+    )
+
+    new_events = read_events(_journal_path(vault))[before:]
+    force_events = [e for e in new_events if isinstance(e, PrimitiveForceRenderEvent)]
+    upgrade_events = [e for e in new_events if isinstance(e, PrimitiveUpgradeEvent)]
+    assert upgrade_events == []
+    assert [(e.primitive, e.version, e.by) for e in force_events] == [
+        ("core", state.installed_primitives["core"], "wiki-upgrade")
+    ]
+
+
+def test_upgrade_primitives_force_render_preserves_aggregator_pass(
+    tmp_path: Path, kit_root: Path
+) -> None:
+    """Force-render still runs the aggregator over ``plan.all_installed``.
+
+    Two installed primitives both contribute to a shared bucket;
+    force-render runs only over ``to_upgrade``; the composed body
+    must still contain every contributor's snippet.
+    """
+
+    vault = _init_vault(tmp_path, kit_root)
+    import os
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(vault)
+        assert cli.main(["add", "content-type:meeting"], kit_root=kit_root) == 0
+    finally:
+        os.chdir(cwd)
+    plan = _make_plan_for_kit_force_render(kit_root, vault)
+    sources = _sources_for_plan(plan, kit_root)
+    from llm_wiki_kit.journal import replay_state
+
+    state = replay_state(read_events(_journal_path(vault)))
+
+    upgrade_primitives(
+        plan=plan,
+        sources=sources,
+        journal_path=_journal_path(vault),
+        context={"vault_name": "v", "recipe_name": "minimal"},
+        state_versions=dict(state.installed_primitives),
+        now=datetime.now(UTC),
+        force_render=True,
+    )
+
+    schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
+    types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
+        0
+    ]
+    assert "- meeting" in types_block
+
+
+def test_upgrade_primitives_force_render_emits_event_before_render(
+    tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Event-before-disk: ``PrimitiveForceRenderEvent`` lands before any render.
+
+    Monkeypatch ``render_tree`` to assert that, at call time, the most
+    recent journal event is a ``PrimitiveForceRenderEvent`` for the
+    primitive currently being rendered. The original implementation
+    runs after the assertion.
+    """
+
+    vault = _init_vault(tmp_path, kit_root)
+    plan = _make_plan_for_kit_force_render(kit_root, vault)
+    sources = _sources_for_plan(plan, kit_root)
+    from llm_wiki_kit.journal import replay_state
+
+    state = replay_state(read_events(_journal_path(vault)))
+
+    import llm_wiki_kit.upgrade as _upgrade_mod
+
+    original_render_tree = _upgrade_mod.render_tree  # type: ignore[attr-defined]
+    journal_target = _journal_path(vault)
+
+    def asserting_render_tree(
+        source_root: Path,
+        dest_root: Path,
+        context: Mapping[str, str],
+        journal_path: Path,
+        *,
+        by: str,
+    ) -> None:
+        latest = read_events(journal_target)[-1]
+        assert isinstance(latest, PrimitiveForceRenderEvent), (
+            f"expected PrimitiveForceRenderEvent before render_tree({by}); got {latest!r}"
+        )
+        assert latest.primitive == by
+        original_render_tree(source_root, dest_root, context, journal_path, by=by)
+
+    monkeypatch.setattr(_upgrade_mod, "render_tree", asserting_render_tree)
+
+    upgrade_primitives(
+        plan=plan,
+        sources=sources,
+        journal_path=_journal_path(vault),
+        context={"vault_name": "v", "recipe_name": "minimal"},
+        state_versions=dict(state.installed_primitives),
+        now=datetime.now(UTC),
+        force_render=True,
+    )
+
+
+def test_upgrade_primitives_force_render_false_unchanged(tmp_path: Path, kit_root: Path) -> None:
+    """``force_render=False`` (default) still emits ``PrimitiveUpgradeEvent``.
+
+    Regression guard so the existing wiki-upgrade suite's contract
+    survives the new keyword arg.
+    """
+
+    vault = _init_vault(tmp_path, kit_root)
+    _bump_primitive_version(kit_root, "core", "0.2.0")
+    plan = _make_plan_for_kit(kit_root, vault)
+    sources = _sources_for_plan(plan, kit_root)
+    from llm_wiki_kit.journal import replay_state
+
+    state = replay_state(read_events(_journal_path(vault)))
+    before = len(read_events(_journal_path(vault)))
+
+    upgrade_primitives(
+        plan=plan,
+        sources=sources,
+        journal_path=_journal_path(vault),
+        context={"vault_name": "v", "recipe_name": "minimal"},
+        state_versions=dict(state.installed_primitives),
+        now=datetime.now(UTC),
+    )
+
+    new_events = read_events(_journal_path(vault))[before:]
+    upgrade_events = [e for e in new_events if isinstance(e, PrimitiveUpgradeEvent)]
+    force_events = [e for e in new_events if isinstance(e, PrimitiveForceRenderEvent)]
+    assert force_events == []
+    assert [e.primitive for e in upgrade_events] == ["core"]
+
+
+def _make_plan_for_kit_force_render(kit_root: Path, vault: Path) -> UpgradePlan:
+    """Plan with ``force_render=True`` against the same catalog/state pair."""
+
+    from llm_wiki_kit.journal import replay_state
+    from llm_wiki_kit.primitives import discover_primitives, load_primitive
+
+    state = replay_state(read_events(_journal_path(vault)))
+    catalog = [load_primitive(kit_root / "core")]
+    catalog.extend(discover_primitives(kit_root / "templates"))
+    return plan_upgrade(state, catalog, only=None, force_render=True)
 
 
 # Mirror unused-import guards.

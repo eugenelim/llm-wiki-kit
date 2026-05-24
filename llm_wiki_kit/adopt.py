@@ -114,13 +114,20 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _required_regions(primitives: Sequence[Primitive]) -> dict[str, set[str]]:
+def compute_required_regions(primitives: Sequence[Primitive]) -> dict[str, set[str]]:
     """Return ``{host_file: {region_id, ...}}`` for every contribution.
 
     Built from every primitive's ``contributes_to`` declarations. Used
     by :func:`compute_adoption_set` to (a) decide which pre-existing
     host files need region-level seeding and (b) pre-flight that each
     needed region exists on disk before the install pipeline runs.
+
+    Also consumed by ``cli._unrendered_closure_paths`` (the
+    ``wiki upgrade --force-render`` scope-guard predicate) to include
+    host files reachable only via ``contributes_to`` in the closure
+    presence check. The ``compute_`` prefix avoids shadowing the local
+    variable ``required_regions`` used at ``adopt.py:161`` inside
+    :func:`compute_adoption_set`.
     """
 
     required: dict[str, set[str]] = {}
@@ -128,6 +135,15 @@ def _required_regions(primitives: Sequence[Primitive]) -> dict[str, set[str]]:
         for contribution in primitive.contributes_to:
             required.setdefault(contribution.file, set()).add(contribution.region)
     return required
+
+
+# One-cycle alias for any external caller that imported the previous
+# module-private name. No in-tree caller imports the underscore name
+# today (verified by ``grep _required_regions llm_wiki_kit tests``);
+# the alias guards against in-flight branches that might. Delete the
+# alias one release cycle after this rename ships
+# (``docs/specs/wiki-upgrade-force-render/plan.md`` §Risks).
+_required_regions = compute_required_regions
 
 
 def compute_adoption_set(
@@ -158,7 +174,7 @@ def compute_adoption_set(
     """
 
     rendered = enumerate_rendered_paths(primitives, sources)
-    required_regions = _required_regions(primitives)
+    required_regions = compute_required_regions(primitives)
     # Managed-region host files belong to kit territory regardless of
     # whether any primitive's ``files/`` tree ships them — a host
     # file's region adopt is the only way to seed the region baseline.

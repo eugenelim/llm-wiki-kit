@@ -22,6 +22,9 @@ file is the shipped-work record. Decisions behind shipped work live in
 
 ### Added
 
+- `wiki upgrade --force-render` — re-render the installed primitive
+  closure to recover from a partial install. See
+  [`docs/specs/wiki-upgrade-force-render/`](docs/specs/wiki-upgrade-force-render/).
 - `wiki init --adopt` — adopt an existing folder as a vault by
   journaling each pre-existing kit-owned file as a
   `PageAdoptedEvent` (and managed-region host files as

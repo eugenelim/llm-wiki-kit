@@ -39,6 +39,7 @@ from llm_wiki_kit.models import (
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
+    PrimitiveForceRenderEvent,
     PrimitiveInstallEvent,
     PrimitiveRemoveEvent,
     PrimitiveUpgradeEvent,
@@ -865,6 +866,7 @@ def _build_instance(cls: type) -> typing.Any:
             "from_version": "1.0.0",
             "to_version": "1.1.0",
         },
+        PrimitiveForceRenderEvent: {"primitive": "core", "version": "1.0.0"},
         ManagedRegionWriteEvent: {
             "file": "x.md",
             "region": "fields",

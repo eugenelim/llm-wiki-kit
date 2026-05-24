@@ -83,6 +83,7 @@ side effects").
   | `primitive.install` | `primitive=<primitive> version=<version>` |
   | `primitive.remove` | `primitive=<primitive>` |
   | `primitive.upgrade` | `primitive=<primitive> from=<from_version> to=<to_version>` |
+  | `primitive.force_render` | `primitive=<primitive> version=<version>` |
   | `managed_region.write` | `file=<file> region=<region>` |
   | `ingest.routed` | `source=<source> content_type=<content_type-or-(none)> via=<via>` |
   | `source.ingest` | `source=<source> content_type=<content_type>` |

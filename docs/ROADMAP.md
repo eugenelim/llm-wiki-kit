@@ -41,26 +41,31 @@ The RFC explicitly deferred one item out of v2.0; it has now shipped.
   across eight sequential PRs ending in PR-7 (default agent catalog +
   recipe bindings + vault-side `wiki-conflict` / `wiki-agent` SKILLs).
 
+- **`wiki upgrade --force-render`** — re-renders the installed
+  primitive closure unconditionally to recover from a partial
+  install (a crash mid-`wiki init` after one or more
+  ``PrimitiveInstallEvent`` rows land but before the corresponding
+  ``PageWriteEvent`` rows). Lifts ``plan_upgrade``'s
+  matching-version short-circuit behind an explicit ``--force-render``
+  flag; the adopt-aware ``safe_write`` predicate (ADR-0008 §Decision
+  sub-choice 3) routes drift to ``.proposed`` sidecars exactly as a
+  catalog-bump ``wiki upgrade`` does. Closes the PR-C deferral named
+  in `wiki-init-adopt`'s plan step 13. Contract in
+  [`docs/specs/wiki-upgrade-force-render/`](specs/wiki-upgrade-force-render/).
+
 ## In flight
 
 _(nothing in flight right now)_
 
-## Post-PR-C follow-ups
+## Cleanup after PRs ship
 
-PR-C of [`wiki-init-adopt`](specs/wiki-init-adopt/) explicitly
-defers one recovery-path gap to a follow-on spec:
-
-- **`wiki upgrade --force-render`** (or `wiki init --adopt
-  --resume`) — re-render the installed primitive closure over
-  existing adopt baselines even when no catalog version has
-  bumped. Today's `wiki upgrade` short-circuits on a matching-
-  version no-op (`llm_wiki_kit/upgrade.py:plan_upgrade`), so a
-  crash mid-install leaves a partial vault with no productive
-  automated recovery. The spec for this would lift the
-  short-circuit behind a flag and pin the drift-aware re-render
-  semantics ADR-0008 §6 already names. Tracked in
-  [`docs/specs/wiki-init-adopt/plan.md`](specs/wiki-init-adopt/plan.md)
-  PR-C step 13's "DEFERRED RATIONALE".
+- **Delete `adopt._required_regions` alias** one release after
+  `wiki upgrade --force-render` ships. The lift to public
+  `compute_required_regions` carries a one-cycle alias for any
+  external caller (none in-tree today; precaution against
+  in-flight branches). See `llm_wiki_kit/adopt.py` and
+  [`docs/specs/wiki-upgrade-force-render/plan.md`](specs/wiki-upgrade-force-render/plan.md)
+  §Risks.
 
 ## Pointers
 
