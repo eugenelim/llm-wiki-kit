@@ -222,6 +222,7 @@ _KIND_DIRS: dict[PrimitiveKind, str] = {
     PrimitiveKind.CONTENT_TYPE: "content-types",
     PrimitiveKind.OPERATION: "operations",
     PrimitiveKind.INFRASTRUCTURE: "infrastructure",
+    PrimitiveKind.AGENT: "agents",
 }
 
 

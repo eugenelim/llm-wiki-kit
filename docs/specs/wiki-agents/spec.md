@@ -30,7 +30,7 @@
 `agent` is the fourth primitive kind (alongside `ontology`,
 `content-type`, `operation`, `infrastructure`). An agent is a
 vault-side markdown file (`AGENT.md`) shipped from
-`templates/agents/<name>/files/agents/<name>/AGENT.md`,
+`templates/agents/<name>/files/.claude/agents/<name>/AGENT.md`,
 installed by `wiki init` into `<vault>/.claude/agents/<name>/AGENT.md`,
 and read by the user's Claude CLI at scheduled-run time via the
 `claude --agent <name>` flag pinned in
@@ -81,10 +81,20 @@ Each agent ships as a primitive in the same shape as any other:
 templates/agents/<name>/
   primitive.yaml             # name, kind: agent, version, description, requires, config
   files/
-    agents/
-      <name>/
-        AGENT.md             # the body the user's Claude reads
+    .claude/
+      agents/
+        <name>/
+          AGENT.md           # the body the user's Claude reads
 ```
+
+The source layout lands the file at
+`<vault>/.claude/agents/<name>/AGENT.md` through the kit's existing
+verbatim file-copy pipeline (`render.render_tree`) — no new path
+translation. The `.claude/` prefix in the source tree is the
+convention by which kit catalog primitives land artifacts inside the
+vault's Claude-Code-discoverable directory (the same place
+`wiki init`'s outcome-named slash stubs land at
+`<vault>/.claude/commands/`, per `llm_wiki_kit/install.py:453`).
 
 **Shared-audience agents are deferred at v1.** The v1 catalog
 ships zero of them — every default in §"Default agent catalog" is
@@ -372,10 +382,12 @@ operations use. The installer:
 1. Walks `templates/agents/<name>/primitive.yaml` (the v1 shape).
    `core/files/agents/` is not walked at v1; shared-audience
    agents are deferred to a follow-on RFC per §Inputs.
-2. Copies `files/agents/<name>/AGENT.md` to
+2. Copies `files/.claude/agents/<name>/AGENT.md` to
    `<vault>/.claude/agents/<name>/AGENT.md` via the existing
-   primitive-install file-copy path. The kit does not read the file
-   contents.
+   primitive-install verbatim file-copy path (`render.render_tree`).
+   No new path translation: the catalog ships the file under
+   `files/.claude/...` so the verbatim copy lands at the matching
+   vault-relative path. The kit does not read the file contents.
 3. Appends `PrimitiveInstallEvent(primitive=<name>, version=<v>)` —
    identical to operation/content-type/ontology installs. The kind
    is recoverable from `installed_primitives[<name>]` + the catalog
@@ -552,12 +564,20 @@ on a manual hand-off would confuse the audit trail.
   well-formedness) — this is a verification-side concern, not a
   runtime read, and is permitted because the kit's production code
   paths still don't touch the file.
-- `_CATALOG_DIRS` discovery, recipe validation, and dispatch-time
-  validation all use the same name-installed-and-kind-agent check —
-  there is exactly one helper,
-  `primitives.is_installed_agent(name, state)`, and every site
-  routes through it. The helper lives in `primitives.py` alongside
-  the existing kind helpers to avoid a new module boundary.
+- `primitives.is_installed_agent(name, state, kit_root)` is the
+  canonical name-and-kind check at the two sites that consume
+  `VaultState`:
+  schedule-install validation (PR-4) and dispatch-time validation
+  (PR-5). CT-12 and CT-15 pin the helper's correctness at those
+  call sites. Recipe-load validation (PR-3) is a *distinct*
+  validation path — it walks the recipe's `primitives:` closure
+  before any install has happened, so no `VaultState` exists to
+  pass to the helper; CT-4 / CT-5 pin the closure-walk check
+  separately. The single-helper rule across the two `VaultState`
+  sites is a code-organization discipline enforced by review,
+  not a runtime invariant. The helper lives in `primitives.py`
+  alongside the existing kind helpers to avoid a new module
+  boundary.
 - The journal's `Event` union is the only place a new event type is
   added; the discriminator-based parser dispatches on the literal
   `type` field per ADR-0005.
@@ -582,9 +602,19 @@ on a manual hand-off would confuse the audit trail.
   - `Event` discriminated union gains `OperationRunByAgentEvent`.
 - **`llm_wiki_kit/primitives.py`** —
   - `_CATALOG_DIRS` gains `"agents"`.
-  - One new helper: `is_installed_agent(name: str, state: VaultState)
-    -> bool` (also reusable as `is_installed_kind(name, kind, state)`
-    if more kinds need the check).
+  - One new helper: `is_installed_agent(name: str, state: VaultState,
+    kit_root: Path) -> bool` — true iff `name in
+    state.installed_primitives` AND the primitive's declared kind in
+    the kit-side catalog at `kit_root / "templates"` is
+    `PrimitiveKind.AGENT`. The `kit_root` argument is required because
+    `VaultState.installed_primitives` is `dict[str, str]` (name →
+    version) and does not carry kind information — the helper recovers
+    the kind by walking the catalog via `discover_primitives`. Same
+    `kit_root` convention as `list_agents`,
+    `recipes.installed_outcome_verbs`, `cli._kit_paths`, and
+    `operations._load_contract`. A future helper
+    `is_installed_kind(name, kind, state, kit_root)` could generalize
+    to other kinds.
   - One new enumeration function:
     `list_agents(vault_root: Path, kit_root: Path) -> list[AgentRow]`
     where `AgentRow` is a frozen dataclass
@@ -662,10 +692,13 @@ The contract tests below define "done". Construction tests live in
 - [ ] **CT-1: `PrimitiveKind.AGENT` is recognized by discovery.** A
   `templates/agents/household-manager/primitive.yaml` with `kind:
   agent` is enumerated by `primitives.discover_primitives()`; the
-  returned primitive has `kind == PrimitiveKind.AGENT`. The same
-  primitive in a directory `templates/operations/household-manager/`
-  is rejected by author-author kind-vs-dir mismatch the same way
-  today's mismatches are.
+  returned primitive has `kind == PrimitiveKind.AGENT`. Discovery
+  loads what the manifest declares; cross-checking the parent
+  directory name against the declared kind is a primitive-author
+  concern, not a discovery-time invariant — `agent` follows the
+  same today-permissive kind-vs-directory posture every other
+  kind has (see `llm_wiki_kit/primitives.py:50-67`'s
+  `_CATALOG_DIRS` comment).
 - [ ] **CT-2: agent primitive installs through the existing
   `PrimitiveInstallEvent` path.** `wiki add agent:household-manager`
   on a freshly-initialized vault (a) appends exactly one
@@ -852,7 +885,7 @@ The contract tests below define "done". Construction tests live in
 - [ ] **CT-25: default catalog ships.** `templates/agents/` contains
   the eight primitives listed in §"Default agent catalog" below;
   each has a valid `primitive.yaml` (`kind: agent`,
-  `version: 0.1.0`), and each `files/agents/<name>/AGENT.md` is
+  `version: 0.1.0`), and each `files/.claude/agents/<name>/AGENT.md` is
   well-formed (the test parses its YAML frontmatter via
   `pyyaml.safe_load` to assert syntactic validity — kit *runtime*
   reads zero bytes of the file; this is a verification-side
@@ -894,6 +927,12 @@ and surfaced here so reviewers can hold the boundary:
   consumption.
 - **Changes to the RFC-0003 scheduling/executor surface beyond the
   additive `--agent` flag and additive journal fields.**
+- **Discovery-time kind-vs-directory enforcement.** The kit's
+  today-permissive posture (declared `kind:` in `primitive.yaml` is
+  the source of truth; the parent directory name is not
+  cross-checked at discovery for any kind) applies to `agent`
+  unchanged. Tightening this would touch every kind together and
+  belongs in a follow-on RFC; this spec ships no new enforcement.
 - **Auto-rebinding schedules when a recipe / contract / install
   changes.** The journaled `agent` is frozen at install time.
 - **Per-agent config on the agent primitive itself.** Per
@@ -953,7 +992,7 @@ and surfaced here so reviewers can hold the boundary:
 The eight v1 agents (per [RFC-0004 §8](../../rfc/0004-agent-identity-primitives.md#8-default-identities-per-recipe)).
 Each ships at `templates/agents/<name>/` with `primitive.yaml`
 (`kind: agent`, `version: 0.1.0`) and
-`files/agents/<name>/AGENT.md`. Recipe bindings ship in the same
+`files/.claude/agents/<name>/AGENT.md`. Recipe bindings ship in the same
 PR that adds the agents (the `family.yaml`, `work-os.yaml`, and
 `personal.yaml` recipes gain `agents:` blocks).
 

@@ -157,11 +157,6 @@ is justified in spec.md.
        `templates/agents/household-manager/primitive.yaml`
        (`kind: agent`) returns a primitive whose `kind ==
        PrimitiveKind.AGENT`;
-     - `test_discover_primitives_rejects_kind_directory_mismatch_for_agent`
-       — a `templates/operations/household-manager/primitive.yaml`
-       with `kind: agent` is rejected by the existing
-       kind-vs-directory mismatch the same way other mismatches
-       are today (no new code path);
      - `test_discover_primitives_tolerates_missing_agents_catalog_dir`
        — CT-26: build a `tmp_path` containing `templates/` with
        at least one non-agent kind directory
@@ -174,10 +169,25 @@ is justified in spec.md.
        `recipes.discover_recipes`'s missing-directory return at
        `recipes.py:112-113`);
      - `test_is_installed_agent_returns_true_after_install_event`
-       — `is_installed_agent("household-manager", state)` returns
-       `True` after a `PrimitiveInstallEvent` for
-       `household-manager` (the catalog walk recovers the kind
-       from `installed_primitives` + the discovered catalog).
+       — `is_installed_agent("household-manager", state, kit_root)`
+       returns `True` after a `PrimitiveInstallEvent` for
+       `household-manager`, where `kit_root` points at a fixture
+       catalog containing `templates/agents/household-manager/`.
+       The helper recovers the kind by walking the catalog (the
+       VaultState carries only name→version, not kind).
+     - `test_is_installed_agent_returns_false_for_non_agent_kind`
+       — `is_installed_agent("weekly-digest", state, kit_root)`
+       returns `False` when `weekly-digest` is installed but its
+       catalog entry is `kind: operation` (the name-installed half
+       passes; the kind-matches half does not).
+     - `test_is_installed_agent_returns_false_for_uninstalled_name`
+       — returns `False` when the name is in the catalog as
+       `kind: agent` but not yet in `state.installed_primitives`.
+     - `test_is_installed_agent_returns_false_when_catalog_absent`
+       — returns `False` when `state.installed_primitives` records
+       the name but no catalog exists at `kit_root / "templates"`
+       (the helper has no way to confirm the kind, so it falls
+       through to `False`).
      And `tests/integration/test_install_agent.py`:
      - `test_wiki_add_agent_installs_via_existing_primitive_event`
        — CT-2: end-to-end `wiki add agent:household-manager`
@@ -187,8 +197,11 @@ is justified in spec.md.
        byte-identical to the catalog source.
    - **Approach:** extend `llm_wiki_kit/primitives.py`:
      - Add `"agents"` to `_CATALOG_DIRS`.
-     - Add `is_installed_agent(name, state)` helper (reused by
-       PRs 3, 4, 5).
+     - Add `is_installed_agent(name, state, kit_root)` helper (reused by
+       PRs 4 and 5 — the two sites that consume `VaultState`).
+       PR-3's recipe-load validator runs before any install, so
+       it does not call this helper; it walks the recipe's
+       `primitives:` closure directly.
      - Do **not** ship an empty `core/files/agents/` directory.
        `discover_primitives` already tolerates a missing catalog
        directory (see the `recipes.discover_recipes` precedent —
@@ -495,7 +508,7 @@ is justified in spec.md.
          `templates/agents/<name>/primitive.yaml` has
          `kind: agent` and `version` matching `SEMVER_PATTERN`;
        - `test_agent_md_frontmatter_parses` — every
-         `files/agents/<name>/AGENT.md`'s YAML frontmatter
+         `files/.claude/agents/<name>/AGENT.md`'s YAML frontmatter
          parses via `pyyaml.safe_load` (verification-side read
          per spec §Invariants — kit runtime still reads zero
          bytes);
