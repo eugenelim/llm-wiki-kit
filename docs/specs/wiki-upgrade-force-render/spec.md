@@ -691,8 +691,10 @@ Same as the partial-install path, with two differences:
 - [ ] **AC12 — Event ordering: force-render event before its
   primitive's renders.** Within the slice for any one primitive `p`
   in `to_upgrade`, the `PrimitiveForceRenderEvent(primitive=p.name)`
-  index is less than every `PageWriteEvent.by == p.name` and
-  `PageProposalEvent` index for paths under `p`'s `files/` tree.
+  index is less than every `PageWriteEvent.by == p.name` index AND
+  every `PageProposalEvent.by == p.name` index (per-primitive-phase
+  proposals only — aggregator-phase proposals attributed to
+  `"wiki-upgrade"` are covered by AC10's strict-after ordering).
 - [ ] **AC13 — Cache discipline inherited.** `--force-render`
   reuses `upgrade_primitives` which already runs inside
   `journal.use_journal_cache(journal_path)`. No new call sites
@@ -787,20 +789,29 @@ Same as the partial-install path, with two differences:
   a fixture where primitive A (e.g., `core`) ships
   `frontmatter.schema.yaml` in its `files/` tree AND primitive B
   (e.g., `content-types`) contributes to it via
-  `contributes_to`. Use the step 7 fixture builder with
-  `primitives=["core", "content-types"]`,
-  `cut_after_primitive="core"` so `core`'s install event is
-  durable but `frontmatter.schema.yaml`'s `PageWriteEvent` is
-  absent (the host file is absent on disk). Pre-call: assert
+  `contributes_to`. Use the step 7
+  `make_two_primitive_partial_install_vault` helper with
+  `primitives=["core", "content-types"]` so BOTH
+  `PrimitiveInstallEvent` rows are durable post-truncation
+  (state.installed_primitives contains both) but
+  `frontmatter.schema.yaml`'s `PageWriteEvent` is absent on
+  disk. The two-cut helper is required, NOT the single-cut
+  variant: a single-cut `cut_after_primitive="core"` would
+  drop content-types's install event, removing it from
+  `state.installed_primitives`, and the aggregator pass over
+  `plan.all_installed == [core]` would never compose
+  content-types's region contribution. Pre-call: assert
   `_unrendered_closure_paths` returns `frontmatter.schema.yaml`
   (caught via `core`'s `enumerate_rendered_paths`). Run
   `wiki upgrade --force-render`. Assert: (a) the host file is
   on disk post-call with `core`'s base body PLUS `content-types`'s
-  region contribution composed in; (b) the journal contains a
-  `PrimitiveForceRenderEvent(primitive="core")`, a
-  `PageWriteEvent(path="frontmatter.schema.yaml", by="core")`
-  from the per-primitive render, and at least one
-  `ManagedRegionWriteEvent` from the aggregator pass;
+  region contribution composed in; (b) the journal contains one
+  `PrimitiveForceRenderEvent` per primitive in
+  `state.installed_primitives` (i.e., both `core` and
+  `content-types`), a `PageWriteEvent(path=
+  "frontmatter.schema.yaml", by="core")` from the per-primitive
+  render, and at least one `ManagedRegionWriteEvent` from the
+  aggregator pass (with `by == "wiki-upgrade"`);
   (c) post-run, `_unrendered_closure_paths == []`. Pins the
   end-to-end shared-host-file recovery shape.
 

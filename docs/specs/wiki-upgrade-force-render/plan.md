@@ -703,17 +703,24 @@ an explicit dispatch branch grep-able in `journal.py`), the
        `--force-render`; assert that within the slice for each
        primitive `p`, the `PrimitiveForceRenderEvent(primitive=
        p.name)` index is less than every `PageWriteEvent.by ==
-       p.name` and `PageProposalEvent` index for paths under
-       `p`'s `files/` tree.
+       p.name` index AND every `PageProposalEvent.by == p.name`
+       index (per-primitive-phase events filtered by `by`;
+       aggregator-phase proposals with `by == "wiki-upgrade"`
+       are covered by AC10, not this AC).
      - `test_wiki_upgrade_force_render_aggregator_pass_after_per_primitive`
-       (AC10) — mirrors `wiki upgrade`'s AC9 test: every
-       `ManagedRegionWriteEvent` index in the new-events slice
-       is greater than every per-primitive `PageWriteEvent` /
-       `PageProposalEvent` index.
+       (AC10) — mirrors `wiki upgrade`'s AC9 with the by-based
+       partition: every event in {`ManagedRegionWriteEvent`,
+       `PageProposalEvent` with `by == "wiki-upgrade"`} has
+       index greater than every event in {`PageWriteEvent`,
+       `PageProposalEvent` with `by` equal to a primitive name
+       in `plan.to_upgrade`}.
    - **Implementation:** no code change beyond what step 4 +
      step 7 wire.
    - **Verify (green):** tests pass.
 1. **Cache discipline inherited (AC13).**
+   - **Mode:** invariant pin against wiring from step 5 (cache
+     scope is inherited from `upgrade_primitives` unchanged) —
+     passes on first run.
    - **Tests:** none new at the runtime level — the existing
      `wiki upgrade` AC14 test in
      `tests/integration/test_wiki_upgrade.py` already exercises
@@ -800,36 +807,42 @@ an explicit dispatch branch grep-able in `journal.py`), the
        `last_force_render_index` is the maximum index of a
        `PrimitiveForceRenderEvent` in the new-events slice.
        No per-primitive bracket; the aggregator runs once.
-1. **Host-file-only contribution recovery (AC20).**
+   - **Verify (green):** both tests pass on first run.
+1. **Shared-host-file partial recovery (AC20).**
+   - **Mode:** invariant pin against wiring from steps 6, 7, 9
+     — passes on first run (the recovery path uses the
+     per-primitive render of the host-file-shipping primitive
+     plus the aggregator pass; no new implementation).
    - **Tests:**
-     - `test_wiki_upgrade_force_render_recovers_host_file_only_contribution`
-       — construct a fixture (using the step 7 helper) with a
-       primitive whose only claim on a host file is via
-       `contributes_to` (e.g., a primitive that contributes a
-       region to `frontmatter.schema.yaml` but does NOT ship
-       `frontmatter.schema.yaml` in its `files/` tree). Truncate
-       so the host file's `PrimitiveInstallEvent` is durable but
-       the aggregator never wrote the host body to disk —
-       i.e., the host file is absent from `vault_root` post-
-       truncation. Pre-call: assert
-       `_unrendered_closure_paths` returns the host file's path
-       (verifies the `required_regions` union in the helper),
-       `check_managed_region_drift` returns `[]` (the existing
-       predicate doesn't catch this — it `continue`s past
-       absent host files at `doctor.py:248-249`). Run `wiki
-       upgrade --force-render`. Assert: (a) the host file is
-       now on disk with the composed body; (b) post-run,
-       `_unrendered_closure_paths == []`; (c) the journal
-       contains a `ManagedRegionWriteEvent` for each contributed
-       region. Pins the Blocker-2 fix end-to-end.
-   - **Verify (red):** without the `_required_regions` union in
-     `_unrendered_closure_paths`, pre-call assertion (the host
-     file is in `_unrendered_closure_paths`'s return) fails;
-     after the union lands (step 6), the assertion passes and
-     the runner is reached.
-   - **Implementation:** no new code beyond step 6's union; the
-     existing aggregator pass handles the recovery write.
-   - **Verify (green):** the test passes.
+     - `test_wiki_upgrade_force_render_recovers_shared_host_file`
+       — use the step 7
+       `make_two_primitive_partial_install_vault` helper with
+       `primitives=["core", "content-types"]` (where `core`
+       ships `frontmatter.schema.yaml` and `content-types`
+       contributes to it via `contributes_to`). The two-cut
+       helper keeps BOTH `PrimitiveInstallEvent` rows durable
+       and cuts before any page writes, so
+       `state.installed_primitives == {"core": ...,
+       "content-types": ...}` post-truncation AND
+       `frontmatter.schema.yaml` is absent on disk. Pre-call:
+       assert `_unrendered_closure_paths` returns
+       `frontmatter.schema.yaml` (caught via `core`'s
+       `enumerate_rendered_paths`; the
+       `compute_required_regions` union is not load-bearing
+       here — that case is pinned at the unit level in step 6).
+       Run `wiki upgrade --force-render`. Assert: (a) the host
+       file is on disk post-call with both `core`'s base body
+       AND `content-types`'s region contribution composed in;
+       (b) the journal contains one `PrimitiveForceRenderEvent`
+       per primitive in `state.installed_primitives` (both
+       `core` and `content-types`), a
+       `PageWriteEvent(path="frontmatter.schema.yaml",
+       by="core")` from the per-primitive render, and at least
+       one `ManagedRegionWriteEvent(by="wiki-upgrade")` from
+       the aggregator pass; (c) post-run,
+       `_unrendered_closure_paths == []`. Pins the end-to-end
+       shared-host-file recovery shape (AC20).
+   - **Verify (green):** the test passes on first run.
 1. **Drift on force-rendered file (AC3).**
    - **Mode:** invariant pin against wiring from steps 7, 9 and
      the adopt-aware `safe_write` predicate (already shipped by
@@ -931,12 +944,14 @@ spec.
 
 - **`_required_regions` lift carries a one-cycle alias.** The
   helper is currently module-private to `adopt.py`; this PR
-  exposes a public `required_regions` name and keeps
-  `_required_regions = required_regions` as a one-release-cycle
-  alias in case external code (none in-tree today) imports the
-  underscore name. Mitigation: deletion of the alias is a
-  follow-on note in a sibling spec when the lift has shipped one
-  release.
+  exposes a public `compute_required_regions` name (the
+  `compute_` prefix avoids shadowing the local variable
+  `required_regions` already used inside `compute_adoption_set`
+  at `adopt.py:161`) and keeps `_required_regions =
+  compute_required_regions` as a one-release-cycle alias in case
+  external code (none in-tree today) imports the underscore
+  name. Mitigation: deletion of the alias is a follow-on note in
+  a sibling spec when the lift has shipped one release.
 - **Fixture builder drift.** Three helpers in
   `tests/fixtures/partial_install.py`
   (`make_partial_install_vault`,
