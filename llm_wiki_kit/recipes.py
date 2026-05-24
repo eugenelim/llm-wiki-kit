@@ -62,7 +62,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from llm_wiki_kit.errors import RecipeError, ValidationError
 from llm_wiki_kit.journal import read_events, replay_state
-from llm_wiki_kit.models import Primitive, Recipe
+from llm_wiki_kit.models import Primitive, PrimitiveKind, Recipe
 from llm_wiki_kit.primitives import load_operation_contract, resolve_dependencies
 
 CORE_PRIMITIVE_NAME = "core"
@@ -139,7 +139,14 @@ def resolve_recipe_primitives(
        primitive's ``requires:`` (looked up in ``catalog``) until the
        set is closed under transitive ``requires:``. Any name that
        isn't in ``catalog`` raises :class:`RecipeError`.
-    3. Install order: the closed primitive set is handed to
+    3. Agent-binding validation: every key in ``recipe.agents`` and
+       every operation in its ``runs:`` list must be in the closure
+       with the matching kind, and no operation may appear in two
+       agents' ``runs:`` lists. Delegated to
+       :func:`_validate_agent_bindings`; a no-op when ``agents`` is
+       empty. See ``docs/specs/wiki-agents/spec.md`` §Inputs §"Recipe
+       surface".
+    4. Install order: the closed primitive set is handed to
        :func:`~llm_wiki_kit.primitives.resolve_dependencies` for
        topological sort (alphabetical tiebreaker).
     """
@@ -173,7 +180,81 @@ def resolve_recipe_primitives(
             if required not in closed:
                 pending.append(required)
 
+    _validate_agent_bindings(recipe, closed)
+
     return resolve_dependencies(list(closed.values()))
+
+
+def _validate_agent_bindings(
+    recipe: Recipe,
+    closed: dict[str, Primitive],
+) -> None:
+    """Validate ``recipe.agents`` against the resolved closure.
+
+    Three load-bearing checks per
+    ``docs/specs/wiki-agents/spec.md`` §Inputs §"Recipe surface" — the
+    error shapes are distinct (CT-3, CT-4, CT-5) and must not be
+    consolidated:
+
+    1. Every key in ``agents:`` is a primitive in the closure whose
+       ``kind`` is ``agent``. "Not in closure" and "wrong kind" are
+       reported separately so a typo never masquerades as a kind
+       mismatch (and vice versa).
+    2. Every operation in any ``runs:`` list is a primitive in the
+       closure whose ``kind`` is ``operation``.
+    3. No operation appears in two agents' ``runs:`` lists. Recipes
+       compose primitives into bundles; binding the same operation to
+       two agents is a recipe-author bug because schedule-install
+       resolution can only freeze one agent per dispatched operation.
+
+    ``recipe.agents`` is the empty dict on every pre-RFC-4 recipe; the
+    function is a no-op in that case. Pydantic's ``min_length=1`` on
+    ``AgentBinding.runs`` already pins CT-6 at recipe-load time —
+    that check fires before this validator runs and is therefore not
+    duplicated here.
+    """
+
+    if not recipe.agents:
+        return
+
+    seen_operations: dict[str, str] = {}
+    for agent_name, binding in recipe.agents.items():
+        primitive = closed.get(agent_name)
+        if primitive is None:
+            raise RecipeError(
+                f"recipe '{recipe.name}' binds agent '{agent_name}' but the "
+                f"primitive is not in the recipe's closure"
+            )
+        if primitive.kind is not PrimitiveKind.AGENT:
+            raise RecipeError(
+                f"recipe '{recipe.name}' binds agent '{agent_name}' but the "
+                f"primitive resolves to kind: {primitive.kind.value} "
+                f"(kind: agent expected)"
+            )
+        for operation_name in binding.runs:
+            op_primitive = closed.get(operation_name)
+            if op_primitive is None:
+                raise RecipeError(
+                    f"recipe '{recipe.name}' binds operation "
+                    f"'{operation_name}' to agent '{agent_name}' but the "
+                    f"operation primitive is not in the recipe's closure"
+                )
+            if op_primitive.kind is not PrimitiveKind.OPERATION:
+                raise RecipeError(
+                    f"recipe '{recipe.name}' binds operation "
+                    f"'{operation_name}' to agent '{agent_name}' but the "
+                    f"primitive resolves to kind: {op_primitive.kind.value} "
+                    f"(kind: operation expected)"
+                )
+            if operation_name in seen_operations:
+                first_agent = seen_operations[operation_name]
+                raise RecipeError(
+                    f"operation '{operation_name}' is bound to multiple "
+                    f"agents in recipe '{recipe.name}': {first_agent}, "
+                    f"{agent_name}; one operation may have at most one "
+                    f"preferred agent per recipe"
+                )
+            seen_operations[operation_name] = agent_name
 
 
 def installed_outcome_verbs(

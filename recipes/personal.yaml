@@ -77,3 +77,8 @@ variables:
   owner_pronouns: ""
   owner_role: ""
   owner_timezone: ""
+# Populated default bindings ship in PR-7a alongside the default agent
+# catalog (RFC-0004 / wiki-agents). PR-3 ships the empty block so every
+# recipe loader exercises the new ``Recipe.agents`` field — schema
+# regressions surface against the live catalog before any binding lands.
+agents: {}

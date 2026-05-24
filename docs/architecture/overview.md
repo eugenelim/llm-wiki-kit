@@ -112,7 +112,7 @@ inside `safe_write()`.
 |`managed_regions.py`|Parse, update, and merge `<!-- BEGIN MANAGED: id --> ... <!-- END MANAGED: id -->` blocks in shared infrastructure files. Used for `AGENTS.md`, `frontmatter.schema.yaml`, `.claude/research-providers.yaml`.                                                 |
 |`render.py`         |Stdlib `str.format_map` over `SafeDict`. Renders the ~5 files in `INTERPOLATED_FILES` with the build context; copies everything else verbatim. Region renderers (`render_ontologies_region`, etc.) generate managed-region content programmatically. No Jinja.|
 |`primitives.py`     |`load_primitive(path) -> Primitive`, `discover_primitives(templates_dir)`, `resolve_dependencies()` for transitive `requires:` resolution.                                                                                                                    |
-|`recipes.py`        |`load_recipe(path) -> Recipe`, `resolve_recipe_primitives()`. Validates that every primitive a recipe references exists.                                                                                                                                      |
+|`recipes.py`        |`load_recipe(path) -> Recipe`, `resolve_recipe_primitives()`. Validates that every primitive a recipe references exists; also cross-checks `Recipe.agents` bindings against the resolved closure (key resolves to `kind: agent`, every `runs:` entry to `kind: operation`, no operation bound to two agents). |
 |`doctor.py`         |Replays the journal, computes expected vault state, diffs against disk, reports drift in managed regions, orphan files, missing files.                                                                                                                        |
 |`ingest.py`         |`wiki ingest` routing: classifies a source via per-primitive `routing:` signals (extension, filename glob, URL host/path) and records the decision as an `IngestRoutedEvent`. Pure string parsing — no I/O, no LLM.                                            |
 |`install.py`        |Region-contribution aggregator used by `wiki init`, `wiki add`, and `wiki upgrade`. Validates `contributes_to` against on-disk snippet files, groups by `(file, region)`, concatenates in install order, and writes each region once via `safe_write_region`.                  |
@@ -138,7 +138,7 @@ templates/<kind>/<name>/
     └── expected-output.*
 ```
 
-Four primitive kinds, each with a distinct role:
+Five primitive kinds, each with a distinct role:
 
 - **`ontology`** — folder shapes plus seed files. Defines *where* something
   lives (`projects/`, `people/`, `food/`, etc.).
@@ -150,6 +150,10 @@ Four primitive kinds, each with a distinct role:
   (`weekly-digest`, `meal-planning`, etc.).
 - **`infrastructure`** — cross-cutting capabilities: `research` dispatch and
   its provider sub-primitives, search backends, source-ingest delta tracker.
+- **`agent`** — a vault-side `AGENT.md` (per RFC-0004) the user's Claude
+  reads via `claude --agent <name>`. Recipes optionally bind agents to
+  operations via an `agents:` block; the kit reads zero bytes of `AGENT.md`
+  at runtime. See `docs/specs/wiki-agents/spec.md`.
 
 Recipes (`recipes/*.yaml`) compose primitives into audience-specific bundles
 — `family`, `work-os`, `personal`. Recipes don’t extend each other in
