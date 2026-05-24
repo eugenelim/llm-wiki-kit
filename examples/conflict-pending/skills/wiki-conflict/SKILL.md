@@ -68,6 +68,25 @@ For each `.proposed` file:
    > replacing the synopsis with a shorter version (no tag changes).
    > Do you want your synopsis kept, the kit's, or a merge?"
 
+   **Name the agent when the journal carries one.** Pull the most
+   recent `PageProposalEvent` for the path (via `wiki journal grep
+   --type page.proposal <path>` or by reading
+   `.wiki.journal/journal.jsonl` directly). When `proposed_by_agent`
+   is non-null on that event,
+   surface the agent in the prose — the user sees *who* asked for
+   the change, not just *what*:
+
+   > "The **household-manager** wants to update your weekly digest.
+   > You edited the action-items section since the last run; the
+   > household-manager proposes replacing the digest body without
+   > touching your additions. Keep yours, take the proposal, or merge?"
+
+   When `proposed_by_agent` is null (older lines, or a run that
+   resolved no agent), fall back to "The kit wants to update …" —
+   the original phrasing. Don't invent an agent name from the
+   operation alone; the journal is the source of truth for who
+   wore the run.
+
 4. **Propose a merged version.** Don't pick silently. Show the
    merge as a diff or a full file and ask for confirmation. If the
    merge is mechanical (different sections changed; no overlap),

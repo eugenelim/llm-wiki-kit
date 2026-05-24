@@ -1,0 +1,7 @@
+name: care-coordinator
+kind: agent
+version: 0.1.0
+description: >-
+  Family-audience medical coordinator. Reads the `medical/` ontology
+  and recent `medical-record` pages to summarize a family member's
+  care state on demand. Bound by `family.yaml` to `medical-summary`.

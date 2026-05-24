@@ -1,0 +1,7 @@
+name: stakeholder-steward
+kind: agent
+version: 0.1.0
+description: >-
+  Work-OS-audience stakeholder coordinator. Refreshes the stakeholder
+  map and synthesizes status across projects and customers. Bound by
+  `work-os.yaml` to `stakeholder-map-refresh` and `status-synthesis`.

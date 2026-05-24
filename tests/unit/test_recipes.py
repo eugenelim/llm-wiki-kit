@@ -447,6 +447,10 @@ def test_work_os_recipe_resolves_against_live_catalog() -> None:
     expected = {
         "action-item-rollup",
         "core",
+        # PR-7 / RFC-0004 default agent bindings (work-os recipe).
+        "customer-listener",
+        "renewals-watch",
+        "stakeholder-steward",
         "customer-feedback",
         "customers",
         "decision",
@@ -481,6 +485,12 @@ def test_personal_recipe_resolves_against_live_catalog() -> None:
         "action-item",
         "core",
         "decision",
+        # PR-7 / RFC-0004 default agent catalog. ``personal-coordinator``
+        # is bound by the recipe; ``decision-companion`` ships
+        # installed-but-unbound (reserved for a future
+        # ``decision-review`` operation).
+        "decision-companion",
+        "personal-coordinator",
         "follow-up-tracker",
         "food",
         "identity",

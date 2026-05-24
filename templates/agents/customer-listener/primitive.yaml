@@ -1,0 +1,7 @@
+name: customer-listener
+kind: agent
+version: 0.1.0
+description: >-
+  Work-OS-audience customer-feedback coordinator. Rolls up
+  action-items across customer-feedback and interview pages
+  every week. Bound by `work-os.yaml` to `action-item-rollup`.

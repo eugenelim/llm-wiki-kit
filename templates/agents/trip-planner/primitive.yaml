@@ -1,0 +1,7 @@
+name: trip-planner
+kind: agent
+version: 0.1.0
+description: >-
+  Family-audience trip coordinator. Reads the `trips/` ontology and
+  recent `trip-doc` pages to prepare upcoming travel. Bound by
+  `family.yaml` to `trip-prep`.

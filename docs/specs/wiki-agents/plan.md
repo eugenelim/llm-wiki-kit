@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*;
 > the plan says *how, in what order, with what verification*.
 
-- **Status:** Drafting
+- **Status:** Shipped
 - **Spec:** [`docs/specs/wiki-agents/spec.md`](spec.md)
 - **Owner:** maintainer
 
