@@ -88,17 +88,30 @@ Concrete mechanics:
 3. When the resolved value is `None`, the argv is unchanged
    from ADR-0009. No `--agent` flag is appended; the CLI
    uses its default (no agent for the session).
-4. **Name validation happens at dispatch time, not at install
-   time.** Before exec, the kit replays the journal and
-   verifies the resolved name corresponds to a
-   currently-installed `kind: agent` primitive (a
-   `PrimitiveInstallEvent` with no later
-   `PrimitiveRemoveEvent`). If the agent is missing, the kit
-   raises `WikiError("scheduled run resolved agent '<name>'
-   but it is not installed; run 'wiki add agent:<name>' or
-   re-run 'wiki init'")` and journals an
-   `OperationExecFailedEvent` (RFC-0003 §3 step 4). The CLI
-   is never invoked with a dangling name.
+4. **Name validation happens at both install time *and*
+   dispatch time.** Install-time validation (in
+   `wiki schedule install`, where the `--agent` flag is parsed
+   and the recipe / contract chain is walked) refuses up-front
+   with `WikiError("agent '<name>' is not installed; run
+   'wiki add agent:<name>' or re-run 'wiki init'")` before any
+   `ScheduleInstalledEvent` is journaled — the fail-fast path
+   so a typo on the CLI doesn't sit on disk until the next
+   scheduled fire. Dispatch-time validation re-checks the
+   journal immediately before the `claude` invocation, because
+   the agent may have been removed between install and fire
+   (a vault can `wiki remove agent:<name>` against a live
+   schedule). On dispatch-time miss the kit raises
+   `WikiError("scheduled run resolved agent '<name>' but it
+   is not installed; run 'wiki add agent:<name>' or re-run
+   'wiki init'")` and journals an
+   `OperationExecFailedEvent(reason="agent-missing", ...)`
+   (RFC-0003 §3 step 4 + the additive `"agent-missing"` reason
+   value `docs/specs/wiki-agents/spec.md` §Outputs introduces).
+   The CLI is never invoked with a dangling name. The two
+   passes are not redundant: they guard different failure
+   modes (install-time typo vs. mid-life removal) and the
+   spec's `docs/specs/wiki-agents/spec.md` §Invariants pins
+   both as load-bearing.
 5. **The `AGENT.md` file's on-disk presence is checked by
    `wiki doctor`, not by exec.** RFC-0004 §7's "Agent
    bindings" doctor check is the periodic verifier; exec-time
