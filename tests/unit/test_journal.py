@@ -53,6 +53,7 @@ from llm_wiki_kit.models import (
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
+    PrimitiveForceRenderEvent,
     PrimitiveInstallEvent,
     PrimitiveRemoveEvent,
     PrimitiveUpgradeEvent,
@@ -687,6 +688,53 @@ def test_replay_state_page_write_does_not_evict_page_adopted_entry() -> None:
     state = replay_state([adopted, write])
     assert state.page_writes == {"p.md": write}
     assert state.adopted_pages == {"p.md": adopted}
+
+
+def test_replay_state_force_render_event_is_audit_only() -> None:
+    """``PrimitiveForceRenderEvent`` does not mutate ``VaultState``.
+
+    Spec AC9: a journal containing a force-render row replays to a
+    ``VaultState`` byte-equal (via ``.model_dump()``) to the state of
+    replaying the same journal with the row removed. The event class
+    is purely an audit marker.
+    """
+
+    base_events: list[Event] = [
+        VaultInitEvent(timestamp=NOW, by="wiki-init", vault_name="v", recipe="core"),
+        PrimitiveInstallEvent(timestamp=_at(0), by="wiki-init", primitive="core", version="0.1.0"),
+    ]
+    with_force_render: list[Event] = [
+        *base_events,
+        PrimitiveForceRenderEvent(
+            timestamp=_at(1), by="wiki-upgrade", primitive="core", version="0.1.0"
+        ),
+    ]
+    state_without = replay_state(base_events)
+    state_with = replay_state(with_force_render)
+    assert state_with.model_dump() == state_without.model_dump()
+
+
+def test_replay_state_legacy_journal_unaffected_by_force_render_dispatch() -> None:
+    """A wiki-upgrade-shape journal with zero force-render rows replays unchanged.
+
+    Spec AC9's complement: the new dispatch branch in ``replay_state``
+    does not regress ``state.installed_primitives`` for existing
+    journal shapes.
+    """
+
+    events: list[Event] = [
+        VaultInitEvent(timestamp=NOW, by="wiki-init", vault_name="v", recipe="core"),
+        PrimitiveInstallEvent(timestamp=_at(0), by="wiki-init", primitive="core", version="0.1.0"),
+        PrimitiveUpgradeEvent(
+            timestamp=_at(1),
+            by="wiki-upgrade",
+            primitive="core",
+            from_version="0.1.0",
+            to_version="0.2.0",
+        ),
+    ]
+    state = replay_state(events)
+    assert state.installed_primitives == {"core": "0.2.0"}
 
 
 def test_replay_state_legacy_journal_leaves_adopted_dicts_at_default() -> None:

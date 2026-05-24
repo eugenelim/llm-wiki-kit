@@ -52,6 +52,7 @@ from llm_wiki_kit.journal import append_event, read_events
 from llm_wiki_kit.models import (
     PageProposalEvent,
     Primitive,
+    PrimitiveForceRenderEvent,
     PrimitiveUpgradeEvent,
     VaultState,
 )
@@ -68,7 +69,12 @@ class UpgradePlan:
     ``to_upgrade`` lists primitives whose installed version differs
     from the catalog (sorted in install order — topological by
     ``requires:``, alphabetical tiebreaker — matching the install
-    pipeline's invariant).
+    pipeline's invariant). Under :func:`plan_upgrade` with
+    ``force_render=True`` this field is overloaded to name primitives
+    whose closure the runner will re-walk — a re-render set with no
+    version transition implied; see :func:`plan_upgrade` for the
+    discriminator and ``docs/specs/wiki-upgrade-force-render/spec.md``
+    §Risks "to_upgrade overload" for the hazard analysis.
 
     ``all_installed`` is the topologically-sorted installed set
     filtered to primitives currently in the catalog. Primitives no
@@ -98,12 +104,29 @@ def plan_upgrade(
     catalog: Sequence[Primitive],
     *,
     only: str | None,
+    force_render: bool = False,
 ) -> UpgradePlan:
     """Compute the upgrade plan for ``state`` against ``catalog``.
 
     Pure function — no I/O, no journal mutation. Raises
     :class:`WikiError` when ``only`` is set and the named primitive is
     either not installed or not in the catalog.
+
+    ``force_render`` lifts the matching-version short-circuit per
+    ``docs/specs/wiki-upgrade-force-render/spec.md`` §Behavior. Under
+    ``force_render=True``:
+
+    * ``to_upgrade`` names primitives whose closure the runner will
+      re-walk (a *re-render* set, no version transition implied) —
+      ``all_installed`` when ``only`` is unset, ``[catalog_by_name[only]]``
+      when set.
+    * ``no_op_target`` is always ``None``; the CLI scope guard handles
+      the clean-vault case at the layer above the planner.
+
+    The field overload (version-transition set vs. re-render set) is
+    documented in the spec's §Risks "to_upgrade overload"; the
+    runner's per-primitive event-emit branch is the sole consumer
+    that cares about the distinction.
     """
 
     catalog_by_name: dict[str, Primitive] = {p.name: p for p in catalog}
@@ -133,6 +156,15 @@ def plan_upgrade(
         # planner already raised when ``only`` was not installed or not
         # in catalog, so the lookup is safe.
         target = catalog_by_name[only]
+        if force_render:
+            # Lift the matching-version short-circuit; the runner
+            # re-walks the closure regardless of version match.
+            return UpgradePlan(
+                to_upgrade=[target],
+                all_installed=all_installed,
+                not_in_catalog=not_in_catalog,
+                no_op_target=None,
+            )
         if installed[only] == target.version:
             return UpgradePlan(
                 to_upgrade=[],
@@ -142,6 +174,17 @@ def plan_upgrade(
             )
         return UpgradePlan(
             to_upgrade=[target],
+            all_installed=all_installed,
+            not_in_catalog=not_in_catalog,
+            no_op_target=None,
+        )
+
+    if force_render:
+        # Re-render every primitive currently in the catalog (the
+        # filtered ``all_installed`` set); the matching-version
+        # short-circuit does not apply.
+        return UpgradePlan(
+            to_upgrade=list(all_installed),
             all_installed=all_installed,
             not_in_catalog=not_in_catalog,
             no_op_target=None,
@@ -178,6 +221,7 @@ def upgrade_primitives(
     context: Mapping[str, str],
     state_versions: Mapping[str, str],
     now: datetime,
+    force_render: bool = False,
 ) -> list[tuple[str, str]]:
     """Apply ``plan.to_upgrade`` against the vault at ``journal_path``.
 
@@ -251,16 +295,31 @@ def upgrade_primitives(
 
     for primitive in plan.to_upgrade:
         from_version = state_versions[primitive.name]
-        append_event(
-            journal_path,
-            PrimitiveUpgradeEvent(
-                timestamp=now,
-                by=UPGRADE_VEHICLE,
-                primitive=primitive.name,
-                from_version=from_version,
-                to_version=primitive.version,
-            ),
-        )
+        if force_render:
+            # Force-render path: emit the audit marker carrying the
+            # installed version (unchanged across the run) instead of
+            # a ``PrimitiveUpgradeEvent``. See spec
+            # ``docs/specs/wiki-upgrade-force-render/spec.md`` §Outputs.
+            append_event(
+                journal_path,
+                PrimitiveForceRenderEvent(
+                    timestamp=now,
+                    by=UPGRADE_VEHICLE,
+                    primitive=primitive.name,
+                    version=from_version,
+                ),
+            )
+        else:
+            append_event(
+                journal_path,
+                PrimitiveUpgradeEvent(
+                    timestamp=now,
+                    by=UPGRADE_VEHICLE,
+                    primitive=primitive.name,
+                    from_version=from_version,
+                    to_version=primitive.version,
+                ),
+            )
         render_tree(
             sources[primitive.name] / "files",
             vault_root,

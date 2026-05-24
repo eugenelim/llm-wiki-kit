@@ -317,6 +317,25 @@ class PrimitiveUpgradeEvent(_EventBase):
     to_version: str
 
 
+class PrimitiveForceRenderEvent(_EventBase):
+    """Audit row recorded by ``wiki upgrade --force-render``.
+
+    Marker event for "the runner re-walked this primitive's closure to
+    heal a partial install" — distinct from :class:`PrimitiveUpgradeEvent`
+    so a grep over ``primitive.force_render`` rows surfaces only
+    re-render runs, not catalog-version bumps. No version transition is
+    recorded (``version`` is the installed version, unchanged across the
+    run). The class participates in the discriminated ``Event`` union as
+    a pure audit row — ``replay_state`` treats it as a no-op (no
+    contribution to ``VaultState.installed_primitives`` or any other
+    derived field). See ``docs/specs/wiki-upgrade-force-render/spec.md``.
+    """
+
+    type: Literal["primitive.force_render"] = "primitive.force_render"
+    primitive: str
+    version: str
+
+
 class ManagedRegionWriteEvent(_EventBase):
     type: Literal["managed_region.write"] = "managed_region.write"
     file: str
@@ -631,6 +650,7 @@ Event = Annotated[
     | PrimitiveInstallEvent
     | PrimitiveRemoveEvent
     | PrimitiveUpgradeEvent
+    | PrimitiveForceRenderEvent
     | ManagedRegionWriteEvent
     | ManagedRegionAdoptedEvent
     | IngestRoutedEvent

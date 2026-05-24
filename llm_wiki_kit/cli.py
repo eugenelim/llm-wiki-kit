@@ -33,16 +33,18 @@ import re
 import shutil
 import sys
 import traceback
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_wiki_kit import __version__, adopt, journal
-from llm_wiki_kit.doctor import format_issue, run_doctor
+from llm_wiki_kit.adopt import compute_required_regions
+from llm_wiki_kit.doctor import check_managed_region_drift, format_issue, run_doctor
 from llm_wiki_kit.errors import JournalCorruptError, WikiError
 from llm_wiki_kit.git_init import initialize_git
 from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
 from llm_wiki_kit.install import (
+    enumerate_rendered_paths,
     install_primitives,
     validate_contributions,
     validate_outcome_skill_fragments,
@@ -75,6 +77,7 @@ from llm_wiki_kit.models import (
     PageProposalEvent,
     PageWriteEvent,
     Primitive,
+    PrimitiveForceRenderEvent,
     PrimitiveInstallEvent,
     PrimitiveKind,
     PrimitiveRemoveEvent,
@@ -86,6 +89,7 @@ from llm_wiki_kit.models import (
     SourceIngestEvent,
     VaultGitInitializedEvent,
     VaultInitEvent,
+    VaultState,
 )
 from llm_wiki_kit.primitives import (
     discover_primitives,
@@ -710,6 +714,53 @@ def _cmd_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _unrendered_closure_paths(
+    state: VaultState,
+    vault_root: Path,
+    catalog: Sequence[Primitive],
+    sources: Mapping[str, Path],
+) -> list[str]:
+    """Return vault-relative POSIX paths missing from the installed closure.
+
+    Walks ``state.installed_primitives``, filters to primitives present
+    in ``catalog``, and computes the per-primitive closure as
+    ``enumerate_rendered_paths([primitive], sources) |
+    set(compute_required_regions([primitive]))`` — the same union
+    :func:`adopt.compute_adoption_set` uses (``adopt.py:171``) so a
+    host file whose only kit claim is via ``contributes_to`` is
+    included. Returns the sorted list of paths in the union where the
+    corresponding on-disk file is absent.
+
+    Pure function modulo the per-path file-existence probe. No journal
+    I/O, no writes. Primitives whose installed name is absent from the
+    catalog are skipped — the closure is undefined when the kit doesn't
+    ship the primitive anymore; ``wiki doctor``'s ``primitive-missing``
+    check is the surfacing mechanism for that state.
+
+    The scope guard for ``wiki upgrade --force-render`` lives here
+    (CLI-level, not ``doctor.py``) because it's the CLI's decision
+    about whether to enter the runner. Spec
+    ``docs/specs/wiki-upgrade-force-render/spec.md`` §Contracts +
+    §Risks "Doctor doesn't surface this state".
+    """
+
+    catalog_by_name = {p.name: p for p in catalog}
+    missing: set[str] = set()
+    for name in state.installed_primitives:
+        if name not in catalog_by_name:
+            continue
+        primitive = catalog_by_name[name]
+        closure = enumerate_rendered_paths([primitive], sources) | set(
+            compute_required_regions([primitive])
+        )
+        for relative in closure:
+            if not (vault_root / relative).is_file():
+                missing.add(relative)
+    # Trailing sort is the determinism source — per-primitive set
+    # iteration order is not stable across runs.
+    return sorted(missing)
+
+
 def _cmd_upgrade(args: argparse.Namespace) -> int:
     """Re-apply installed primitives against the running kit's catalog.
 
@@ -739,7 +790,8 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
             "Run `wiki init <path> --recipe <name>` first."
         )
 
-    state = replay_state(read_events(journal_path))
+    events = read_events(journal_path)
+    state = replay_state(events)
     if state.recipe is None or state.vault_name is None:
         raise WikiError(
             f"vault at {vault_root} has no vault.init event; "
@@ -750,7 +802,7 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
     catalog: list[Primitive] = [load_primitive(core_dir)]
     catalog.extend(discover_primitives(templates_dir))
 
-    plan = plan_upgrade(state, catalog, only=primitive_arg)
+    plan = plan_upgrade(state, catalog, only=primitive_arg, force_render=args.force_render)
 
     def _print_not_in_catalog_hint() -> None:
         if not plan.not_in_catalog:
@@ -763,10 +815,72 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    # ``--force-render`` + ``--primitive`` conflict check (AC6).
+    # Refuse when the named primitive has a pending catalog version
+    # bump — forcing a re-render at the OLD version when the kit
+    # ships a NEW version is almost never what the user means; gate
+    # the combination behind an explicit two-step. This MUST run
+    # before the scope guard so the AC6 fixture's stdout check
+    # catches a misordering.
+    if args.force_render and primitive_arg is not None:
+        catalog_by_name = {p.name: p for p in catalog}
+        installed_version = state.installed_primitives[primitive_arg]
+        catalog_version = catalog_by_name[primitive_arg].version
+        if installed_version != catalog_version:
+            raise WikiError(
+                f"--force-render conflicts with a pending upgrade for "
+                f"'{primitive_arg}' (catalog ships {catalog_version}, "
+                f"installed at {installed_version}); run "
+                f"'wiki upgrade --primitive {primitive_arg}' first"
+            )
+
     sources: dict[str, Path] = {
         primitive.name: _primitive_source_dir(primitive, core_dir, templates_dir)
         for primitive in plan.all_installed
     }
+
+    # ``--force-render`` scope guard (AC1, AC16, AC18). Computed
+    # BEFORE ``validate_contributions`` so a clean-closure invocation
+    # does not pay the pre-flight cost (spec §Invariants bullet 7).
+    # Both predicates read files from disk; force-render is positioned
+    # as a recovery tool that runs on damaged vaults, so a permission
+    # or I/O error here surfaces as a kit-shaped ``WikiError`` (exit
+    # 2) rather than an unhandled traceback.
+    if args.force_render:
+        try:
+            unrendered = _unrendered_closure_paths(state, vault_root, catalog, sources)
+            region_drift = check_managed_region_drift(events, vault_root, state)
+        except OSError as exc:
+            raise WikiError(
+                f"--force-render scope guard could not read vault state: {exc}; "
+                f"check filesystem permissions under {vault_root}"
+            ) from exc
+        if not unrendered and not region_drift:
+            print("wiki upgrade --force-render: no recovery needed (closure is complete).")
+            if not state.installed_primitives:
+                print(
+                    "note: this vault has no installed primitives; "
+                    "if init was interrupted, run 'wiki init --adopt' to resume.",
+                    file=sys.stderr,
+                )
+            else:
+                # Closing the recovery-UX gap that spec §Risks names: the
+                # scope-guard predicate is CLI-private (no ``wiki doctor``
+                # surface), so a one-line stderr diagnostic tells the user
+                # which primitive set was inspected and where to look
+                # next if they still suspect drift. Stderr keeps stdout
+                # automation-clean (the ``no recovery needed`` line is
+                # the only stdout signal).
+                count = len(state.installed_primitives)
+                word = "primitive" if count == 1 else "primitives"
+                print(
+                    f"note: checked {count} installed {word} against the catalog; "
+                    "run 'wiki doctor' if you suspect drift.",
+                    file=sys.stderr,
+                )
+            _print_not_in_catalog_hint()
+            return 0
+
     # Widened pre-flight per spec §Invariants 8: validate every
     # contributing primitive's snippet shape (not just the version-
     # bumped ones), because the aggregator reads every installed
@@ -826,10 +940,18 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
             context=context,
             state_versions=dict(state.installed_primitives),
             now=now,
+            force_render=args.force_render,
         )
 
-    for name, from_v, to_v in upgrade_pairs:
-        print(f"upgraded {name} {from_v} → {to_v}")
+    if args.force_render:
+        for name, from_v, _to_v in upgrade_pairs:
+            # Force-render: no version transition (from_v == installed
+            # version, unchanged across the run). Print the per-primitive
+            # marker line per spec §Outputs.Stdout.
+            print(f"force-rendered {name} @ {from_v}")
+    else:
+        for name, from_v, to_v in upgrade_pairs:
+            print(f"upgraded {name} {from_v} → {to_v}")
     for original, proposed in proposals:
         print(
             f"Wrote {proposed} (drift detected on {original}); "
@@ -837,7 +959,10 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
         )
     count = len(upgrade_pairs)
     word = "primitive" if count == 1 else "primitives"
-    print(f"wiki upgrade: upgraded {count} {word}.")
+    if args.force_render:
+        print(f"wiki upgrade --force-render: re-rendered {count} {word}.")
+    else:
+        print(f"wiki upgrade: upgraded {count} {word}.")
     _print_not_in_catalog_hint()
     return 0
 
@@ -1953,6 +2078,13 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
         ("from_version", "from", False),
         ("to_version", "to", False),
     ),
+    # wiki-upgrade-force-render spec: marker row for a force-render run.
+    # Same shape as ``PrimitiveInstallEvent`` (primitive, version) since
+    # force-render records the installed version unchanged across the run.
+    PrimitiveForceRenderEvent: (
+        ("primitive", "primitive", False),
+        ("version", "version", False),
+    ),
     ManagedRegionWriteEvent: (
         ("file", "file", False),
         ("region", "region", False),
@@ -2375,6 +2507,14 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument(
         "--primitive",
         help="Restrict the upgrade to a single primitive (default: all installed).",
+    )
+    upgrade.add_argument(
+        "--force-render",
+        action="store_true",
+        help=(
+            "Re-render the installed primitive closure to recover from a "
+            "partial install. See docs/specs/wiki-upgrade-force-render."
+        ),
     )
     upgrade.set_defaults(func=_cmd_upgrade)
 

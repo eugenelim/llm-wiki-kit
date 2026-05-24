@@ -55,6 +55,7 @@ from llm_wiki_kit.models import (
     PageConflictResolvedEvent,
     PageProposalEvent,
     PageWriteEvent,
+    PrimitiveForceRenderEvent,
     PrimitiveInstallEvent,
     PrimitiveRemoveEvent,
     PrimitiveUpgradeEvent,
@@ -871,6 +872,13 @@ def replay_state(events: Iterable[Event]) -> VaultState:
             state.installed_primitives[event.primitive] = event.version
         elif isinstance(event, PrimitiveUpgradeEvent):
             state.installed_primitives[event.primitive] = event.to_version
+        elif isinstance(event, PrimitiveForceRenderEvent):
+            # Audit-only marker emitted by ``wiki upgrade --force-render``.
+            # No contribution to derived state — the installed version is
+            # unchanged across a force-render run (spec AC9). The branch is
+            # explicit so the no-op intent is grep-able from journal.py and
+            # a future maintainer can't accidentally land a mutation here.
+            continue
         elif isinstance(event, PrimitiveRemoveEvent):
             state.installed_primitives.pop(event.primitive, None)
         elif isinstance(event, PageWriteEvent):
