@@ -213,7 +213,9 @@ gains one column without a new flag — see §Outputs.
 - `ScheduleInstalledEvent` gains
   `agent: str | None = None` (additive; older lines replay unchanged).
 - `PageProposalEvent` gains
-  `proposed_by_agent: str | None = None` (additive).
+  `proposed_by_agent: str | None = None` (additive; pattern-validated
+  against `NAME_PATTERN`, symmetric with `ScheduleInstalledEvent.agent`
+  and `OperationContract.preferred_agent`).
 - **One new event class**, `OperationRunByAgentEvent`:
 
   ```python
@@ -635,8 +637,11 @@ on a manual hand-off would confuse the audit trail.
   - `Recipe.agents: dict[str, AgentBinding] = Field(default_factory=dict)`.
   - `AgentBinding` (new `_StrictModel`): `runs: list[str] =
     Field(min_length=1)`. Names validated against `NAME_PATTERN`.
-  - `ScheduleInstalledEvent.agent: str | None = None`.
-  - `PageProposalEvent.proposed_by_agent: str | None = None`.
+  - `ScheduleInstalledEvent.agent: str | None = None` (validated
+    against `NAME_PATTERN`).
+  - `PageProposalEvent.proposed_by_agent: str | None = None`
+    (validated against `NAME_PATTERN`, symmetric with the other
+    agent-name carrying fields above).
   - `OperationRunByAgentEvent` class (new).
   - `OperationExecFailedEvent.reason` enum gains `"agent-missing"`
     as an accepted Literal value (additive enum extension).

@@ -89,6 +89,7 @@ from llm_wiki_kit.models import (
 )
 from llm_wiki_kit.primitives import (
     discover_primitives,
+    list_agents,
     load_primitive,
     resolve_dependencies,
 )
@@ -858,20 +859,49 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     issues = run_doctor(vault_root, args.kit_root if args.kit_root is not None else _kit_root())
 
-    # Schedule findings carry ``is_warning=True`` and render under a
-    # ``Schedules:`` section after the existing failure output — per
-    # spec ``docs/specs/wiki-schedule/spec.md`` §"Doctor integration".
+    # Schedule + agent findings carry ``is_warning=True`` and render
+    # under dedicated section headers after the existing failure output
+    # (``docs/specs/wiki-schedule/spec.md`` §"Doctor integration" and
+    # ``docs/specs/wiki-agents/spec.md`` §Outputs ``wiki doctor``).
     # The exit code is computed from non-warning issues only, so a
-    # stale schedule never fails the doctor pass.
+    # stale schedule or an agent warning never fails the doctor pass.
+    # Sections are partitioned by ``kind`` prefix — ``schedule-*`` vs.
+    # ``agent-*`` — single-source so adding a new warning family lands
+    # in one place. Warnings keep the family-grouped order
+    # ``_check_schedules`` / ``_check_agents`` produce.
     failures = [issue for issue in issues if not issue.is_warning]
     warnings = [issue for issue in issues if issue.is_warning]
+    schedule_warnings = [issue for issue in warnings if issue.kind.startswith("schedule-")]
+    agent_warnings = [issue for issue in warnings if issue.kind.startswith("agent-")]
+    # Defensive bucket: any warning whose kind doesn't match either
+    # documented prefix lands here. Future warning families that forget
+    # to use a known prefix would otherwise disappear from output
+    # entirely — print them under a generic ``Warnings:`` header so the
+    # regression is visible at the next run rather than silent.
+    other_warnings = [
+        issue
+        for issue in warnings
+        if not (issue.kind.startswith("schedule-") or issue.kind.startswith("agent-"))
+    ]
     for issue in failures:
         print(format_issue(issue))
-    if warnings:
+    if schedule_warnings:
         if failures:
             print()
         print("Schedules:")
-        for issue in warnings:
+        for issue in schedule_warnings:
+            print(f"  {format_issue(issue)}")
+    if agent_warnings:
+        if failures or schedule_warnings:
+            print()
+        print("Agents:")
+        for issue in agent_warnings:
+            print(f"  {format_issue(issue)}")
+    if other_warnings:
+        if failures or schedule_warnings or agent_warnings:
+            print()
+        print("Warnings:")
+        for issue in other_warnings:
             print(f"  {format_issue(issue)}")
     return DOCTOR_ISSUES_EXIT if failures else 0
 
@@ -914,6 +944,44 @@ def _cmd_outcomes(args: argparse.Namespace) -> int:
     for verb, op, skill in rows:
         print(f"{verb:<{w_verb}}  {op:<{w_op}}  {skill}")
 
+    return 0
+
+
+# em-dash (U+2014) — spec §Outputs ``wiki agents``: empty RECIPES or
+# OPERATIONS list renders as this literal character, never the empty
+# string. Single source of truth so a future renderer change lands
+# in one place.
+_AGENTS_EMPTY_RENDER = "—"
+
+
+def _cmd_agents(args: argparse.Namespace) -> int:
+    """Print the installed-agent table, tab-separated, header first.
+
+    Mirrors ``wiki outcomes`` (``cli.py:_cmd_outcomes``) — one subject,
+    no subcommands, read-only, no journal write. Reads the active
+    vault's journal to derive the installed primitive set, walks the
+    kit's catalog + recipes once to fold each agent's
+    NAME / RECIPES / OPERATIONS shape, and emits rows per spec §Outputs
+    ``wiki agents``. Empty agent set (or empty vault) prints only the
+    header line and exits ``0``.
+
+    Errors with :class:`WikiError` when run outside a vault directory
+    (matching ``wiki doctor`` / ``wiki outcomes``).
+    """
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
+
+    kit_root = args.kit_root if args.kit_root is not None else _kit_root()
+    rows = list_agents(vault_root, kit_root)
+
+    print("NAME\tRECIPES\tOPERATIONS")
+    for row in rows:
+        recipes_cell = ", ".join(row.recipes) if row.recipes else _AGENTS_EMPTY_RENDER
+        operations_cell = ", ".join(row.operations) if row.operations else _AGENTS_EMPTY_RENDER
+        print(f"{row.name}\t{recipes_cell}\t{operations_cell}")
     return 0
 
 
@@ -1911,6 +1979,13 @@ _EVENT_SUMMARY_FIELDS: dict[type[Event], tuple[_SummaryField, ...]] = {
     PageProposalEvent: (
         ("path", "path", False),
         ("proposed_path", "proposed", False),
+        # RFC-0004 wiki-agents PR-6: ``proposed_by_agent`` is additive
+        # on the event and surfaces here with the "plus ... when set"
+        # pattern (mirrors PR-4's ``schedule.installed.agent`` row).
+        # ``omit_when_none=True`` keeps pre-RFC-4 tail/grep rows
+        # byte-identical; see ``docs/specs/wiki-journal-readers/spec.md``
+        # §"summary fields" row for ``page.proposal``.
+        ("proposed_by_agent", "agent", True),
     ),
     PageConflictResolvedEvent: (
         ("path", "path", False),
@@ -2316,6 +2391,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="List installed outcome verbs (verb → operation → skill).",
     )
     outcomes.set_defaults(func=_cmd_outcomes)
+
+    agents = subparsers.add_parser(
+        "agents",
+        parents=[verbose_parent],
+        help="List installed agents (name → recipes → operations).",
+    )
+    agents.set_defaults(func=_cmd_agents)
 
     ingest = subparsers.add_parser(
         "ingest",

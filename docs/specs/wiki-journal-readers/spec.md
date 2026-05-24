@@ -87,7 +87,7 @@ side effects").
   | `ingest.routed` | `source=<source> content_type=<content_type-or-(none)> via=<via>` |
   | `source.ingest` | `source=<source> content_type=<content_type>` |
   | `page.write` | `path=<path>` |
-  | `page.proposal` | `path=<path> proposed=<proposed_path>` |
+  | `page.proposal` | `path=<path> proposed=<proposed_path>` (plus ` agent=<proposed_by_agent>` when set) |
   | `page.conflict_resolved` | `path=<path>` (plus ` region=<region>` when set) |
   | `operation.run` | `operation=<operation> status=<status>` |
   | `operation.run_by_agent` | `operation=<operation> agent=<agent>` |
