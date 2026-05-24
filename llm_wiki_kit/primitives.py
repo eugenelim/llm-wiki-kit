@@ -45,20 +45,25 @@ import yaml
 from pydantic import ValidationError as PydanticValidationError
 
 from llm_wiki_kit.errors import PrimitiveError, ValidationError, WikiError
-from llm_wiki_kit.models import OperationContract, Primitive, PrimitiveKind
+from llm_wiki_kit.models import OperationContract, Primitive, PrimitiveKind, VaultState
 
 # Catalog directory names per ``docs/architecture/overview.md``. The kit ships
 # the kind subdirectories pluralized (``ontologies/`` for the ``ontology``
 # kind, etc.); ``infrastructure`` is uncountable and matches its kind value
 # directly. The mapping is one-way (directory → expected kind) — discovery
 # does not enforce that a primitive in ``ontologies/`` declares ``kind:
-# ontology``; that's a primitive-author check we leave to ``wiki doctor``.
+# ontology``: the declared kind in ``primitive.yaml`` is the source of truth,
+# and cross-checking the parent directory name is a primitive-author concern,
+# not a kit-side runtime check at v1. (No corresponding ``wiki doctor`` check
+# ships today either; if a future RFC tightens this, it tightens for every
+# kind together — see ``docs/specs/wiki-agents/spec.md`` CT-1.)
 _CATALOG_DIRS: frozenset[str] = frozenset(
     [
         "ontologies",
         "content-types",
         "operations",
         "infrastructure",
+        "agents",
     ]
 )
 
@@ -405,6 +410,61 @@ def discover_primitives(templates_dir: Path) -> list[Primitive]:
 
     primitives.sort(key=lambda p: p.name)
     return primitives
+
+
+def is_installed_agent(name: str, state: VaultState, kit_root: Path) -> bool:
+    """Return True iff ``name`` is an installed primitive of kind ``agent``.
+
+    Two-condition check used by schedule-install validation (PR-4) and
+    dispatch-time validation (PR-5) — the two sites that consume
+    :class:`VaultState`. Returns ``True`` only when both halves hold:
+
+    1. ``name in state.installed_primitives`` — the primitive has been
+       installed into this vault (i.e. a ``PrimitiveInstallEvent``
+       was journaled and no later ``PrimitiveRemoveEvent`` popped it).
+    2. The kit-side catalog at ``kit_root / "templates"`` declares
+       the primitive's ``kind`` as :attr:`PrimitiveKind.AGENT`.
+
+    The second half walks the catalog via :func:`discover_primitives`
+    because ``VaultState.installed_primitives`` is ``dict[str, str]``
+    (name → version) and carries no kind information. The walk is
+    O(catalog-size) per call; PR-4 / PR-5 callers each invoke this
+    once per ``wiki schedule install`` or ``wiki run``, not in a hot
+    loop.
+
+    ``kit_root`` follows the existing convention used by
+    :func:`recipes.installed_outcome_verbs`, :func:`cli._kit_paths`,
+    and :func:`operations._load_contract` — it points at the repo-side
+    catalog root (the directory containing ``templates/``).
+
+    Recipe-load validation (PR-3) walks the recipe's ``primitives:``
+    closure before any install has happened; no ``VaultState`` exists
+    at that point, so this helper is not callable there. The closure
+    walk is a separate validation path; see
+    ``docs/specs/wiki-agents/spec.md`` §Invariants.
+
+    **Catalog-level errors propagate.** The helper delegates the kind
+    lookup to :func:`discover_primitives`, which runs the full
+    catalog validation (outcome-verb uniqueness, malformed
+    ``primitive.yaml``, etc.) as a side effect. A vault with a
+    catalog-corruption duplicate-outcome will see this helper raise
+    :class:`WikiError` from `check_outcome_verb_uniqueness` rather
+    than returning ``False`` — that's the right shape (broken
+    catalog should fail loudly anywhere it's touched), and PR-4 /
+    PR-5 callers want catalog corruption surfaced at dispatch rather
+    than silently treated as "agent missing." If a future
+    contributor needs a pure name+kind probe without the catalog
+    side effects, narrow the lookup to
+    ``load_primitive(kit_root / "templates" / "agents" / name)``
+    and document the change against this docstring.
+    """
+
+    if name not in state.installed_primitives:
+        return False
+    for primitive in discover_primitives(kit_root / "templates"):
+        if primitive.name == name:
+            return primitive.kind is PrimitiveKind.AGENT
+    return False
 
 
 def resolve_dependencies(primitives: list[Primitive]) -> list[Primitive]:
