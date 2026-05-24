@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit.research.providers.gemini`,
   `llm_wiki_kit.research.providers.semantic_scholar`,
   `templates/infrastructure/research-gemini`,
