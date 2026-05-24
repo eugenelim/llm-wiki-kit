@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** Task 20 implementer
 - **Touches:** `tests/evals/`, `tests/evalkit/` (test-only helpers),
   `tests/fixtures/eval-vaults/`, `.github/workflows/evals.yml`,

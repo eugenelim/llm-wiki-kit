@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*; the
 > plan says *how, in what order, with what verification*.
 
-- **Status:** Drafting
+- **Status:** Done
 - **Spec:** `docs/specs/task-17-wiki-run/spec.md`
 - **Owner:** eugenelim (RFC-0001 Task 17)
 

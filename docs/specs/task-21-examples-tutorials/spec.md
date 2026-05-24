@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** Task 21 implementer
 - **Touches:** `examples/family-mini/`, `examples/work-os-mini/`,
   `examples/conflict-pending/`, `examples/_seed/`,

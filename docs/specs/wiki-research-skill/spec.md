@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `core/files/skills/wiki-research/SKILL.md`
 - **Related:** RFC-0001 §"Task 26 — wiki-research SKILL.md",
   `docs/specs/wiki-research-skill/plan.md`,

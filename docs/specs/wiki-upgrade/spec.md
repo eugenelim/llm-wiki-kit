@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/upgrade.py`, `llm_wiki_kit/cli.py:_cmd_upgrade`
 - **Related:** RFC-0001 §"CLI surface (target)" line 134 +
   §"What changes vs. v1" line 151 (`Bash sync scripts → pip install
