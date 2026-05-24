@@ -625,13 +625,10 @@ an explicit dispatch branch grep-able in `journal.py`), the
        missing closure paths (truncate further back than AC2 to
        drop both `PrimitiveInstallEvent`s — actually, the
        fixture's contract is `cut_after_primitive=X` means "X
-       is in installed_primitives, X's renders partial"; to
-       cover BOTH, the builder needs a second invocation or a
-       different shape — pin in the fixture self-tests: an
-       extra fixture method `make_two_primitive_partial_install`
-       that ensures both primitives are in
-       `state.installed_primitives` AND both have missing
-       closure paths). Run `wiki upgrade --force-render
+       is in installed_primitives, X's renders partial"; the
+       step 7 helper `make_two_primitive_partial_install_vault`
+       covers the BOTH-primitives-partial shape with its own
+       self-test). Run `wiki upgrade --force-render
        --primitive people`. Assert: (a) EXACTLY ONE
        `PrimitiveForceRenderEvent(primitive="people")` row in
        the new-events slice and ZERO `PrimitiveForceRenderEvent`
