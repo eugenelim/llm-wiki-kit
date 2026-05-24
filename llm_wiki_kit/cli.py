@@ -863,6 +863,21 @@ def _cmd_upgrade(args: argparse.Namespace) -> int:
                     "if init was interrupted, run 'wiki init --adopt' to resume.",
                     file=sys.stderr,
                 )
+            else:
+                # Closing the recovery-UX gap that spec §Risks names: the
+                # scope-guard predicate is CLI-private (no ``wiki doctor``
+                # surface), so a one-line stderr diagnostic tells the user
+                # which primitive set was inspected and where to look
+                # next if they still suspect drift. Stderr keeps stdout
+                # automation-clean (the ``no recovery needed`` line is
+                # the only stdout signal).
+                count = len(state.installed_primitives)
+                word = "primitive" if count == 1 else "primitives"
+                print(
+                    f"note: checked {count} installed {word} against the catalog; "
+                    "run 'wiki doctor' if you suspect drift.",
+                    file=sys.stderr,
+                )
             _print_not_in_catalog_hint()
             return 0
 

@@ -579,6 +579,14 @@ _SUMMARY_FIXTURES: list[tuple[type, dict[str, object], str]] = [
         "primitive=core from=1.0.0 to=1.1.0",
     ),
     (
+        # wiki-upgrade-force-render: marker row for a force-render run.
+        # Pinned here so the journal-readers summary shape can't drift
+        # silently when the event class evolves.
+        PrimitiveForceRenderEvent,
+        {"primitive": "core", "version": "1.0.0"},
+        "primitive=core version=1.0.0",
+    ),
+    (
         ManagedRegionWriteEvent,
         {"file": "AGENTS.md", "region": "fields", "content_hash": "deadbeef"},
         "file=AGENTS.md region=fields",

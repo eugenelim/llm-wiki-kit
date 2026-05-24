@@ -143,8 +143,16 @@ def test_wiki_upgrade_force_render_clean_closure_short_circuits(
 
     assert cli.main(["upgrade", "--force-render"], kit_root=kit_root) == 0
 
-    out = capsys.readouterr().out
-    assert "wiki upgrade --force-render: no recovery needed (closure is complete)." in out
+    captured = capsys.readouterr()
+    assert "wiki upgrade --force-render: no recovery needed (closure is complete)." in captured.out
+    # Recovery-UX diagnostic: when state.installed_primitives is non-empty
+    # the scope-guard short-circuit prints a one-line stderr note naming
+    # the primitive count + the doctor follow-up. Pins the recovery-path
+    # signal so a future refactor doesn't silently drop it.
+    assert (
+        "note: checked 1 installed primitive against the catalog; "
+        "run 'wiki doctor' if you suspect drift."
+    ) in captured.err
     assert journal_path.read_bytes() == pre_journal_bytes
     # No ``.proposed`` sidecars anywhere under the vault.
     assert list(vault.rglob("*.proposed")) == []
@@ -263,6 +271,12 @@ def test_wiki_upgrade_force_render_empty_installed_primitives_hint(
         "note: this vault has no installed primitives; if init was interrupted, "
         "run 'wiki init --adopt' to resume."
     ) in captured.err
+    # The recovery-UX diagnostic (non-empty installed_primitives case)
+    # must NOT also fire here — the init-in-progress hint is the right
+    # signal for an empty vault, and a "checked 0 primitives" message
+    # would muddle the recovery story.
+    assert "checked 0 installed" not in captured.err
+    assert "run 'wiki doctor' if you suspect drift" not in captured.err
     assert read_events(vault.journal_path) == [
         e for e in read_events(vault.journal_path) if e.type == "vault.init"
     ]
