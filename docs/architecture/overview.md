@@ -234,6 +234,27 @@ collision because the kit only interpolates `{single_brace}` references and
 only inside the allowlist. ADR-0001 covers why we landed here instead of on
 Jinja.
 
+## Starters — clone-and-use distribution
+
+The `starters/` directory ships pre-rendered vaults (one per
+distribution-ready recipe) that a user can clone and use without
+installing the kit. They are the deterministic output of running the
+kit's renderer over a recipe plus the seed pages under
+`starters/_seed/`, and a CI gate
+(`python starters/regenerate.py --check`) holds them byte-equal to
+that output on every PR. Drift between starter and kit is
+mechanically impossible.
+
+The conflict-pending worked example under
+`docs/guides/how-to/_examples/conflict-pending/` is produced by the
+same regenerator — it is documentation infrastructure for the
+`wiki-conflict` how-to, not a usable starting point, and lives
+outside `starters/` for that reason.
+
+The full mechanics, the projection invariant, and the contracts that
+keep them honest are described in
+[`docs/architecture/starters.md`](starters.md).
+
 ## The kit-vs-vault distinction
 
 This repo contains both **the kit’s own code and docs** (what you read when

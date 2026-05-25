@@ -1,6 +1,9 @@
 # LLM Wiki Kit
 
-A Python package and template catalog for building LLM-maintained markdown wikis — Karpathy's LLM Wiki pattern, adapted. The kit ships a common core plus a catalog of droppable primitives, composed by recipes, so a non-engineer can `pip install llm-wiki-kit`, run one command, and get an Obsidian-compatible vault wired up for Claude (or any agent that reads `AGENTS.md`) to ingest into and operate on.
+A kit for building LLM-maintained markdown wikis — Karpathy's LLM Wiki pattern, adapted. Two ways to use it:
+
+- **Just use a vault.** Clone a [starter](starters/) (`family` or `work-os`), copy it into a folder of your own, open it in Claude Code. No Python install required.
+- **Build, customize, or upgrade a vault.** `pip install llm-wiki-kit`. Then `wiki init` for a new vault from a recipe, or `wiki upgrade` inside an existing vault (including a cloned starter) to pull in the kit's newest primitives.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Agent Skills Spec](https://img.shields.io/badge/skills-agentskills.io-blue.svg)](https://agentskills.io/specification)
@@ -8,11 +11,37 @@ A Python package and template catalog for building LLM-maintained markdown wikis
 
 ---
 
-## Quick start
+## Use a starter (no install required)
 
-Five steps, fresh machine to working vault.
+Three steps, fresh repo to working vault — no Python, no `pip install`.
 
-**1. Install.** Requires Python 3.11+.
+**1. Pick a starter.**
+
+| Starter                    | Best for                                                         |
+|----------------------------|------------------------------------------------------------------|
+| [`starters/family/`](starters/family/)   | A household OS — meals, medical, trips, action items.          |
+| [`starters/work-os/`](starters/work-os/) | A professional OS — stakeholders, customers, projects, decisions. |
+
+**2. Copy it to a folder of your own.**
+
+```bash
+cp -r starters/work-os ~/my-vault
+cd ~/my-vault
+```
+
+The vault is just markdown — works in any editor. For LLM-driven workflows, open it in Obsidian or Claude Code.
+
+**3. Talk to Claude.** Open Claude Code (or any agent that reads `AGENTS.md`) at the vault root. It will read `AGENTS.md` and `CORE.md` to learn what the vault is and what skills it can run. Then try one of the [prompts below](#talking-to-claude).
+
+See [`starters/README.md`](starters/README.md) for the full clone-and-go workflow, including how to pull in kit upgrades later with `wiki upgrade`.
+
+---
+
+## Build or maintain a vault (`pip install`)
+
+For authors who want to scaffold a new vault from scratch, customize existing primitives, or upgrade a cloned starter against the kit's latest output. Requires Python 3.11+.
+
+**1. Install.**
 
 ```bash
 pip install llm-wiki-kit
@@ -20,20 +49,29 @@ pip install llm-wiki-kit
 pipx install llm-wiki-kit
 ```
 
-**2. Init a vault.** Pick a recipe — `personal` (smallest, start here), `family`, or `work-os`.
+**2. Init a new vault** (or skip if you already cloned a starter).
 
 ```bash
 wiki init my-vault --recipe personal
 cd my-vault
 ```
 
-**3. Version it.** `wiki init` initializes a git repository in the new vault by default and makes one initial commit covering the freshly-rendered tree. Pass `--no-git` to step 2 if you'd rather manage versions yourself (or you have no global `git config user.name`/`user.email` set yet). The kit's `.gitignore` ships either way — it covers `*.proposed` sidecars, OS junk, and search-index runtime.
+Pick a recipe — `personal` (smallest, start here), `family`, or `work-os`. `wiki init` initializes a git repository by default and makes one initial commit covering the freshly-rendered tree; pass `--no-git` to opt out. The kit's `.gitignore` ships either way — it covers `*.proposed` sidecars, OS junk, and search-index runtime.
 
-**4. Open it.** The vault is Obsidian-compatible: in Obsidian, *File → Open vault* → pick `my-vault/`. Or just open the folder in any editor — it's regular markdown.
+**3. Or upgrade an existing vault** — including a cloned starter.
 
-**5. Talk to Claude.** Open Claude Code (or any agent that reads `AGENTS.md`) at the vault root. It will read `AGENTS.md` and `CORE.md` to learn what the vault is and what skills it can run. Then paste one of the prompts below.
+```bash
+cd ~/my-vault          # cloned from starters/, or built with wiki init
+wiki upgrade
+```
 
-A 20-minute walkthrough lives in [`docs/guides/tutorials/tutorial-1-first-vault.md`](docs/guides/tutorials/tutorial-1-first-vault.md), with a deeper `work-os` tour in [`tutorial-2-work-os-walkthrough.md`](docs/guides/tutorials/tutorial-2-work-os-walkthrough.md). Browse `examples/family-mini/` and `examples/work-os-mini/` to see what a rendered vault looks like before installing.
+`wiki upgrade` re-renders managed regions, installs new primitives the recipe now ships, and routes any user-edited files through `safe_write`'s drift detection — conflicts land as `.proposed` sidecars, never as silent overwrites.
+
+**4. Open it.** The vault is Obsidian-compatible: *File → Open vault* → pick the vault folder. Or just open the folder in any markdown editor.
+
+**5. Talk to Claude.** Same as the starter path above.
+
+A 20-minute walkthrough lives in [`docs/guides/tutorials/tutorial-1-first-vault.md`](docs/guides/tutorials/tutorial-1-first-vault.md), with a deeper `work-os` tour in [`tutorial-2-work-os-walkthrough.md`](docs/guides/tutorials/tutorial-2-work-os-walkthrough.md).
 
 ## Talking to Claude
 
@@ -145,7 +183,7 @@ wiki journal {tail,grep,explain}     Read the vault journal.
 
 ## How to fix a `.proposed` sidecar
 
-The kit never silently overwrites a file you have edited. If your edits drift from the kit's last known state, the next write lands as `<path>.proposed` next to the original, and `wiki doctor` flags it. The walkthrough — including a worked example against the committed `examples/conflict-pending/` vault — is in [`docs/guides/how-to/resolve-a-conflict.md`](docs/guides/how-to/resolve-a-conflict.md).
+The kit never silently overwrites a file you have edited. If your edits drift from the kit's last known state, the next write lands as `<path>.proposed` next to the original, and `wiki doctor` flags it. The walkthrough — including a worked example against the committed `docs/guides/how-to/_examples/conflict-pending/` vault — is in [`docs/guides/how-to/resolve-a-conflict.md`](docs/guides/how-to/resolve-a-conflict.md).
 
 ## Where the docs live
 
