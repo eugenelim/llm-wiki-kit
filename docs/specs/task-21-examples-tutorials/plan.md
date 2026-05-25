@@ -258,8 +258,15 @@ mode explicitly per the work-loop's PLAN convention.
     exits 0 on clean, non-zero with a unified-diff fragment on
     divergence.
   - `_apply_mode()` — same build-then-canonical-basename
-    discipline; final step `os.replace`s the tmp dir over the
-    committed vault directory atomically.
+    discipline; final step swaps the new tree into place via
+    `shutil.copytree` into a sibling staging directory on the same
+    filesystem followed by two `os.rename` calls (committed →
+    backup, then staged → committed), with rollback on the second
+    rename's failure. POSIX `rename(2)` does not allow a
+    single-call replace of a non-empty directory, so a brief
+    in-process window where the committed path is absent is
+    unavoidable; documented and asserted by `apply_vault`'s
+    contract.
   - Every `wiki init` invocation passes recipe variables as
     empty strings (except `recipe_name`, which the recipe loader
     already populates) so the rendered `{owner_*}` substitutions

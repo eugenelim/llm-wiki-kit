@@ -1,6 +1,6 @@
 # starters/
 
-Three committed, ready-to-use Obsidian vaults. Pick one, copy it to a
+Two committed, ready-to-use Obsidian vaults. Pick one, copy it to a
 folder of your own, open it in Claude Code (or any agent that reads
 `AGENTS.md`). You do **not** need to `pip install` anything to use a
 starter vault — the kit produced these for you.

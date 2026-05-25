@@ -589,7 +589,12 @@ def main(argv: list[str] | None = None) -> int:
         "--check", action="store_true", help="Verify committed vaults match a fresh rebuild."
     )
     mode.add_argument(
-        "--apply", action="store_true", help="Rebuild all committed vaults atomically."
+        "--apply",
+        action="store_true",
+        help=(
+            "Rebuild all committed vaults (swap via two same-filesystem "
+            "renames with rollback; see module docstring)."
+        ),
     )
     args = parser.parse_args(argv)
     if args.check:
