@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -444,6 +444,30 @@ def _read_paths_from_tool_use(block: dict[str, Any]) -> list[str]:
     return [path] if isinstance(path, str) else []
 
 
+def first_skill_touched(result: ClaudeRunResult) -> str | None:
+    """Return the first SKILL name Claude touched, by either surface.
+
+    "Touched" means either a ``Skill(skill=<name>)`` tool_use OR a
+    ``Read`` of a path matching ``skills/<name>/SKILL.md``. Returns
+    the matching name from whichever tool call appears earlier in
+    the transcript, or ``None`` if no SKILL was touched. Used by
+    first-touch trigger assertions that care which SKILL Claude
+    reached for *first*, regardless of how the harness wired
+    discovery.
+    """
+
+    skill_path_re = re.compile(r"skills/([^/]+)/SKILL\.md")
+    for block in _iter_tool_uses(result.events):
+        name = _skill_name_from_tool_use(block)
+        if name is not None:
+            return name
+        for path in _read_paths_from_tool_use(block):
+            match = skill_path_re.search(path)
+            if match:
+                return match.group(1)
+    return None
+
+
 def ordered_skill_reads(result: ClaudeRunResult) -> list[str]:
     """Return SKILL dir-names Claude Read, in transcript (emission) order.
 
@@ -462,6 +486,110 @@ def ordered_skill_reads(result: ClaudeRunResult) -> list[str]:
             if match:
                 names.append(match.group(1))
     return names
+
+
+class ToolUse(NamedTuple):
+    """One ``tool_use`` content block, exposed by name not position.
+
+    ``name`` is the tool ID (``"Bash"`` / ``"Read"`` / ``"Write"`` /
+    ``"Skill"`` etc.). ``input`` is the block's input dict — callers
+    read ``input["command"]`` for Bash, ``input["file_path"]`` for
+    Read/Write, ``input["skill"]`` for Skill.
+    """
+
+    name: str
+    input: dict[str, Any]
+
+
+def final_assistant_text(result: ClaudeRunResult) -> str:
+    """Return Claude's final user-facing text response, joined across blocks.
+
+    Walks ``result.events`` in *reverse* and returns the first
+    ``result``-event's ``result`` field, then falls back to the
+    terminal ``assistant`` event's joined text blocks. Walking
+    backwards is load-bearing — an intermediate ``result`` event
+    earlier in the stream (rare but observed across stream-json
+    shape revisions) is overridden by the genuine terminal one.
+    """
+
+    last_assistant_text = ""
+    for ev in reversed(result.events):
+        ev_type = ev.get("type")
+        if ev_type == "result":
+            value = ev.get("result")
+            if isinstance(value, str) and value.strip():
+                return value
+        if not last_assistant_text and ev_type == "assistant":
+            message = ev.get("message")
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            chunks: list[str] = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        chunks.append(text)
+            if chunks:
+                last_assistant_text = "".join(chunks)
+    return last_assistant_text
+
+
+def all_assistant_text(result: ClaudeRunResult) -> str:
+    """Return every assistant text block, concatenated in stream order.
+
+    Used by AC-6-style assertions that inspect what the wizard said
+    across the whole conversation, not just the final closing message.
+    The verb walk-through happens in earlier assistant turns that
+    :func:`final_assistant_text` deliberately excludes.
+    """
+
+    chunks: list[str] = []
+    for ev in result.events:
+        if ev.get("type") != "assistant":
+            continue
+        message = ev.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    chunks.append(text)
+    return "\n".join(chunks)
+
+
+def count_non_blank_lines(text: str) -> int:
+    """Count non-blank ``\\n``-separated lines (per spec AC 7 line bound).
+
+    Blank lines and trailing whitespace don't count; wrapped terminal
+    lines count as one logical line. Used by the short-circuit
+    assertions in the wiki-bootstrap evals.
+    """
+
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+def ordered_tool_calls(result: ClaudeRunResult) -> list[ToolUse]:
+    """Return every ``tool_use`` content block in transcript order.
+
+    Used by behavior evals that need to assert both positive evidence
+    (a given Read happened) and negative evidence (a given Bash never
+    ran) against Claude's full tool-call log within a single run.
+    """
+
+    out: list[ToolUse] = []
+    for block in _iter_tool_uses(result.events):
+        name = block.get("name")
+        input_payload = block.get("input")
+        if isinstance(name, str) and isinstance(input_payload, dict):
+            out.append(ToolUse(name=name, input=input_payload))
+    return out
 
 
 def assert_skill_loaded(result: ClaudeRunResult, skill_name: str) -> None:
@@ -565,10 +693,16 @@ __all__ = [
     "ClaudeBinaryMissing",
     "ClaudeRunResult",
     "EvalkitClaudeRunner",
+    "ToolUse",
+    "all_assistant_text",
     "assert_journal_has",
     "assert_skill_loaded",
+    "count_non_blank_lines",
+    "final_assistant_text",
+    "first_skill_touched",
     "journal_path",
     "ordered_skill_reads",
+    "ordered_tool_calls",
     "read_journal_events",
     "redact",
     "run_claude",

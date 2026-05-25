@@ -37,13 +37,21 @@ the merge.
 
 ## Available skills
 
-This vault ships with seven baseline skills. Load the SKILL.md and follow
-it — don't reinvent the workflow. Each lives under `skills/<name>/`.
+Available baseline skills, all shipped in every vault. Load the SKILL.md
+and follow it — don't reinvent the workflow. Each lives under
+`skills/<name>/`.
 
 - **`ingest`** — unified entry point for any source. Detects source-type
   (URL, document, transcript, paste) and content-type (recipe, meeting,
   receipt, etc.), then routes. Use this whenever a user drops or pastes
   anything for ingestion.
+- **`wiki-agent`** — help the user install, rebind, or stop using an
+  agent (the `kind: agent` primitive the kit passes via
+  `claude --agent <name>` at scheduled-run time). Load whenever the
+  user names an agent or asks about identity for a scheduled run.
+- **`wiki-bootstrap`** — first-run wizard for fresh vaults. Loads on
+  any onboarding-shaped phrase; short-circuits to a brief no-op
+  message if the vault is already bootstrapped.
 - **`wiki-search`** — search the vault by content and frontmatter
   (`--type`, `--tag`, `--status`). Prefer this over generic Grep for
   questions about *vault content* — it returns ranked pages with

@@ -77,7 +77,7 @@ def test_init_renders_core_only_vault(tmp_path: Path, core_only_kit: Path) -> No
     assert exit_code == 0
 
     # (a) Expected file tree: AGENTS.md, CORE.md, frontmatter.schema.yaml,
-    # .gitignore at the root; seven baseline skills under skills/.
+    # .gitignore at the root; the full baseline-skill set under skills/.
     expected_top_level = {
         "AGENTS.md",
         "CORE.md",
@@ -98,6 +98,9 @@ def test_init_renders_core_only_vault(tmp_path: Path, core_only_kit: Path) -> No
         # PR-7 of RFC-0004 wiki-agents ships the vault-side
         # ``wiki-agent`` SKILL alongside the agent catalog.
         "wiki-agent",
+        # ``wiki-bootstrap`` ships in every vault per
+        # ``docs/specs/wiki-bootstrap/spec.md``.
+        "wiki-bootstrap",
     }
     skills_dir = vault / "skills"
     assert skills_dir.is_dir()
