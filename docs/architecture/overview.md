@@ -13,9 +13,11 @@ Two things, in one Python package:
 1. **A template catalog** the CLI reads from. Most “work” in this repo is
    authoring templates (primitives and recipes), not writing Python.
 
-Together these let a non-engineer install the kit and get a vault shaped to
-their life or work, with skills and schemas already wired up for Claude (or
-any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
+Together these let an engineering-comfortable author install the kit and
+get a vault shaped to their life or work, with skills and schemas already
+wired up for Claude (or any agent that reads `AGENTS.md` and SKILL.md
+files) to maintain. Audiences who cannot install the kit themselves clone
+a [starter](../../starters/) instead — see RFC-0005 and RFC-0006.
 
 ## Layout
 

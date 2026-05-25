@@ -11,15 +11,32 @@ are scaffolding around it; this file is the why.
 
 ## Mission
 
-`llm-wiki-kit` makes it practical for a non-engineer — a working professional
-or a family — to keep a useful Obsidian wiki that an LLM can read, ingest into,
-and operate on. The kit ships a common core plus a catalog of droppable
-primitives, composed by recipes, so each user gets a vault shaped to their
-actual life or work without having to design one from scratch.
+`llm-wiki-kit` makes it practical for one technically-comfortable author —
+an engineer, an engineering-adjacent professional, or the tech-confident
+member of a household — to set up and maintain an Obsidian wiki that they
+and the people around them can use, and that an LLM can read, ingest into,
+and operate on. The kit serves the author; the downstream readers (family
+members, teammates, stakeholders) consume the resulting vault in whatever
+editor or chat client they already use, and need no relationship with the
+kit itself.
 
-The project exists because the LLM Wiki pattern (Karpathy, 2025) is genuinely
-valuable but currently lives in scattered, hand-rolled vaults that only their
-authors can maintain. The kit’s job is to make that pattern reproducible.
+The kit ships a common core plus a catalog of droppable primitives,
+composed by recipes, so each author gets a vault shaped to their actual
+life or work without having to design one from scratch.
+
+Audiences who cannot install the kit themselves — true non-engineers,
+households or teams without a tech-comfortable maintainer — are a
+Tier 2 audience served by *starter distributions*: pre-rendered vaults
+producible from the kit but consumable without it (see RFC-0006 and
+[`starters/README.md`](../starters/README.md)). The kit produces them; the
+user clones one. The library boundary in Principle 5 is unchanged,
+because a starter is a CI-generated projection of the library, not a
+parallel application.
+
+The project exists because the LLM Wiki pattern (Karpathy, 2025) is
+genuinely valuable but currently lives in scattered, hand-rolled vaults
+that only their authors can maintain. The kit’s job is to make that
+pattern reproducible.
 
 ## Scope
 
@@ -88,9 +105,12 @@ The values that resolve ties when reasonable people disagree. Six, no more.
    action appends an event before touching disk. No separate manifests, no
    parallel state.
 1. **Dependency-minimal.** Runtime deps are `pyyaml` + `pydantic>=2` + stdlib.
-   New runtime deps require an ADR. The single biggest reason: non-engineer
-   users can’t troubleshoot install failures. The kit must `pipx install`
-   cleanly on a fresh Python 3.11 every time.
+   New runtime deps require an ADR. The single biggest reason: even the
+   engineering-comfortable author the kit serves should not have to
+   troubleshoot install failures, and the Tier 2 audience (who clones a
+   starter without installing the kit at all) is best served by keeping
+   the install path narrow if and when they later want kit upgrades.
+   The kit must `pipx install` cleanly on a fresh Python 3.11 every time.
 1. **Common core, droppable primitives, composed by recipes.** The kit is
    not one application — it’s an engine plus a catalog. Every audience-
    specific feature lives in a primitive that someone could remove without
@@ -102,7 +122,9 @@ The values that resolve ties when reasonable people disagree. Six, no more.
 1. **Eat our own dogfood.** This project follows the same `AGENTS.md` /
    charter / ADR / RFC / spec discipline it ships to its users. If the
    discipline doesn’t hold up under daily use here, it’s not ready to
-   ship to anyone else.
+   ship to anyone else. This discipline is for *kit development*; the
+   vaults the kit produces do **not** inherit ADR/RFC/spec ceremony,
+   per Charter §Scope's exclusion of engineering-team primitives.
 
 ## What’s NOT in this charter
 
