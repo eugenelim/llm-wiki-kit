@@ -1,8 +1,8 @@
-# AGENTS.md — work-os-mini
+# AGENTS.md — family
 
 > This file is the canonical contract for any agent (Claude, Codex, Cursor,
 > Copilot) working inside this vault. `CLAUDE.md` is a symlink to it.
-> The wiki was created with the `work-os` recipe.
+> The wiki was created with the `family` recipe.
 
 ## What this vault is
 

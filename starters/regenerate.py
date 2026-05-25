@@ -1,16 +1,32 @@
 #!/usr/bin/env python3
-"""Regenerate the ``examples/*-mini/`` and ``examples/conflict-pending/`` vaults.
+"""Regenerate the committed starter vaults and the conflict-pending example.
 
 Two modes:
 
 * ``--check`` — rebuild all three vaults into a tmp dir, normalize
   journal lines per spec AC6, byte-compare against the committed
   trees. Exit 0 on clean, non-zero with a unified-diff fragment on
-  divergence. CI gate: ``tests/integration/test_examples_regenerable.py::
+  divergence. CI gate: ``tests/integration/test_starters_regenerable.py::
   test_regenerate_check_mode_clean``.
-* ``--apply`` — same build into a tmp dir, then ``os.replace`` the
-  tmp dir over the committed ``examples/<vault>/``. Atomic by design;
-  a crash mid-swap leaves the committed tree untouched.
+* ``--apply`` — same build into a tmp dir, then swap the new tree
+  over the committed location via two same-filesystem ``os.rename``
+  calls (``committed → backup``, then ``staged → committed``) with
+  rollback on the second-rename failure. POSIX ``rename(2)`` does
+  not allow a single-call replace of a non-empty directory, so a
+  small in-process window where the committed path is briefly absent
+  is unavoidable. An in-process crash during the second rename is
+  rolled back; an in-process double-fault preserves the backup at a
+  named path and raises with the recovery command. See
+  ``apply_vault`` for the full contract.
+
+Per RFC-0006, ``family`` and ``work-os`` render into
+``starters/<name>/`` and ship as first-class starter distributions
+consumable without ``pip install``. The ``personal`` recipe renders
+into ``docs/guides/how-to/_examples/conflict-pending/`` as the worked
+example for ``docs/guides/how-to/resolve-a-conflict.md`` — it is
+documentation infrastructure, not a starter. The projection invariant
+(starter == deterministic output of recipe + seeds + the kit) applies
+to all three.
 
 Spec: ``docs/specs/task-21-examples-tutorials/spec.md``.
 Plan: ``docs/specs/task-21-examples-tutorials/plan.md`` §Steps T2 / T3.
@@ -38,18 +54,38 @@ sys.path.insert(0, str(REPO_ROOT))
 from llm_wiki_kit import cli  # noqa: E402
 from llm_wiki_kit.write_helper import safe_write  # noqa: E402
 
-EXAMPLES_DIR = REPO_ROOT / "examples"
-SEED_ROOT = EXAMPLES_DIR / "_seed"
+STARTERS_DIR = REPO_ROOT / "starters"
+SEED_ROOT = STARTERS_DIR / "_seed"
+CONFLICT_PARENT = REPO_ROOT / "docs" / "guides" / "how-to" / "_examples"
 
-# Recipe → target.name → seed directory. The recipe→target mapping is
-# load-bearing (AC6 byte-compares kit-rendered files against committed
-# bytes; the rendered files carry `{vault_name}` substitutions keyed
-# to `target.name`).
-RECIPE_TARGETS: dict[str, str] = {
-    "family": "family-mini",
-    "work-os": "work-os-mini",
-    "personal": "conflict-pending",
+# Recipe → (target basename, parent directory).
+#
+# The basename is what becomes ``target.name`` on the build and gets
+# baked into ``{vault_name}`` substitutions in every kit-rendered file
+# (AC6 byte-compares those substitutions). The parent directory is
+# where the committed tree lives — ``starters/`` for the two
+# distribution-shape vaults (per RFC-0006), and
+# ``docs/guides/how-to/_examples/`` for the conflict-pending worked
+# example (also per RFC-0006, since it is documentation infrastructure,
+# not a starter).
+RECIPE_TARGETS: dict[str, tuple[str, Path]] = {
+    "family": ("family", STARTERS_DIR),
+    "work-os": ("work-os", STARTERS_DIR),
+    "personal": ("conflict-pending", CONFLICT_PARENT),
 }
+
+
+def _committed_path(recipe: str) -> Path:
+    """Return the on-disk path where ``recipe``'s committed tree lives."""
+
+    basename, parent = RECIPE_TARGETS[recipe]
+    return parent / basename
+
+
+def _committed_basename(recipe: str) -> str:
+    """Return the ``target.name`` basename ``recipe`` builds under."""
+
+    return RECIPE_TARGETS[recipe][0]
 
 # Fixed content strings for the drift-replay sequence. Pulled to module
 # scope so the §Risks rationale in plan.md and the body of
@@ -103,8 +139,8 @@ NORMALIZED_JOURNAL_KEYS: frozenset[str] = frozenset(
 IGNORED_FILES: frozenset[str] = frozenset({".DS_Store", "Thumbs.db"})
 
 # The personal recipe's `wiki/people/` directory holds the drifted page
-# for `examples/conflict-pending/` — see spec §Behavior "How-to step 1"
-# and §Outputs.
+# for `docs/guides/how-to/_examples/conflict-pending/` — see spec
+# §Behavior "How-to step 1" and §Outputs.
 CONFLICT_PAGE_REL = "wiki/people/example-contact.md"
 
 
@@ -182,7 +218,7 @@ def build_vault(recipe: str, target: Path) -> None:
             f"build_vault: recipe must be 'family' or 'work-os'; got {recipe!r}. "
             "For the personal/conflict-pending vault use build_conflict_pending()."
         )
-    expected = RECIPE_TARGETS[recipe]
+    expected = _committed_basename(recipe)
     if target.name != expected:
         raise ValueError(
             f"build_vault: target.name must equal {expected!r} for recipe {recipe!r}; "
@@ -191,10 +227,11 @@ def build_vault(recipe: str, target: Path) -> None:
 
     _assert_recipe_variables_stable(recipe)
 
-    # `--no-git` keeps committed example vaults free of a `.git/`
+    # `--no-git` keeps committed starter vaults free of a `.git/`
     # directory and the corresponding `VaultGitInitializedEvent` line
-    # in the journal — the examples are reference content, not git
-    # repositories. See `docs/specs/wiki-init-git/spec.md`.
+    # in the journal — the committed vaults are reference content
+    # (rebuildable from the kit), not standalone git repositories.
+    # See `docs/specs/wiki-init-git/spec.md`.
     rc = cli.main(["init", str(target), "--recipe", recipe, "--no-git"])
     if rc != 0:
         raise RuntimeError(f"`wiki init --recipe {recipe}` exited {rc}")
@@ -208,7 +245,7 @@ def build_vault(recipe: str, target: Path) -> None:
             safe_write(
                 Path("wiki") / rel,
                 content,
-                by=f"examples-{recipe}-seed",
+                by=f"starter-{recipe}-seed",
                 journal_path=journal_path,
             )
 
@@ -231,16 +268,18 @@ def build_conflict_pending(target: Path) -> None:
     and AC6 normalizes the `timestamp` JSON key out of comparison.
     """
 
-    if target.name != RECIPE_TARGETS["personal"]:
+    expected = _committed_basename("personal")
+    if target.name != expected:
         raise ValueError(
             f"build_conflict_pending: target.name must equal "
-            f"{RECIPE_TARGETS['personal']!r}; got {target.name!r}."
+            f"{expected!r}; got {target.name!r}."
         )
 
     _assert_recipe_variables_stable("personal")
 
-    # `--no-git` for the same reason as `build_vault`: committed
-    # example vaults are reference content, not git repositories.
+    # `--no-git` for the same reason as `build_vault`: the committed
+    # vault is reference content (rebuildable from the kit), not a
+    # standalone git repository.
     rc = cli.main(["init", str(target), "--recipe", "personal", "--no-git"])
     if rc != 0:
         raise RuntimeError(f"`wiki init --recipe personal` exited {rc}")
@@ -251,7 +290,7 @@ def build_conflict_pending(target: Path) -> None:
     safe_write(
         Path(CONFLICT_PAGE_REL),
         _REPLAY_CONTENTS["initial"],
-        by="examples-conflict-replay",
+        by="conflict-example-replay",
         journal_path=journal_path,
     )
     # Documented `safe_write` carve-out (spec §Constraints): simulate
@@ -263,7 +302,7 @@ def build_conflict_pending(target: Path) -> None:
     safe_write(
         Path(CONFLICT_PAGE_REL),
         _REPLAY_CONTENTS["kit_update"],
-        by="examples-conflict-replay",
+        by="conflict-example-replay",
         journal_path=journal_path,
     )
 
@@ -333,7 +372,7 @@ def _build_into_tmp(recipe: str) -> tuple[Path, Path]:
     """
 
     tmp_parent = Path(tempfile.mkdtemp(prefix="llm-wiki-kit-regen-"))
-    built = tmp_parent / RECIPE_TARGETS[recipe]
+    built = tmp_parent / _committed_basename(recipe)
     if recipe == "personal":
         build_conflict_pending(built)
     else:
@@ -394,8 +433,9 @@ def check_mode() -> int:
 
     fragments: list[str] = []
     diverged_vaults: list[str] = []
-    for recipe, vault_name in RECIPE_TARGETS.items():
-        committed = EXAMPLES_DIR / vault_name
+    for recipe in RECIPE_TARGETS:
+        vault_name = _committed_basename(recipe)
+        committed = _committed_path(recipe)
         if not committed.is_dir():
             fragments.append(f"committed vault {committed} does not exist yet\n")
             diverged_vaults.append(vault_name)
@@ -415,7 +455,7 @@ def check_mode() -> int:
             sys.stderr.write(f)
         sys.stderr.write(
             f"\n{len(diverged_vaults)} vault(s) diverged: {', '.join(diverged_vaults)}. "
-            "Run `python examples/regenerate.py --apply` after reviewing the diffs.\n"
+            "Run `python starters/regenerate.py --apply` after reviewing the diffs.\n"
         )
         return 1
     return 0
@@ -520,8 +560,12 @@ def apply_vault(recipe: str, committed: Path) -> None:
 
 def apply_mode() -> int:
     completed: list[str] = []
-    for recipe, vault_name in RECIPE_TARGETS.items():
-        committed = EXAMPLES_DIR / vault_name
+    for recipe in RECIPE_TARGETS:
+        vault_name = _committed_basename(recipe)
+        committed = _committed_path(recipe)
+        # Ensure the parent exists — first --apply run on a fresh
+        # checkout may pre-date the moved layout.
+        committed.parent.mkdir(parents=True, exist_ok=True)
         try:
             apply_vault(recipe, committed)
         except Exception as exc:
@@ -545,7 +589,12 @@ def main(argv: list[str] | None = None) -> int:
         "--check", action="store_true", help="Verify committed vaults match a fresh rebuild."
     )
     mode.add_argument(
-        "--apply", action="store_true", help="Rebuild all committed vaults atomically."
+        "--apply",
+        action="store_true",
+        help=(
+            "Rebuild all committed vaults (swap via two same-filesystem "
+            "renames with rollback; see module docstring)."
+        ),
     )
     args = parser.parse_args(argv)
     if args.check:

@@ -515,7 +515,7 @@ And the spec's acceptance-criteria checkboxes are all ticked.
   *and* an autouse fixture in `tests/conftest.py` to keep
   developer-dotfile env state from leaking into tests, in the
   same PR.
-- **Bundling `examples/`, `docs/`, `tests/`, or `tools/`.** Not
+- **Bundling `starters/`, `docs/`, `tests/`, or `tools/`.** Not
   runtime assets.
 - **Deriving the orphan-territory set from journaled writes.**
   That's `qC10 + C6`. Shipped in its own retro-cleanup PR on

@@ -1,7 +1,7 @@
 # CORE.md — what this wiki *is*
 
 > This vault was created with the `family` recipe. The name on
-> disk is `family-mini`.
+> disk is `family`.
 
 ## Purpose
 

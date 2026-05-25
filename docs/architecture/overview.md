@@ -13,9 +13,11 @@ Two things, in one Python package:
 1. **A template catalog** the CLI reads from. Most “work” in this repo is
    authoring templates (primitives and recipes), not writing Python.
 
-Together these let a non-engineer install the kit and get a vault shaped to
-their life or work, with skills and schemas already wired up for Claude (or
-any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
+Together these let an engineering-comfortable author install the kit and
+get a vault shaped to their life or work, with skills and schemas already
+wired up for Claude (or any agent that reads `AGENTS.md` and SKILL.md
+files) to maintain. Audiences who cannot install the kit themselves clone
+a [starter](../../starters/) instead — see RFC-0005 and RFC-0006.
 
 ## Layout
 
@@ -57,9 +59,16 @@ any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
 │   ├── family.yaml
 │   ├── work-os.yaml
 │   └── personal.yaml
-├── examples/                  # demo vaults (browsable before installing)
-│   ├── family-mini/
-│   └── work-os-mini/
+├── starters/                  # ready-to-clone starter vaults (RFC-0006);
+│   │                          # `conflict-pending`, also produced by this
+│   │                          # regenerator, lives under
+│   │                          # `docs/guides/how-to/_examples/` (it is the
+│   │                          # worked example for resolve-a-conflict.md,
+│   │                          # not a usable starting point).
+│   ├── family/
+│   ├── work-os/
+│   ├── _seed/                 # hand-authored seed pages copied into starters
+│   └── regenerate.py          # rebuild starters from recipes + seeds
 ├── tests/
 │   ├── unit/                  # Python unit tests
 │   ├── fixtures/              # seed vaults for integration + evals
@@ -229,6 +238,27 @@ templates passes through completely unchanged — there’s no delimiter
 collision because the kit only interpolates `{single_brace}` references and
 only inside the allowlist. ADR-0001 covers why we landed here instead of on
 Jinja.
+
+## Starters — clone-and-use distribution
+
+The `starters/` directory ships pre-rendered vaults (one per
+distribution-ready recipe) that a user can clone and use without
+installing the kit. They are the deterministic output of running the
+kit's renderer over a recipe plus the seed pages under
+`starters/_seed/`, and a CI gate
+(`python starters/regenerate.py --check`) holds them byte-equal to
+that output on every PR. Drift between starter and kit is
+mechanically impossible.
+
+The conflict-pending worked example under
+`docs/guides/how-to/_examples/conflict-pending/` is produced by the
+same regenerator — it is documentation infrastructure for the
+`wiki-conflict` how-to, not a usable starting point, and lives
+outside `starters/` for that reason.
+
+The full mechanics, the projection invariant, and the contracts that
+keep them honest are described in
+[`docs/architecture/starters.md`](starters.md).
 
 ## The kit-vs-vault distinction
 

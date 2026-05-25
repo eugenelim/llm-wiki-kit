@@ -1,4 +1,4 @@
-# .gitignore — work-os-mini
+# .gitignore — family
 #
 # Runtime artifacts the kit derives but does not own as input. Commit
 # everything else (the journal IS committed — it's the kit's source of

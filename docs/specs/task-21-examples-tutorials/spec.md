@@ -5,46 +5,45 @@
 
 - **Status:** Implemented
 - **Owner:** Task 21 implementer
-- **Touches:** `examples/family-mini/`, `examples/work-os-mini/`,
-  `examples/conflict-pending/`, `examples/_seed/`,
-  `examples/regenerate.py`, `examples/README.md`,
+- **Touches:** `starters/family/`, `starters/work-os/`,
+  `docs/guides/how-to/_examples/conflict-pending/`, `starters/_seed/`,
+  `starters/regenerate.py`, `starters/README.md`,
   `docs/guides/tutorials/{tutorial-1-first-vault,tutorial-2-work-os-walkthrough}.md`,
   `docs/guides/tutorials/README.md`,
   `docs/guides/how-to/resolve-a-conflict.md`,
   `docs/guides/how-to/README.md`,
   `tests/integration/test_tutorials.py`,
-  `tests/integration/test_examples_regenerable.py`
+  `tests/integration/test_starters_regenerable.py`
 - **Related:** RFC-0001 §"Task 21 — Example vaults and tutorials",
   `docs/specs/task-21-examples-tutorials/plan.md`,
   `core/files/skills/wiki-conflict/SKILL.md`
-- **Constrained by:** ADR-0002 (journal as state truth — examples and
+- **Constrained by:** ADR-0002 (journal as state truth — starters and
   tutorials never bypass `safe_write`/the journal), ADR-0004 (drift
   detection — the conflict how-to operates on a real proposal
   sidecar), AGENTS.md "Runtime dependencies" (no new runtime dep),
-  AGENTS.md "Propose new top-level directories via RFC" (`examples/`
-  is a new top-level directory authorized by RFC-0001 Task 21's
-  literal text "`family-mini/`, `work-os-mini/`" — no separate RFC
-  needed; `conflict-pending/` is a third example vault under the
-  same `examples/` umbrella and does not introduce a separate
-  top-level), CHARTER §Mission ("non-engineer — a working
-  professional or a family" — tutorial voice is for non-engineers,
-  not API authors)
+  AGENTS.md "Propose new top-level directories via RFC" (`starters/`
+  is a top-level directory authorized by RFC-0006; the conflict-pending
+  worked example lives under `docs/guides/how-to/_examples/` and does
+  not introduce a separate top-level), CHARTER §Mission (per RFC-0005,
+  the kit serves the engineering-comfortable vault author; tutorials
+  speak to that author, not to API maintainers)
 
 ## What this is
 
 The user-facing on-ramp for v2.0.0: three pre-shaped vaults a
-non-engineer can browse to see what the kit produces, and the first
-two [Diátaxis](https://diataxis.fr/) **tutorials** plus one **how-to**
-that walk a reader from `pip install llm-wiki-kit` through a working
-vault they understand.
+reader can browse (Tier 2 users per RFC-0005 can clone the two
+starter vaults directly), and the first two
+[Diátaxis](https://diataxis.fr/) **tutorials** plus one **how-to**
+that walk an engineering-comfortable author from
+`pip install llm-wiki-kit` through a working vault they understand.
 
 In scope:
 
-- `examples/family-mini/` and `examples/work-os-mini/` — committed,
+- `starters/family/` and `starters/work-os/` — committed,
   regenerable vaults with at least one (target 3–5) hand-authored
   seed page per recipe-created `wiki/<area>/` directory so a
   first-time reader sees a *populated* vault, not empty scaffolding.
-- `examples/conflict-pending/` — a third committed vault, smallest
+- `docs/guides/how-to/_examples/conflict-pending/` — a third committed vault, smallest
   recipe (`personal`), shaped with one drifted page and the matching
   `PageProposalEvent` already in its journal. The how-to operates on
   a copy of this vault, so the reader does not need to construct
@@ -54,12 +53,12 @@ In scope:
   operation → read the journal).
 - `docs/guides/tutorials/tutorial-2-work-os-walkthrough.md` —
   work-os-recipe-specific walkthrough that ends with a populated
-  work-os-mini-shaped vault.
+  vault matching the shape of `starters/work-os/`.
 - `docs/guides/how-to/resolve-a-conflict.md` — problem-oriented walk
-  through the committed drift in `examples/conflict-pending/`,
+  through the committed drift in `docs/guides/how-to/_examples/conflict-pending/`,
   exercising the `wiki-conflict` vault-side skill.
 - A regeneration mechanism for all three example vaults
-  (`examples/regenerate.py`) and a tutorial-drift CI gate
+  (`starters/regenerate.py`) and a tutorial-drift CI gate
   (`tests/integration/test_tutorials.py`) that fail when the literal
   CLI surface in either tutorial diverges from what the kit actually
   does.
@@ -92,13 +91,13 @@ tutorial step asserts on Claude-produced output.
 ### From the kit (build- and test-time)
 
 - The kit's templates (`templates/`, `core/`, `recipes/`) — used by
-  `examples/regenerate.py` to produce the example vaults.
-- `examples/_seed/<recipe>/<path>/<page>.md` — hand-authored seed
+  `starters/regenerate.py` to produce the example vaults.
+- `starters/_seed/<recipe>/<path>/<page>.md` — hand-authored seed
   pages copied into the regenerated vault by `regenerate.py` (for
   `family` and `work-os`; `conflict-pending/` has no seeds — its
   content is produced by the regenerator's internal drift-replay
   function).
-- `examples/conflict-pending/` is built by `regenerate.py`'s
+- `docs/guides/how-to/_examples/conflict-pending/` is built by `regenerate.py`'s
   internal drift-replay function: `wiki init … --recipe personal`,
   then (1) one `safe_write` of an initial page producing the
   baseline `PageWriteEvent`, (2) one *direct* `Path.write_bytes`
@@ -121,22 +120,25 @@ tutorial step asserts on Claude-produced output.
 ### Files in the repo (committed)
 
 ```
-examples/
-├── README.md                       # what these are, how regen works
+starters/                           # promoted from examples/ in RFC-0006
+├── README.md                       # user-facing index — clone, copy, open in Claude Code
 ├── _seed/
-│   ├── family/                     # hand-authored seed pages copied into family-mini
+│   ├── family/                     # hand-authored seed pages copied into starters/family
 │   │   └── wiki/<area>/<page>.md
 │   └── work-os/
 │       └── wiki/<area>/<page>.md
 ├── regenerate.py                   # idempotent rebuild script (three vaults)
-├── family-mini/                    # committed, regenerable family vault
+├── family/                         # committed, regenerable family starter vault
 │   ├── .wiki.journal/journal.jsonl
 │   ├── AGENTS.md, CORE.md, frontmatter.schema.yaml, .gitignore
 │   ├── _templates/, skills/, wiki/, raw/, outputs/
 │   └── (≥1, target 3–5 seed pages per primitive category)
-├── work-os-mini/                   # committed, regenerable work-os vault
-│   └── (same shape as family-mini)
-└── conflict-pending/               # committed, regenerable personal vault with one drifted page
+└── work-os/                        # committed, regenerable work-os starter vault
+    └── (same shape as starters/family)
+
+docs/guides/how-to/_examples/
+└── conflict-pending/               # committed personal vault with one drifted page —
+                                    # documentation infrastructure for resolve-a-conflict.md
     ├── .wiki.journal/journal.jsonl  # carries PageProposalEvent for wiki/people/example-contact.md
     ├── wiki/people/example-contact.md           # on-disk version (simulated user edit)
     └── wiki/people/example-contact.md.proposed  # kit-proposed version
@@ -153,12 +155,12 @@ docs/guides/how-to/
 tests/
 └── integration/
     ├── test_tutorials.py           # NEW — tutorial-drift gate (covers how-to too)
-    └── test_examples_regenerable.py  # NEW — regenerate.py is idempotent
+    └── test_starters_regenerable.py  # NEW — regenerate.py is idempotent
 ```
 
-`examples/_seed/` is intentionally not given its own README; the
+`starters/_seed/` is intentionally not given its own README; the
 directory structure mirrors the recipe-rendered `wiki/<area>/` shape
-exactly, and `examples/README.md` documents the seed convention in
+exactly, and `starters/README.md` documents the seed convention in
 one paragraph for any maintainer authoring new pages.
 
 ### Journal events appended (by `regenerate.py` and by tutorial steps)
@@ -169,7 +171,7 @@ one paragraph for any maintainer authoring new pages.
   `safe_write` (it MUST — see §Constraints "No bypass of `safe_write`").
 - `IngestRoutedEvent` per `wiki ingest` invocation in the tutorials.
 - `OperationRunEvent` per `wiki run` invocation in the tutorials.
-- `PageProposalEvent` already present in `examples/conflict-pending/`'s
+- `PageProposalEvent` already present in `docs/guides/how-to/_examples/conflict-pending/`'s
   committed journal (produced by the regenerator's drift-replay
   function at build time).
 - `PageConflictResolvedEvent` appended by the `wiki resolve` step in
@@ -235,9 +237,10 @@ out of scope here (those evals live in `tests/evals/`, Task 20).
 
 ### Tutorial 1 — "Create your first vault" (recipe-agnostic)
 
-**Audience:** a non-engineer who has just installed the kit and wants
-to confirm it works. Reading time ≤ 15 minutes; doing time ≤ 25
-minutes.
+**Audience:** a first-time author who has just installed the kit and
+wants to confirm it works (per RFC-0005, the engineering-comfortable
+author the kit primarily serves). Reading time ≤ 15 minutes; doing
+time ≤ 25 minutes.
 
 **Prerequisites box (prose, not executable):**
 
@@ -249,9 +252,10 @@ minutes.
 
 Tutorial 1 deliberately targets the `personal` recipe — the smallest
 recipe — so the first vault feels approachable. There is no
-committed `personal-mini/` example vault; the reader builds their
-own. A reader wanting a reference vault is pointed at
-`examples/work-os-mini/` (or family-mini) at the end.
+committed `starters/personal/` vault today (the `personal` recipe
+renders only via the conflict-pending worked example); the reader
+builds their own. A reader wanting a reference vault is pointed at
+`starters/family/` or `starters/work-os/` at the end.
 
 Executable steps (each a `$` line inside a `bash` fence):
 
@@ -294,14 +298,15 @@ permitted footer, not narrative.
 
 ### Tutorial 2 — work-os walkthrough
 
-**Audience:** a non-engineer professional (a manager, a solo
-operator, an account lead) who has read tutorial 1 and wants to see
-the work-os recipe in practice. Reading time ≤ 20 minutes; doing
-time ≤ 30 minutes.
+**Audience:** an engineering-comfortable author building a work
+knowledge base — solo operator, manager, account lead, or a
+professional with shell literacy — who has read tutorial 1 and
+wants to see the work-os recipe in practice. Reading time ≤ 20
+minutes; doing time ≤ 30 minutes.
 
 The reader builds a vault that ends up identical in *shape* (not
 content; content seeds are hand-authored) to
-`examples/work-os-mini/`. Steps:
+`starters/work-os/`. Steps:
 
 1. `wiki init my-work-os --recipe work-os`.
 2. `wiki doctor`, then `ls wiki/` and `ls skills/` — orient the
@@ -331,11 +336,11 @@ sidecar to resolve. Problem-oriented; the reader knows what they
 want.
 
 The how-to walks one canonical scenario end-to-end, operating on a
-*copy* of the committed `examples/conflict-pending/` vault so the
+*copy* of the committed `docs/guides/how-to/_examples/conflict-pending/` vault so the
 reader does not have to construct drift themselves:
 
 1. **Copy the pre-baked drifted vault.** One `$` line:
-   `cp -R <repo-root>/examples/conflict-pending /tmp/conflict-demo
+   `cp -R <repo-root>/docs/guides/how-to/_examples/conflict-pending /tmp/conflict-demo
    && cd /tmp/conflict-demo`. The how-to gives two ways to find
    `<repo-root>`: from a clone, it's the working tree; from a
    pip-installed kit, it's the `wiki info examples-path` output
@@ -395,14 +400,15 @@ without Claude, or wanting to understand what Claude will do.
 
 ### Error cases
 
-- **`examples/regenerate.py` crashes mid-run.** The script builds
+- **`starters/regenerate.py` crashes mid-run.** The script builds
   into an out-of-tree tmp dir, copies the result to a sibling
-  staging directory under `examples/`, then swaps it over the
-  committed `examples/<vault>/` via two same-filesystem
-  `os.rename` calls (`committed → backup`, then `staged →
-  committed`). POSIX `rename(2)` returns `ENOTEMPTY` on non-empty
-  directory targets, so a single-call atomic swap is not
-  available; the two-rename pattern is the next-best contract.
+  staging directory next to the committed vault's parent
+  (`starters/` for the starter vaults; `docs/guides/how-to/_examples/`
+  for conflict-pending), then swaps it over the committed tree
+  via two same-filesystem `os.rename` calls (`committed → backup`,
+  then `staged → committed`). POSIX `rename(2)` returns `ENOTEMPTY`
+  on non-empty directory targets, so a single-call atomic swap is
+  not available; the two-rename pattern is the next-best contract.
   An in-process failure on the second rename is rolled back by
   renaming the backup back into place; a double-fault (rollback
   ALSO fails) preserves the backup at the staging path and
@@ -413,7 +419,7 @@ without Claude, or wanting to understand what Claude will do.
   the command that was run, and the actual exit code / stderr.
   The fix is to update the tutorial in the same PR as the CLI
   change.
-- **`examples/_seed/<recipe>/…` page references a primitive that
+- **`starters/_seed/<recipe>/…` page references a primitive that
   the recipe doesn't install.** `regenerate.py` raises with the
   page path and the missing primitive name; AC6 catches this.
 
@@ -428,16 +434,16 @@ without Claude, or wanting to understand what Claude will do.
   reader who never opens Claude can complete every `$` line in
   order with the documented outcomes. The tutorial-drift gate
   runs in CI without `ANTHROPIC_API_KEY`.
-- **`examples/family-mini/` and `examples/work-os-mini/` pass
+- **`starters/family/` and `starters/work-os/` pass
   `wiki doctor` with exit 0 on every PR.**
-  `examples/conflict-pending/` deliberately does *not* pass — it
+  `docs/guides/how-to/_examples/conflict-pending/` deliberately does *not* pass — it
   reports `pending_proposals`; AC1 encodes both expectations
   per-vault.
-- **The example vaults are regenerable from `_seed/` + the kit.**
-  Running `python examples/regenerate.py --check` exits 0 only
-  when the committed `examples/<vault>/` tree byte-matches the
-  output of a fresh regenerate, under the normalization rules in
-  AC6.
+- **The committed vaults are regenerable from `_seed/` + the kit
+  (the projection invariant).** Running `python starters/regenerate.py
+  --check` exits 0 only when each committed tree (the two starters
+  and conflict-pending) byte-matches the output of a fresh
+  regenerate, under the normalization rules in AC6.
 - **Tutorials match the live CLI.** Every `$` line in every
   tutorial is exercised by `tests/integration/test_tutorials.py`
   against a freshly-installed `wiki` in CI. Stale output, renamed
@@ -446,33 +452,34 @@ without Claude, or wanting to understand what Claude will do.
   parses tutorial markdown by fence + prompt prefix and only
   executes `$`-prefixed lines inside `bash` fences. A future
   maintainer adding a `>` line does not have to update the gate.
-- **No new top-level directory beyond `examples/`.** All other new
+- **No new top-level directory beyond `starters/`.** All other new
   files land under existing trees (`docs/guides/`, `tests/`).
-  `examples/` is the one new top-level dir, authorized by RFC-0001
-  Task 21 (see §Constrained by).
+  `starters/` is the one new top-level dir, authorized by RFC-0006
+  (see §Constrained by).
 - **No `Co-Authored-By: Claude` trailer, no "Generated with Claude
   Code" PR footer.** Per the kit's standing convention.
 
 ## Contracts with other modules
 
-- **Calls** `llm_wiki_kit.cli.main` (from `examples/regenerate.py`
+- **Calls** `llm_wiki_kit.cli.main` (from `starters/regenerate.py`
   and from `tests/integration/test_tutorials.py`) — drives the kit
   the same way a user would.
 - **Calls** `llm_wiki_kit.write_helper.safe_write` (from
-  `examples/regenerate.py` for seed pages and for the
-  drift-replay function that builds `examples/conflict-pending/`)
+  `starters/regenerate.py` for seed pages and for the
+  drift-replay function that builds `docs/guides/how-to/_examples/conflict-pending/`)
   — the same path the kit's own writes take. The regenerator's
   drift-replay journal lineage lands in the committed
-  `examples/conflict-pending/.wiki.journal/journal.jsonl`, so
+  `docs/guides/how-to/_examples/conflict-pending/.wiki.journal/journal.jsonl`, so
   the per-PR `--check` mode compares the committed journal
   against a re-replayed one under AC6's normalization.
 - **Reads** `llm_wiki_kit.journal.read_events` and
   `llm_wiki_kit.models.PageProposalEvent` /
   `PageConflictResolvedEvent` (from the regenerability test, to
   normalize and to assert event shape).
-- **Does not touch** any vault outside `examples/<vault>/`
-  (committed) or `tmp_path` (CI). No write into the developer's
-  home directory.
+- **Does not touch** any vault outside the three committed trees
+  (`starters/family/`, `starters/work-os/`,
+  `docs/guides/how-to/_examples/conflict-pending/`) or `tmp_path`
+  (CI). No write into the developer's home directory.
 - **The vault-side `core/files/skills/wiki-conflict/SKILL.md` is
   the contract** the how-to documents; the how-to MUST stay
   consistent with that SKILL (cross-linked from each).
@@ -484,9 +491,9 @@ Each translates to one or more tests under `tests/integration/`.
 - [ ] **AC1 — Per-vault `wiki doctor` expectations hold.** A
   parametrized test runs `wiki doctor` (cwd=vault, `check=False`)
   for each committed example vault and asserts:
-  - `examples/family-mini/`: `returncode == 0`.
-  - `examples/work-os-mini/`: `returncode == 0`.
-  - `examples/conflict-pending/`: `returncode != 0` and `b"pending-proposal" in stdout`
+  - `starters/family/`: `returncode == 0`.
+  - `starters/work-os/`: `returncode == 0`.
+  - `docs/guides/how-to/_examples/conflict-pending/`: `returncode != 0` and `b"pending-proposal" in stdout`
     (the literal token emitted by `llm_wiki_kit.doctor.PENDING_PROPOSAL`
     — hyphen, singular); the test also asserts on the presence of a
     `PageProposalEvent` in the vault's journal via
@@ -494,14 +501,14 @@ Each translates to one or more tests under `tests/integration/`.
   `stderr` is intentionally not asserted-empty — doctor may emit
   advisories that are not failures.
 - [ ] **AC2 — Example vaults are seeded to the agreed floor.** For
-  `examples/family-mini/` and `examples/work-os-mini/`, each
+  `starters/family/` and `starters/work-os/`, each
   recipe-created `wiki/<area>/` directory contains at least one
   hand-authored markdown page beyond the kit-rendered
   `README.md`. The narrative target is 3–5 per primitive category;
   the AC floor is ≥ 1 because higher floors penalize areas where
   3 plausible pages are hard to author. The implementer SHOULD
   hit the 3–5 target where the primitive admits it.
-  `examples/conflict-pending/` is exempted (it ships one drifted
+  `docs/guides/how-to/_examples/conflict-pending/` is exempted (it ships one drifted
   page, not seeds).
 - [ ] **AC3 — Tutorial 1 walks `$`-blocks end-to-end without an API
   key.** `tests/integration/test_tutorials.py::test_tutorial_1`
@@ -526,7 +533,7 @@ Each translates to one or more tests under `tests/integration/`.
   that step 5's final `wiki doctor` exits 0 with no pending
   proposals and that a `PageConflictResolvedEvent` was appended.
 - [ ] **AC6 — Example vaults are regenerable.** `python
-  examples/regenerate.py --check` exits 0 against the committed
+  starters/regenerate.py --check` exits 0 against the committed
   example vaults. The comparison rules:
   - For each file: byte-compare after the per-file normalizations
     below.
@@ -540,7 +547,7 @@ Each translates to one or more tests under `tests/integration/`.
     `frontmatter.schema.yaml`) contain `{vault_name}` and
     `{recipe_name}` substitutions; the regenerator's
     build-into-tmp step pins the tmp dir's basename to the
-    committed vault's directory name (e.g. `family-mini`), so
+    committed vault's directory name (e.g. `family`), so
     `{vault_name}` resolves to the same string every run. Recipe
     variables come from the recipe's own `variables:` block —
     today only the `personal` recipe declares `owner_*` fields
@@ -558,7 +565,7 @@ Each translates to one or more tests under `tests/integration/`.
   - Walk directories with `sorted(os.listdir(d))` so traversal
     order is stable.
   CI runs this on every PR.
-- [ ] **AC7 — `examples/regenerate.py` is idempotent and the
+- [ ] **AC7 — `starters/regenerate.py` is idempotent and the
   in-process rollback works.** A test runs the script twice
   against a tmp dir and asserts the second invocation produces a
   tree byte-identical to the first (under AC6's normalization).
@@ -646,13 +653,13 @@ Each translates to one or more tests under `tests/integration/`.
   invocation in the how-to.** Reviewer round 1 flagged that
   `python -m` won't resolve from the reader's vault cwd. The
   conflict drift now lives in a committed example vault
-  (`examples/conflict-pending/`); the how-to operates on a copy.
+  (`docs/guides/how-to/_examples/conflict-pending/`); the how-to operates on a copy.
 - **In-browser interactive tutorials.** Plain markdown only. A
   "literate" executable-blocks format (asciidoctor `[source,bash]`,
   Jupyter, etc.) was considered and rejected — it adds a renderer
   dependency and obscures the simple "type this, see that" shape.
-- **`examples/` as a discoverability surface for primitives.** The
-  primitive catalog is `templates/`; `examples/` is shaped vaults,
+- **`starters/` as a discoverability surface for primitives.** The
+  primitive catalog is `templates/`; `starters/` is shaped vaults,
   not a catalog. A reader looking for "what primitives ship" goes
   to `docs/architecture/overview.md`.
 - **Versioning the example vaults independently.** They re-render
@@ -669,10 +676,12 @@ Each translates to one or more tests under `tests/integration/`.
 
 ## Constraints
 
-- **No new top-level directory beyond `examples/`.** All other new
+- **No new top-level directory beyond `starters/`.** All other new
   files land under existing trees (`docs/guides/`, `tests/`).
-  `examples/` is authorized by RFC-0001 Task 21's literal listing
-  (`conflict-pending/` is a subdir under that authorized umbrella).
+  `starters/` is authorized by RFC-0006; the conflict-pending
+  worked example lives under `docs/guides/how-to/_examples/` (a
+  subdir of the already-existing `docs/` tree) and does not
+  introduce a separate top-level.
 - **No new runtime dependency.** The regenerator uses stdlib +
   the kit's own modules. Dev deps may grow only with a one-line
   rationale per addition in the plan.
@@ -696,7 +705,7 @@ Each translates to one or more tests under `tests/integration/`.
 - **No new public CLI verb.** Regenerators and gates are pytest /
   script concerns; the `wiki` surface is unchanged.
 - **No new package under `llm_wiki_kit/`.** The drift-replay
-  function lives inside `examples/regenerate.py`, not the runtime
+  function lives inside `starters/regenerate.py`, not the runtime
   package; this keeps the wheel surface unchanged.
 - **No reliance on Claude in CI.** The tutorial-drift gate and the
   regenerability test run on a runner with no `ANTHROPIC_API_KEY`,
@@ -720,9 +729,14 @@ Each translates to one or more tests under `tests/integration/`.
   gate's subprocess shell never needs to provision stdin. The
   CLI feature is mentioned in prose with a "see also" pointer;
   it is not exercised in any `$` line.
-- **`examples/conflict-pending/` uses the `personal` recipe.**
-  The directory name is asymmetric with `family-mini`/`work-os-mini`
-  (which name their recipe) because the vault's job is showing
-  a conflict state, not a recipe-shape. `examples/README.md`
-  documents the recipe inline, and §Outputs above lists it next
-  to the file tree.
+- **`docs/guides/how-to/_examples/conflict-pending/` uses the `personal`
+  recipe.** After RFC-0006, the conflict-pending vault lives outside
+  `starters/` because it is documentation infrastructure for the
+  `wiki-conflict` how-to, not a usable starting point — a starter
+  that ships a `.proposed` sidecar would force the user to resolve
+  it before doing anything else. Its directory name does not encode
+  the recipe (unlike `starters/family/` / `starters/work-os/`)
+  because the vault's job is showing a conflict state, not a
+  recipe-shape. `docs/architecture/starters.md` documents the
+  three rendered trees together; §Outputs above lists conflict-pending
+  next to the file tree.

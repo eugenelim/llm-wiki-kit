@@ -1,6 +1,6 @@
 # frontmatter.schema.yaml — the contract every wiki page declares
 #
-# Vault: work-os-mini
+# Vault: work-os
 # Recipe: work-os
 #
 # Every page under wiki/ has YAML frontmatter that conforms to this

@@ -57,6 +57,34 @@ The RFC explicitly deferred one item out of v2.0; it has now shipped.
 
 _(nothing in flight right now)_
 
+## Future direction — Tier 2 starter distributions
+
+RFC-0005 narrowed the kit's primary audience to the engineering-
+comfortable vault author and named "Tier 2" — users who cannot
+install the kit themselves — as a separate audience served by
+starter distributions. RFC-0006 shipped the first cut: same-repo
+`starters/family/` and `starters/work-os/` produced by
+`starters/regenerate.py` and verified byte-equal by CI on every PR.
+
+A follow-on direction (no timeline, no commitment) is splitting
+those starters into sibling repositories —
+`llm-wiki-kit-starter-family`, `llm-wiki-kit-starter-work-os`, etc.
+— so a Tier 2 user clones a small repo instead of the full kit.
+The projection invariant (documented in
+[`docs/architecture/starters.md`](architecture/starters.md)) makes
+the future split mechanical: the kit produces the bytes, a
+publish-step CI job pushes them to the sibling repo. RFC-0006
+§Alternatives (B) is the place to look when this direction earns
+a concrete proposal.
+
+A second open question is rendering a `starters/personal/`
+distribution. The `personal` recipe ships in the kit but currently
+has no committed starter rendering (the conflict-pending worked
+example uses it but is documentation infrastructure, not a
+starter). Adding one needs new personal-vault seed content scoped
+to a single-person knowledge base; that's its own RFC when the
+audience signal warrants.
+
 ## Cleanup after PRs ship
 
 - **Delete `adopt._required_regions` alias** one release after

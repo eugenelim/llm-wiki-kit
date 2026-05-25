@@ -15,7 +15,7 @@ snapshots), then the example vaults themselves (committed output of
 the regenerator), then the tutorials (which mirror the regenerator's
 command sequence so they cannot drift apart), then the conflict
 how-to (which operates on the regenerator-built
-`examples/conflict-pending/`).
+`docs/guides/how-to/_examples/conflict-pending/`).
 
 The reason for that order: the regenerator IS the executable spec
 for what a recipe-shaped vault looks like with seed content. Once
@@ -27,7 +27,7 @@ seed-content drift, tutorial-step drift, and conflict-flow drift.
 
 Three structural calls worth flagging up front:
 
-- **`examples/_seed/` separates hand-authored content from rendered
+- **`starters/_seed/` separates hand-authored content from rendered
   output.** Seeds are markdown the maintainer wrote (recipes,
   sample meetings, a stakeholder note); rendered output is whatever
   `wiki init` produces plus the seeds, glued by `regenerate.py`.
@@ -38,14 +38,14 @@ Three structural calls worth flagging up front:
   runtime helper.** Round-1 review surfaced that
   `python -m tests.fixtures.conflict_replay` won't resolve from
   the reader's vault cwd. The replacement is
-  `examples/conflict-pending/`: a committed vault built by
+  `docs/guides/how-to/_examples/conflict-pending/`: a committed vault built by
   `regenerate.py`'s internal `_replay_drift()` function, carrying a
   real `.proposed` sidecar and a matching `PageProposalEvent`. The
   how-to walks `cp -R` of that vault into a tmp dir, then operates
   on it.
-- **`examples/regenerate.py` lives outside the wheel surface.**
+- **`starters/regenerate.py` lives outside the wheel surface.**
   `pyproject.toml` already declares `packages = ["llm_wiki_kit"]`,
-  so neither `examples/` nor `tests/` end up in the published
+  so neither `starters/` nor `tests/` end up in the published
   artifact. The regenerator is a development tool, invoked by
   contributors and CI; the wheel ships only the runtime package.
 
@@ -80,14 +80,14 @@ eval'`, and require no API keys.
    capture_output=True)` (the `capture_output=True` is
    load-bearing — without it `.stdout`/`.stderr` are `None` and
    the marker assertion below crashes). Assert per-vault outcome:
-   `family-mini` and `work-os-mini` exit 0; `conflict-pending`
+   `family` and `work-os` exit 0; `conflict-pending`
    exits non-zero with `b"pending-proposal"` (hyphen, singular —
    the literal token from `llm_wiki_kit.doctor.PENDING_PROPOSAL`)
    in stdout AND carries a `PageProposalEvent` in its journal
    (read via `llm_wiki_kit.journal.read_events`). `stderr` is
    intentionally not asserted empty.
 2. **`test_example_vaults_are_seeded`** (AC2) — for
-   `examples/family-mini/` and `examples/work-os-mini/`, iterate
+   `starters/family/` and `starters/work-os/`, iterate
    `wiki/<area>/` directories; assert that `len([p for p in
    area.iterdir() if p.suffix == ".md" and p.name != "README.md"])
    >= 1` per area. The implementer SHOULD hit 3–5 per primitive
@@ -95,7 +95,7 @@ eval'`, and require no API keys.
 3. **`test_regenerate_check_mode_clean`** (AC6) — pin
    `REPO_ROOT = Path(__file__).resolve().parents[2]`; invoke
    `subprocess.run([sys.executable, str(REPO_ROOT /
-   "examples/regenerate.py"), "--check"], cwd=str(REPO_ROOT),
+   "starters/regenerate.py"), "--check"], cwd=str(REPO_ROOT),
    check=False)`; assert exit 0, stdout empty. The same
    `REPO_ROOT` constant is reused by tests #4 and #5 for imports
    (see Step T1).
@@ -107,8 +107,9 @@ eval'`, and require no API keys.
    `regenerate.build_conflict_pending(target=…)` twice yields
    identical trees.
 5. **`test_regenerate_crash_safety`** (AC7) — simulate a crash by
-   monkeypatching `os.replace` to raise mid-apply; assert the
-   committed `examples/<vault>/` directory is unchanged.
+   monkeypatching `os.rename` so the second rename (staged →
+   committed) raises mid-apply; assert the committed vault
+   directory is unchanged after the rollback path runs.
 6. **`test_tutorial_1_runs_end_to_end`** (AC3) — parse the
    tutorial, extract each `$ `-prefixed line from each fence
    whose info-string is exactly `bash`, **concatenate the
@@ -146,13 +147,13 @@ eval'`, and require no API keys.
    `len(list(iter_claude_prompt_lines(howto_path))) == 0`
    (equality, not floor — a stray `>` inside any `bash` fence
    fails the test).
-10. **`test_no_new_top_level_dirs_beyond_examples`** — pin the
+10. **`test_no_new_top_level_dirs_beyond_starters`** — pin the
     repo root via `Path(__file__).resolve().parents[2]` (the test
     file lives at `tests/integration/test_tutorials.py`, so
     `parents[2]` is the repo root). Pin the expected pre-task
     top-level directory set as a frozen literal inside the test
     body with a comment referencing this plan; assert
-    `set(os.listdir(repo_root)) ⊇ pre_task_set ∪ {"examples"}` and
+    `set(os.listdir(repo_root)) ⊇ pre_task_set ∪ {"starters"}` and
     that no *additional* unexpected top-level directory has
     appeared. (The set comparison is `⊇` rather than `==` so that
     pre-existing directories that the test author didn't enumerate
@@ -175,41 +176,41 @@ mode explicitly per the work-loop's PLAN convention.
 - **Verification mode:** TDD (red tests are the artifact).
 - **What changes:** new files
   `tests/integration/test_tutorials.py` and
-  `tests/integration/test_examples_regenerable.py`. The eleven
+  `tests/integration/test_starters_regenerable.py`. The eleven
   tests above land as plain failing tests (no `xfail`). Both
   files pin `REPO_ROOT = Path(__file__).resolve().parents[2]`
-  at module level. `test_examples_regenerable.py` imports
+  at module level. `test_starters_regenerable.py` imports
   `regenerate` via:
   ```python
   import sys
   sys.path.insert(0, str(REPO_ROOT))
-  from examples import regenerate  # noqa: E402
+  from starters import regenerate  # noqa: E402
   ```
   This is the project-blessed way for a test under `tests/` to
   reach a sibling non-package directory; the `noqa` is paired
   with the `sys.path` insert that precedes it.
 - **Done when:** `pytest tests/integration/test_tutorials.py
-  tests/integration/test_examples_regenerable.py` — every test
+  tests/integration/test_starters_regenerable.py` — every test
   fails for the expected reason (missing file, missing dir,
   missing command). Do not move on if any test fails for a
   *different* reason than "the artifact doesn't exist yet."
 
-### T2. `examples/regenerate.py` produces a clean family vault.
+### T2. `starters/regenerate.py` produces a clean family vault.
 - **Depends on:** T1.
 - **Verification mode:** TDD against tests #3, #4 (idempotence);
   goal-based for the CLI surface (`--check`, `--apply` exit codes).
-- **What changes:** new file `examples/regenerate.py` with:
+- **What changes:** new file `starters/regenerate.py` with:
   - The recipe → target → seed-dir mapping the regenerator
     operates over:
 
-    | recipe       | target.name        | seed dir                 |
-    |--------------|--------------------|--------------------------|
-    | `family`     | `family-mini`      | `examples/_seed/family/`     |
-    | `work-os`    | `work-os-mini`     | `examples/_seed/work-os/`    |
+    | recipe       | target.name        | seed dir                       |
+    |--------------|--------------------|--------------------------------|
+    | `family`     | `family`           | `starters/_seed/family/`       |
+    | `work-os`    | `work-os`          | `starters/_seed/work-os/`      |
     | `personal`   | `conflict-pending` | (no seeds — drift-replay only) |
 
   - `build_vault(recipe, target)` — requires `target.name` to
-    equal `"family-mini"` or `"work-os-mini"` per the table;
+    equal `"family"` or `"work-os"` per the table;
     calls `llm_wiki_kit.cli.main(["init", str(target), "--recipe",
     recipe])` and copies any `<seed_dir>/wiki/**` pages into the
     target via `safe_write` (each seed page lands with a
@@ -257,8 +258,15 @@ mode explicitly per the work-loop's PLAN convention.
     exits 0 on clean, non-zero with a unified-diff fragment on
     divergence.
   - `_apply_mode()` — same build-then-canonical-basename
-    discipline; final step `os.replace`s the tmp dir over the
-    committed `examples/<vault>/` atomically.
+    discipline; final step swaps the new tree into place via
+    `shutil.copytree` into a sibling staging directory on the same
+    filesystem followed by two `os.rename` calls (committed →
+    backup, then staged → committed), with rollback on the second
+    rename's failure. POSIX `rename(2)` does not allow a
+    single-call replace of a non-empty directory, so a brief
+    in-process window where the committed path is absent is
+    unavoidable; documented and asserted by `apply_vault`'s
+    contract.
   - Every `wiki init` invocation passes recipe variables as
     empty strings (except `recipe_name`, which the recipe loader
     already populates) so the rendered `{owner_*}` substitutions
@@ -273,12 +281,12 @@ mode explicitly per the work-loop's PLAN convention.
 - **Verification mode:** Goal-based (`wiki doctor` exit code on each
   vault is the contract) plus mechanical (AC6 byte-comparison).
 - **What changes:**
-  - Seed authoring applies only to `family-mini` and
-    `work-os-mini`; `conflict-pending` is built entirely by
-    `_replay_drift` and carries no `examples/_seed/personal/`
+  - Seed authoring applies only to `family` and
+    `work-os`; `conflict-pending` is built entirely by
+    `_replay_drift` and carries no `starters/_seed/personal/`
     content (AC2 exempts it).
-  - Author markdown pages under `examples/_seed/family/wiki/**`
-    and `examples/_seed/work-os/wiki/**`. Floor is 1 per
+  - Author markdown pages under `starters/_seed/family/wiki/**`
+    and `starters/_seed/work-os/wiki/**`. Floor is 1 per
     recipe-created `wiki/<area>/` directory; the target counts
     below balance "populated, not empty" against the
     minimal-diff principle. Per-area targets the implementer
@@ -298,8 +306,8 @@ mode explicitly per the work-loop's PLAN convention.
       any area the table missed lands at floor 1.
     The area names above are best-effort guesses derived from
     each recipe's primitive closure; the authoritative list comes
-    from `ls examples/family-mini/wiki/` and
-    `ls examples/work-os-mini/wiki/` after T2 lands. T3
+    from `ls starters/family/wiki/` and
+    `ls starters/work-os/wiki/` after T2 lands. T3
     re-derives the area set there and adjusts the target counts
     if any name differs (e.g. plural vs. singular). Author counts
     above the target are welcome where authoring is cheap and
@@ -307,15 +315,15 @@ mode explicitly per the work-loop's PLAN convention.
     one-line note in the PR body. Pages must be
     plausible (a real recipe in `wiki/food/`, a real meeting
     page in `wiki/meetings/`, a real stakeholder update under
-    `wiki/stakeholders/`, etc.) — non-engineer reviewers will
-    skim them.
-  - Run `python examples/regenerate.py --apply` to land the
-    committed `examples/family-mini/`, `examples/work-os-mini/`,
-    and `examples/conflict-pending/` trees.
-  - Author `examples/README.md` (top-level intro) explaining the
+    `wiki/stakeholders/`, etc.) — readers (including Tier 2 users
+    cloning a starter directly) will skim them.
+  - Run `python starters/regenerate.py --apply` to land the
+    committed `starters/family/`, `starters/work-os/`,
+    and `docs/guides/how-to/_examples/conflict-pending/` trees.
+  - Author `starters/README.md` (top-level intro) explaining the
     three vaults, the recipe of each (`conflict-pending` uses
     `personal`), and the regen workflow. The seed convention is
-    documented in one paragraph here; `examples/_seed/` does not
+    documented in one paragraph here; `starters/_seed/` does not
     get its own README.
 - **Done when:** `test_example_vaults_doctor_per_vault` (#1),
   `test_example_vaults_are_seeded` (#2), and
@@ -363,7 +371,7 @@ mode explicitly per the work-loop's PLAN convention.
     `docs/guides/tutorials/tutorial-2-work-os-walkthrough.md` per
     spec §Behavior "Tutorial 2." Reuse the same fenced-block
     conventions; mirror the regenerator's command sequence so the
-    tutorial-produced vault matches the `examples/work-os-mini/`
+    tutorial-produced vault matches the `starters/work-os/`
     shape. Deep-dive primitive is `stakeholder-update`
     (content-type) feeding `stakeholder-map-refresh` (operation).
     The reader writes a transcript to `raw/q3-board-sync.md` via
@@ -380,11 +388,11 @@ mode explicitly per the work-loop's PLAN convention.
   test #9 fully green.
 
 ### T6. Conflict how-to walkable end-to-end against the committed vault.
-- **Depends on:** T3 (needs `examples/conflict-pending/`).
+- **Depends on:** T3 (needs `docs/guides/how-to/_examples/conflict-pending/`).
 - **Verification mode:** TDD against test #8.
 - **What changes:**
   - New file `docs/guides/how-to/resolve-a-conflict.md` per spec
-    §Behavior "How-to." Step 1 is `$ cp -R <repo-root>/examples/conflict-pending /tmp/conflict-demo
+    §Behavior "How-to." Step 1 is `$ cp -R <repo-root>/docs/guides/how-to/_examples/conflict-pending /tmp/conflict-demo
     && cd /tmp/conflict-demo`; the gate substitutes the real
     repo-root path before executing. The walked example uses
     `wiki resolve <path> --accept` (simplest CI assertion). The
@@ -438,7 +446,7 @@ or a mechanical-gate invocation:
 | AC11 | The four gates above |
 | AC12 | PR-body paragraph (discipline gate) |
 | AC13 | `test_no_new_runtime_dep` (#11) |
-| Invariant: "No new top-level directory beyond `examples/`" | `test_no_new_top_level_dirs_beyond_examples` (#10) |
+| Invariant: "No new top-level directory beyond `starters/`" | `test_no_new_top_level_dirs_beyond_starters` (#10) |
 
 ## Risks
 
@@ -452,9 +460,9 @@ or a mechanical-gate invocation:
   Mitigation: the gate asserts on exit code + journal events
   only, never on literal stdout, per spec §Constraints. The
   snapshot-block exception from round 1 was removed entirely.
-- **`examples/regenerate.py` import root.** `pyproject.toml`'s
+- **`starters/regenerate.py` import root.** `pyproject.toml`'s
   package finder is `packages = ["llm_wiki_kit"]` (literal); the
-  regenerator's `examples` directory is not on the wheel surface.
+  regenerator's `starters/` directory is not on the wheel surface.
   Verified at plan time.
 - **Personal recipe's `meeting` content-type panics on an empty-ish
   source.** Tutorial 1's `wiki ingest raw/note.md` step would
@@ -463,7 +471,7 @@ or a mechanical-gate invocation:
   not `NoMatch`; the resulting `ingest.routed` event is
   observable; the gate asserts on event existence, not Claude
   artifact.
-- **`examples/conflict-pending/` regeneration is non-deterministic
+- **`docs/guides/how-to/_examples/conflict-pending/` regeneration is non-deterministic
   in subtle ways.** Mitigation: `_replay_drift` passes fixed
   content strings (see `_REPLAY_CONTENTS` in T2) to every
   `safe_write` call; `PageWriteEvent.hash` and
@@ -479,7 +487,7 @@ or a mechanical-gate invocation:
   on cold-walk findings in the same PR; if the finding implies a
   spec change, amend the spec in the same PR (the canonical
   "drift between spec and code is a bug" pattern).
-- **The how-to's `$ cp -R <repo-root>/examples/conflict-pending`
+- **The how-to's `$ cp -R <repo-root>/docs/guides/how-to/_examples/conflict-pending`
   line is awkward for a pip-installed reader.** Mitigation: the
   prose alongside step 1 documents both invocations (clone vs.
   pip-install), and the CI gate substitutes the repo-root path
