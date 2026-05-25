@@ -237,9 +237,10 @@ out of scope here (those evals live in `tests/evals/`, Task 20).
 
 ### Tutorial 1 — "Create your first vault" (recipe-agnostic)
 
-**Audience:** a non-engineer who has just installed the kit and wants
-to confirm it works. Reading time ≤ 15 minutes; doing time ≤ 25
-minutes.
+**Audience:** a first-time author who has just installed the kit and
+wants to confirm it works (per RFC-0005, the engineering-comfortable
+author the kit primarily serves). Reading time ≤ 15 minutes; doing
+time ≤ 25 minutes.
 
 **Prerequisites box (prose, not executable):**
 
@@ -297,10 +298,11 @@ permitted footer, not narrative.
 
 ### Tutorial 2 — work-os walkthrough
 
-**Audience:** a non-engineer professional (a manager, a solo
-operator, an account lead) who has read tutorial 1 and wants to see
-the work-os recipe in practice. Reading time ≤ 20 minutes; doing
-time ≤ 30 minutes.
+**Audience:** an engineering-comfortable author building a work
+knowledge base — solo operator, manager, account lead, or a
+professional with shell literacy — who has read tutorial 1 and
+wants to see the work-os recipe in practice. Reading time ≤ 20
+minutes; doing time ≤ 30 minutes.
 
 The reader builds a vault that ends up identical in *shape* (not
 content; content seeds are hand-authored) to

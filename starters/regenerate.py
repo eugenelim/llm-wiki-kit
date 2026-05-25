@@ -8,9 +8,16 @@ Two modes:
   trees. Exit 0 on clean, non-zero with a unified-diff fragment on
   divergence. CI gate: ``tests/integration/test_starters_regenerable.py::
   test_regenerate_check_mode_clean``.
-* ``--apply`` — same build into a tmp dir, then ``os.replace`` the
-  tmp dir over the committed location of the vault. Atomic by design;
-  a crash mid-swap leaves the committed tree untouched.
+* ``--apply`` — same build into a tmp dir, then swap the new tree
+  over the committed location via two same-filesystem ``os.rename``
+  calls (``committed → backup``, then ``staged → committed``) with
+  rollback on the second-rename failure. POSIX ``rename(2)`` does
+  not allow a single-call replace of a non-empty directory, so a
+  small in-process window where the committed path is briefly absent
+  is unavoidable. An in-process crash during the second rename is
+  rolled back; an in-process double-fault preserves the backup at a
+  named path and raises with the recovery command. See
+  ``apply_vault`` for the full contract.
 
 Per RFC-0006, ``family`` and ``work-os`` render into
 ``starters/<name>/`` and ship as first-class starter distributions

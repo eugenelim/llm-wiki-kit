@@ -107,8 +107,9 @@ eval'`, and require no API keys.
    `regenerate.build_conflict_pending(target=…)` twice yields
    identical trees.
 5. **`test_regenerate_crash_safety`** (AC7) — simulate a crash by
-   monkeypatching `os.replace` to raise mid-apply; assert the
-   committed vault directory is unchanged.
+   monkeypatching `os.rename` so the second rename (staged →
+   committed) raises mid-apply; assert the committed vault
+   directory is unchanged after the rollback path runs.
 6. **`test_tutorial_1_runs_end_to_end`** (AC3) — parse the
    tutorial, extract each `$ `-prefixed line from each fence
    whose info-string is exactly `bash`, **concatenate the
@@ -307,8 +308,8 @@ mode explicitly per the work-loop's PLAN convention.
     one-line note in the PR body. Pages must be
     plausible (a real recipe in `wiki/food/`, a real meeting
     page in `wiki/meetings/`, a real stakeholder update under
-    `wiki/stakeholders/`, etc.) — non-engineer reviewers will
-    skim them.
+    `wiki/stakeholders/`, etc.) — readers (including Tier 2 users
+    cloning a starter directly) will skim them.
   - Run `python starters/regenerate.py --apply` to land the
     committed `starters/family/`, `starters/work-os/`,
     and `docs/guides/how-to/_examples/conflict-pending/` trees.
@@ -438,7 +439,7 @@ or a mechanical-gate invocation:
 | AC11 | The four gates above |
 | AC12 | PR-body paragraph (discipline gate) |
 | AC13 | `test_no_new_runtime_dep` (#11) |
-| Invariant: "No new top-level directory beyond `examples/`" | `test_no_new_top_level_dirs_beyond_starters` (#10) |
+| Invariant: "No new top-level directory beyond `starters/`" | `test_no_new_top_level_dirs_beyond_starters` (#10) |
 
 ## Risks
 
