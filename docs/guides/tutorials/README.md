@@ -17,8 +17,8 @@ reader follows along and produces a working result by the end.
   `stakeholder-update` → `stakeholder-map-refresh` end to end.
 - **Tutorial 3 — Family walkthrough.** Coming in the next milestone.
   The family recipe focuses on household OS (meals, medical, trips,
-  vendors). Until it ships, `examples/family-mini/` in the repo is a
-  populated reference you can browse.
+  vendors). Until it ships, `starters/family/` in the repo is a
+  populated starter vault you can browse or clone.
 
 ## Other Diátaxis buckets
 

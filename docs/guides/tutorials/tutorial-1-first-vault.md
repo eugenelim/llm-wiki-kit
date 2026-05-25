@@ -192,7 +192,7 @@ and your operation dispatch.
   `wiki search`, `wiki upgrade`** — planned commands for a richer
   journal-reading UX. Until they ship, read the journal file directly
   with `cat` or `tail`.
-- **The `examples/family-mini/` and `examples/work-os-mini/` vaults**
-  in the source repo — populated vaults you can browse for a more
-  developed reference (each shaped by the recipe named in its
-  directory name).
+- **The `starters/family/` and `starters/work-os/` vaults**
+  in the source repo — populated starter vaults you can browse for a
+  more developed reference, or `cp -r` directly into a new vault
+  location to skip `wiki init`.

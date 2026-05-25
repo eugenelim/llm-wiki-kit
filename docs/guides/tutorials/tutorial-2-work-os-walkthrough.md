@@ -14,7 +14,7 @@ keys required.
   Tutorial 1's prerequisites.
 
 The reference output: when you're done, your vault has the same
-*shape* (areas, skills, schema) as `examples/work-os-mini/` in the
+*shape* (areas, skills, schema) as `starters/work-os/` in the
 repo. The content is yours, not pre-baked.
 
 ## Step 1 — Initialize the vault
@@ -117,8 +117,8 @@ $ cat .wiki.journal/journal.jsonl
 You'll see the full sequence of what just happened: `vault.init`, one
 `primitive.install` per primitive the recipe loaded, your
 `ingest.routed` event, and your `operation.run` event. Your vault now
-has the same shape as `examples/work-os-mini/` (different content,
-same areas). If you cloned the repo, open that example in another
+has the same shape as `starters/work-os/` (different content,
+same areas). If you cloned the repo, open that starter in another
 window for a side-by-side.
 
 ## See also
@@ -134,5 +134,6 @@ window for a side-by-side.
   module docstring in `llm_wiki_kit/research/` for the setup.
 - **Tutorial 3 (family walkthrough)** — coming next. The family
   recipe focuses on household OS (meals, medical, trips, vendors).
-- **The `examples/work-os-mini/` vault** in the repo — a populated
-  vault with seed pages across every area for browsing.
+- **The `starters/work-os/` vault** in the repo — a populated
+  starter vault with seed pages across every area for browsing or
+  `cp -r`-cloning.

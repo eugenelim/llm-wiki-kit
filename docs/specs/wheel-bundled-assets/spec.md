@@ -461,9 +461,10 @@ checkboxes below; the plan adds no tests that aren't listed here.
   needs zipapp support, a follow-up spec converts the asset-
   reading sites to take `Traversable` and updates this spec's
   §Edge cases.
-- **Not bundling `examples/`, `docs/`, `tests/`, or `tools/`.** The
-  wheel ships runtime assets only. The example vaults are for
-  browsing-before-installing and stay in the source repo.
+- **Not bundling `starters/`, `docs/`, `tests/`, or `tools/`.** The
+  wheel ships runtime assets only. The starter vaults are for
+  clone-and-use distribution and stay in the source repo (per
+  RFC-0006).
 - **Not introducing a new runtime dependency.** Per `AGENTS.md`
   "Runtime dependencies": runtime deps need an ADR. This spec uses
   stdlib-only resolution. The `build` tool added under

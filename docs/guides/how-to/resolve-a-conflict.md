@@ -6,10 +6,10 @@ through reconciling it without losing your edits and without losing
 the kit's update.
 
 This how-to demonstrates the workflow against the
-`examples/conflict-pending/` vault in the `llm-wiki-kit` source
-repository, so you can follow along without having to construct a
-drift situation yourself. The same `wiki resolve` flow applies in any
-vault.
+`docs/guides/how-to/_examples/conflict-pending/` vault in the
+`llm-wiki-kit` source repository, so you can follow along without
+having to construct a drift situation yourself. The same `wiki resolve`
+flow applies in any vault.
 
 **Prerequisite — a clone of the repo.** The example vault is not
 shipped in the pip-installed wheel; you need the source tree to
@@ -27,7 +27,7 @@ commands are the same, just substitute your real page path.
 
 ```bash
 $ rm -rf /tmp/conflict-demo
-$ cp -R <repo-root>/examples/conflict-pending /tmp/conflict-demo
+$ cp -R <repo-root>/docs/guides/how-to/_examples/conflict-pending /tmp/conflict-demo
 $ cd /tmp/conflict-demo
 ```
 

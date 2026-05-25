@@ -1023,10 +1023,10 @@ non-default catalog root.
 4. **Example vaults regenerate cleanly; diff is bounded to
    the rollout's surfaces.**
    - **Tests:**
-     - `examples/regenerate.py --check` exits 0 after PR-8's
+     - `starters/regenerate.py --check` exits 0 after PR-8's
        regenerate-and-commit step (the existing integration
        suite for Task 21 runs this gate).
-   - **Approach:** run `examples/regenerate.py --apply` and
+   - **Approach:** run `starters/regenerate.py --apply` and
      inspect the diff. The **expected** diff set is:
      (a) new files `.claude/commands/<verb>.md` for each
      verb the example's recipe ships;
@@ -1208,7 +1208,7 @@ End-to-end verification (post PR-9):
 - **Catalog rollout (PR-8) creates the first user-visible
   change.** Up to PR-7, every PR is dead code in
   production. PR-8 makes the rollout atomic, but it ALSO
-  changes the `examples/regenerate.py --check` snapshot
+  changes the `starters/regenerate.py --check` snapshot
   (because the example vaults now ship slash stubs).
   Mitigation: regenerate examples in the same PR; flag the
   diff in the PR body; tests pin the expected file set

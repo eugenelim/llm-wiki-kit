@@ -57,9 +57,13 @@ any agent that reads `AGENTS.md` and SKILL.md files) to maintain.
 │   ├── family.yaml
 │   ├── work-os.yaml
 │   └── personal.yaml
-├── examples/                  # demo vaults (browsable before installing)
-│   ├── family-mini/
-│   └── work-os-mini/
+├── starters/                  # ready-to-clone starter vaults (RFC-0006)
+│   ├── family/
+│   ├── work-os/
+│   ├── _seed/                 # hand-authored seed pages copied into starters
+│   └── regenerate.py          # rebuild starters from recipes + seeds
+│                              # (conflict-pending worked example lives at
+│                              #  docs/guides/how-to/_examples/conflict-pending/)
 ├── tests/
 │   ├── unit/                  # Python unit tests
 │   ├── fixtures/              # seed vaults for integration + evals
