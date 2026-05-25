@@ -1,4 +1,4 @@
-# AGENTS.md — work-os-mini
+# AGENTS.md — work-os
 
 > This file is the canonical contract for any agent (Claude, Codex, Cursor,
 > Copilot) working inside this vault. `CLAUDE.md` is a symlink to it.

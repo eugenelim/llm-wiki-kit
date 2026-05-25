@@ -1,6 +1,6 @@
 # frontmatter.schema.yaml — the contract every wiki page declares
 #
-# Vault: family-mini
+# Vault: family
 # Recipe: family
 #
 # Every page under wiki/ has YAML frontmatter that conforms to this

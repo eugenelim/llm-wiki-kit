@@ -1,27 +1,29 @@
-"""Example-vault and regenerator gates (RFC-0001 Task 21).
+"""Starter-vault and regenerator gates (RFC-0001 Task 21, RFC-0006 layout).
 
-Covers the committed ``examples/family-mini/``, ``examples/work-os-mini/``,
-and ``examples/conflict-pending/`` vaults plus the regenerator that
-produces them.
+Covers the committed ``starters/family/``, ``starters/work-os/``, and
+``docs/guides/how-to/_examples/conflict-pending/`` vaults plus the
+regenerator that produces them. Layout was promoted from
+``examples/*-mini/`` to first-class starter distributions in RFC-0006;
+the test file moved alongside.
 
 The tests:
 
-* AC1 (test #1) — ``wiki doctor`` per vault: family-mini and work-os-mini
-  exit 0; conflict-pending exits non-zero with the literal
+* AC1 (test #1) — ``wiki doctor`` per vault: the two starters exit 0;
+  conflict-pending exits non-zero with the literal
   ``pending-proposal`` token in stdout (from
   ``llm_wiki_kit.doctor.PENDING_PROPOSAL``) and a ``PageProposalEvent``
   in its journal.
 * AC2 (test #2) — every recipe-created ``wiki/<area>/`` directory in the
-  family-mini and work-os-mini vaults contains at least one
+  family and work-os starter vaults contains at least one
   hand-authored markdown page beyond the kit's ``README.md``.
-* AC6 (test #3) — ``python examples/regenerate.py --check`` exits 0.
+* AC6 (test #3) — ``python starters/regenerate.py --check`` exits 0.
 * AC7 (tests #4, #5) — ``regenerate.build_vault`` is idempotent under
   the AC6 normalization rules, and ``--apply`` is crash-safe (a failed
   swap leaves the committed tree untouched).
 * AC13 (test #11) — ``pyproject.toml``'s ``[project].dependencies``
   hasn't grown.
 * Invariant guardrail (test #10) — no unexpected new top-level
-  directories beyond the pre-task set plus ``{"examples"}``.
+  directories beyond the pre-task set plus ``{"starters"}``.
 
 Spec: ``docs/specs/task-21-examples-tutorials/spec.md``.
 Plan:  ``docs/specs/task-21-examples-tutorials/plan.md`` §Steps T2/T3.
@@ -44,22 +46,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _import_regenerate() -> types.ModuleType:
-    """Lazy import so test collection doesn't crash before T2 has landed.
+    """Lazy import so test collection doesn't crash before the regenerator lands.
 
-    `examples/` is not a wheel package; extend sys.path at call time.
+    `starters/` is not a wheel package; extend sys.path at call time.
     """
 
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    from examples import regenerate
+    from starters import regenerate
 
     return regenerate
 
 
-EXAMPLES_DIR = REPO_ROOT / "examples"
-FAMILY_MINI = EXAMPLES_DIR / "family-mini"
-WORK_OS_MINI = EXAMPLES_DIR / "work-os-mini"
-CONFLICT_PENDING = EXAMPLES_DIR / "conflict-pending"
+STARTERS_DIR = REPO_ROOT / "starters"
+FAMILY_STARTER = STARTERS_DIR / "family"
+WORK_OS_STARTER = STARTERS_DIR / "work-os"
+CONFLICT_PENDING = REPO_ROOT / "docs" / "guides" / "how-to" / "_examples" / "conflict-pending"
 
 # Pre-task top-level directory set, refreshed after Task 22 deleted
 # the v1 `vault-templates/` and `shared/` trees. This is the
@@ -114,8 +116,8 @@ IGNORED_TOP_LEVEL_DIRS = frozenset(
 @pytest.mark.parametrize(
     ("vault", "expect_clean"),
     [
-        pytest.param(FAMILY_MINI, True, id="family-mini"),
-        pytest.param(WORK_OS_MINI, True, id="work-os-mini"),
+        pytest.param(FAMILY_STARTER, True, id="family"),
+        pytest.param(WORK_OS_STARTER, True, id="work-os"),
         pytest.param(CONFLICT_PENDING, False, id="conflict-pending"),
     ],
 )
@@ -163,8 +165,8 @@ def _user_pages(area: Path) -> list[Path]:
 @pytest.mark.parametrize(
     "vault",
     [
-        pytest.param(FAMILY_MINI, id="family-mini"),
-        pytest.param(WORK_OS_MINI, id="work-os-mini"),
+        pytest.param(FAMILY_STARTER, id="family"),
+        pytest.param(WORK_OS_STARTER, id="work-os"),
     ],
 )
 def test_example_vaults_are_seeded(vault: Path) -> None:
@@ -190,7 +192,7 @@ def test_example_vaults_are_seeded(vault: Path) -> None:
 
 def test_regenerate_check_mode_clean() -> None:
     proc = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "examples" / "regenerate.py"), "--check"],
+        [sys.executable, str(REPO_ROOT / "starters" / "regenerate.py"), "--check"],
         cwd=str(REPO_ROOT),
         check=False,
         capture_output=True,
@@ -237,9 +239,9 @@ def test_regenerate_is_idempotent_family(tmp_path: Path) -> None:
     two = tmp_path / "two"
     one.mkdir()
     two.mkdir()
-    regenerate.build_vault("family", one / "family-mini")
-    regenerate.build_vault("family", two / "family-mini")
-    _assert_trees_equal(one / "family-mini", two / "family-mini")
+    regenerate.build_vault("family", one / "family")
+    regenerate.build_vault("family", two / "family")
+    _assert_trees_equal(one / "family", two / "family")
 
 
 def test_regenerate_is_idempotent_conflict_pending(tmp_path: Path) -> None:
@@ -264,11 +266,11 @@ def test_apply_vault_replaces_existing_committed_tree(tmp_path: Path) -> None:
     POSIX `rename(2)` returns ENOTEMPTY on non-empty directory targets,
     so an `os.replace(staged, committed)`-only implementation would
     silently fail every regeneration that ran against the committed
-    examples — this test catches that regression class.
+    starter vaults — this test catches that regression class.
     """
 
     regenerate = _import_regenerate()
-    committed = tmp_path / "examples" / "family-mini"
+    committed = tmp_path / "starters" / "family"
     committed.parent.mkdir(parents=True)
     # Pre-populate the committed location with a placeholder file
     # that must be gone after the swap.
@@ -293,7 +295,7 @@ def test_apply_vault_replaces_existing_committed_tree(tmp_path: Path) -> None:
 def test_regenerate_crash_safety(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Simulate a crash mid-apply; the committed vault must be restored.
 
-    Copy `examples/family-mini/` into `tmp_path`, point the regenerator
+    Copy `starters/family/` into `tmp_path`, point the regenerator
     at it as the "committed" tree, then make the *second* `os.rename`
     (the staged → committed swap) raise. `apply_vault`'s rollback path
     renames the backup back into place, so the committed bytes are
@@ -302,9 +304,9 @@ def test_regenerate_crash_safety(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     """
 
     regenerate = _import_regenerate()
-    committed = tmp_path / "examples" / "family-mini"
+    committed = tmp_path / "starters" / "family"
     committed.parent.mkdir(parents=True)
-    shutil.copytree(FAMILY_MINI, committed)
+    shutil.copytree(FAMILY_STARTER, committed)
     before_snapshot = {
         p.relative_to(committed): p.read_bytes() for p in committed.rglob("*") if p.is_file()
     }
@@ -346,7 +348,7 @@ def test_regenerate_crash_safety_no_existing_committed(
     """
 
     regenerate = _import_regenerate()
-    committed = tmp_path / "examples" / "family-mini"
+    committed = tmp_path / "starters" / "family"
     committed.parent.mkdir(parents=True)
     # NOTE: `committed` does *not* exist yet.
 
@@ -373,11 +375,12 @@ def test_regenerate_crash_safety_no_existing_committed(
 # ---------------------------------------------------------------------------
 
 
-def test_no_new_top_level_dirs_beyond_examples() -> None:
+def test_no_new_top_level_dirs_beyond_starters() -> None:
     actual = {
         p.name for p in REPO_ROOT.iterdir() if p.is_dir() and p.name not in IGNORED_TOP_LEVEL_DIRS
     }
-    allowed = PRE_TASK_TOP_LEVEL_DIRS | {"examples"}
+    # `starters/` is the new top-level directory authorized by RFC-0006.
+    allowed = PRE_TASK_TOP_LEVEL_DIRS | {"starters"}
     unexpected = actual - allowed
     assert not unexpected, (
         f"Unexpected new top-level directories: {sorted(unexpected)}. "

@@ -1,4 +1,4 @@
-# AGENTS.md — family-mini
+# AGENTS.md — family
 
 > This file is the canonical contract for any agent (Claude, Codex, Cursor,
 > Copilot) working inside this vault. `CLAUDE.md` is a symlink to it.

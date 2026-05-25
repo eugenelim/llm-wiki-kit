@@ -1,7 +1,7 @@
 # CORE.md — what this wiki *is*
 
 > This vault was created with the `work-os` recipe. The name on
-> disk is `work-os-mini`.
+> disk is `work-os`.
 
 ## Purpose
 
