@@ -31,8 +31,9 @@ after the user runs `wiki init`, closes the gap between "the vault
 exists on disk" and "the user has done one useful thing with it." It
 is a conversational entry-point: Claude reads the SKILL, walks the
 user through the verb table the kit just installed, demos one outcome
-verb against the empty vault via `wiki <verb> --help` (side-effect-
-free, no journal events), then writes a one-byte marker file at
+verb against the empty vault by reading the verb's vault-side
+SKILL.md (side-effect-free; the wizard never invokes `wiki <verb>` in
+any mode), then writes a one-byte marker file at
 `.wiki.bootstrap` so the wizard self-suppresses on later opens. The
 skill is **not** a CLI command, **not** a new kit module, and **not**
 a templated wizard — it is markdown text Claude reads plus a single
@@ -106,12 +107,19 @@ spec ships **one** and defers three with explicit reasoning.
 - **(b) Walk the installed outcome verbs and demo one** — *picked
   (sole value delivery in v1)*. This is the single move that closes
   the README:38-73 gap: the user sees the verb table the kit
-  installed for their recipe and runs one verb-shaped command. To
-  avoid first-run side effects (writing to `outputs/`, appending
+  installed for their recipe and gets a real gloss on one of them.
+  To avoid first-run side effects (writing to `outputs/`, appending
   `OperationRunEvent` rows, producing empty-week artifacts), the
-  demo is **always `wiki <verb> --help`** — the help text reads the
-  operation's contract `description:` and surfaces what the verb
-  would do, without invoking the operation. The user runs the live
+  demo is **read-only**: the wizard reads
+  `<vault>/skills/<skill>/SKILL.md` for the verb's underlying skill
+  (mapped from verb → skill via `wiki outcomes`'s output) and
+  surfaces a one-line gloss from the SKILL's frontmatter
+  description. The wizard does not invoke `wiki <verb>` in any
+  form — neither live, nor with `--help`. (`wiki <verb> --help` was
+  considered and rejected: per `llm_wiki_kit/cli.py:1590-1597` it
+  prints argparse-generated help for the `wiki run` subparser, not
+  the operation's contract description; it would give the user a
+  useless flag list instead of a gloss.) The user runs the live
   verb themselves when they're ready.
 - **(c) Personalize AGENTS.md, CORE.md, or `identity.md`** —
   *deferred*. AGENTS.md and CORE.md are kit-rendered files with
@@ -131,9 +139,9 @@ spec ships **one** and defers three with explicit reasoning.
   is what `wiki outcomes` already does. The wizard's value over
   `wiki outcomes` is the *walk-through plus the demo*.
 
-The MVP is **(b) only**: verb walk-through + one `--help` demo +
-marker write. No domain Q&A, no personalization, no file edits to
-kit-rendered content.
+The MVP is **(b) only**: verb walk-through + one SKILL.md-read
+gloss + marker write. No domain Q&A, no personalization, no file
+edits to kit-rendered content.
 
 ## Inputs
 
@@ -309,9 +317,10 @@ At demo time, the wizard:
   charter's "dozens of primitives" target. Adjustable in a future
   spec amendment without re-litigating the SKILL.
 
-The wizard never executes a verb live — it always runs `wiki <verb>
---help` (see §Behavior). Live execution is the user's next step,
-not the wizard's.
+The wizard never executes a verb in any mode — it reads
+`<vault>/skills/<skill>/SKILL.md` for the chosen verb's
+underlying skill (see §Behavior). Live execution is the user's
+next step, not the wizard's.
 
 ## Outputs
 
@@ -325,11 +334,13 @@ examples for transcripts per recipe). The structure is fixed:
 1. **Greeting + recipe summary** — names the recipe, names the
    primitive count installed, points at the journal as the kit's
    source-of-truth.
-2. **Verb walk-through + one `--help` demo** — runs `wiki outcomes`,
-   reads the verb list (per the §Inputs §4 rules), asks the user
-   which to demo, runs `wiki <chosen-verb> --help`, summarizes what
-   the verb would do based on the help text. The demo writes zero
-   files and appends zero journal events.
+2. **Verb walk-through + one SKILL.md-read gloss** — runs
+   `wiki outcomes`, reads the verb list (per the §Inputs §4
+   rules), asks the user which to gloss, maps verb → skill via
+   the `wiki outcomes` output, `Read`s
+   `<vault>/skills/<skill>/SKILL.md`, and surfaces a one-line
+   gloss from the SKILL's frontmatter `description:`. The demo
+   writes zero files and appends zero journal events.
 3. **Marker write + next-step pointer** — writes the `.wiki.bootstrap`
    sentinel, prints a one-line *"Drop a source under `raw/` and say
    'ingest this' when you're ready"* pointer, and a one-line
@@ -398,9 +409,11 @@ with default umask, regardless of the prior file's mode.
      (two sentences max).
 5. The wizard walks the verb table per the §Inputs §4 rules, then
    asks: *"Which would you like to see in detail?"*
-6. User picks a verb. The wizard runs `wiki <verb> --help` and
-   summarizes what the verb would do, referencing the help text's
-   description.
+6. User picks a verb. The wizard maps verb → skill from the
+   `wiki outcomes` output, `Read`s
+   `<vault>/skills/<skill>/SKILL.md`, parses its frontmatter
+   `description:`, and surfaces a one-line gloss to the user.
+   The wizard never invokes `wiki <verb>` in any mode.
 7. The wizard closes the conversation:
    - Marker write: Claude `Write`s `<vault>/.wiki.bootstrap` with
      the current UTC timestamp. (If the file already exists from a
@@ -424,8 +437,8 @@ after `.wiki.bootstrap` exists:
 
    > *This vault was bootstrapped on `<date from marker>`. Run
    > `wiki outcomes` to see your verb table; run `wiki doctor` for a
-   > health check. To re-see a verb's contract, run
-   > `wiki <verb> --help` directly.*
+   > health check. To re-see a verb's gloss, read
+   > `skills/<skill>/SKILL.md` for the skill behind the verb.*
 
 3. The wizard exits. **Zero writes. Zero journal lines. Zero file
    changes.**
@@ -455,8 +468,8 @@ The user closes Claude Code halfway through the wizard, or types
 "stop" / "never mind." The wizard:
 
 1. Does **not** write the marker.
-2. Has not made any other writes (the demo is `--help`-only — no
-   side effects).
+2. Has not made any other writes (the demo is read-only — the
+   wizard reads SKILL.md, never invokes `wiki <verb>`).
 3. Next invocation re-runs the wizard from the top. There is no
    resume token; restart is the policy (see Constraint 5).
 
@@ -531,9 +544,15 @@ These must hold before, during, and after every invocation:
    at the time of the call. The wizard never hard-codes a verb list,
    never annotates "not installed" verbs, never names cross-recipe
    verbs.
-7. **The demo is side-effect-free.** The wizard runs `wiki <verb>
-   --help` only. It never runs `wiki <verb>` live. No
-   `OperationRunEvent`, no `outputs/` write, no journal append.
+7. **The demo is read-only and the wizard never invokes a
+   verb operation in any form.** The demo step reads
+   `<vault>/skills/<skill>/SKILL.md`; it does not shell out to
+   `wiki <verb>` in any mode (neither live nor `--help`), and
+   does not shell out to the un-sugared `wiki run <op>` form
+   for any operation that backs an outcome verb. No
+   `OperationRunEvent`, no `outputs/` write, no journal append,
+   no `Bash(wiki <verb>)` tool call, no `Bash(wiki run <op>)`
+   tool call for any verb-backing operation.
 8. **Vault-side only.** The skill ships under
    `core/files/skills/wiki-bootstrap/` and is copied into every new
    vault by `wiki init` via the existing core-file copy path. No
@@ -547,7 +566,7 @@ These must hold before, during, and after every invocation:
 | Claude (vault-side) reading `AGENTS.md` | Loads `skills/wiki-bootstrap/SKILL.md` | New SKILL file. AGENTS.md gains one bullet under "Available skills" with the self-suppressing prose pinned in §Inputs §2. |
 | `wiki-bootstrap` SKILL (Claude) | `wiki outcomes` | No code change — calls the shipped subcommand. |
 | `wiki-bootstrap` SKILL (Claude) | Reads `.wiki.journal/journal.jsonl` | Direct file read, no kit code involved. |
-| `wiki-bootstrap` SKILL (Claude) | `wiki <verb> --help` (one of the installed outcome verbs) | No code change — uses the shipped outcome alias and its inherited `--help` from `wiki run <op> --help`. |
+| `wiki-bootstrap` SKILL (Claude) | Reads `<vault>/skills/<skill>/SKILL.md` (skill name resolved from `wiki outcomes`'s verb → skill mapping) | Direct file read, no kit code involved. The wizard never invokes `wiki <verb>` in any mode (see Invariant 7). |
 | `wiki-bootstrap` SKILL (Claude) | Claude's `Write` tool on `<vault>/.wiki.bootstrap` | New file at vault root, outside any kit-tracked directory. The kit's drift detection does not observe it. |
 | `core/files/AGENTS.md` | n/a | One bullet added under "Available skills" naming `wiki-bootstrap`; introductory count-line rephrased to count-free form. Wording pinned in §Inputs §2. |
 | `core/files/.gitignore` | n/a | One line added: `.wiki.bootstrap`. The marker is per-machine SKILL scratch, not committed state. |
@@ -615,12 +634,20 @@ the rest of the spec.
   - `"Help me get started with this wiki."`
 - [ ] **Flow eval — wizard surfaces recipe-appropriate verbs.** One
   canonical phrase (`"I just made a new vault, help me get
-  started."`) drives Claude against each of the three shipped recipes
-  (`personal`, `family`, `work-os`). Cardinality is 1 phrase × 3
-  recipes = 3 cases. Each case asserts that the transcript names at
-  least one verb that `wiki outcomes` returns for that recipe, and
-  names no verb that `wiki outcomes` does not return (Invariant 6).
-  Same eval file.
+  started."`) drives Claude against **two** shipped recipes
+  (`personal`, `work-os`). Cardinality is 1 phrase × 2 recipes =
+  2 cases. Each case asserts that the set of verbs the transcript
+  names **equals** the set `wiki outcomes` returns for that
+  recipe (exact equality — discriminates a wizard that
+  hard-codes verbs from one that derives them from `wiki
+  outcomes`). The `family` recipe is omitted from this AC because
+  it ships the same verb set as `personal` (`{digest,
+  plan-meals}`); the equality assertion against `family` is
+  identical to the assertion against `personal` and would
+  contribute zero coverage. Discriminating power lives on the
+  `work-os` case (`{refresh-stakeholders}`, unique). When
+  `family` ships a verb `personal` does not, this AC is amended
+  to re-add the `family` case. Same eval file.
 - [ ] **Post-bootstrap no-load eval — SKILL short-circuits on
   re-run.** Against a `personal` vault where `.wiki.bootstrap`
   already exists, the same canonical trigger phrase produces a
@@ -656,18 +683,37 @@ the rest of the spec.
   invocation (same vault, same trigger phrase) writes zero files and
   appends zero journal lines. Integration test asserting on file +
   journal byte-stability across the second invocation.
-- [ ] **Re-run after partial completion.** A run aborted before the
-  marker (simulated by killing the eval subprocess after the verb-
-  demo step) leaves the journal AND the marker absent. The next
-  invocation re-runs the wizard from the top. Integration test.
+- [ ] **Re-run after partial completion.** Any vault where the
+  marker is absent triggers a full wizard run on the next
+  invocation. Because every pre-marker step is read-only
+  (Invariants 2 and 3 forbid journal append and any write outside
+  the marker; Invariant 7 forbids `wiki <verb>` invocation in any
+  mode), an abort *anywhere before the marker write* leaves the
+  journal and vault byte-equal to the post-`wiki init` state
+  — semantically indistinguishable from a fresh-init vault, and
+  testable from that state. The test fixture is a fresh-init
+  vault (marker absent, no other writes); the assertion is that
+  the wizard runs the full flow and writes the marker. The
+  earlier draft of this AC proposed a "kill the subprocess
+  after the verb-demo step" instrument; that instrument was
+  dropped because (a) it is timing-fragile against Claude's
+  response cadence and (b) the side-effect-free demo makes
+  post-demo state byte-equal to pre-demo state, so no
+  intermediate state exists for the kill to capture. Integration
+  test.
 - [ ] **No-verbs degradation.** Against a synthetic recipe with
   zero outcome verbs (a test-only fixture), the wizard skips the
   verb walk-through and writes the marker. Integration test.
-- [ ] **Demo is side-effect-free.** The wizard's demo step never
-  produces an `OperationRunEvent` in the journal, never writes to
-  `outputs/`, and never invokes `wiki <verb>` without `--help`.
-  Integration test asserting on the journal + `outputs/` directory
-  after a scripted run.
+- [ ] **Demo is read-only; wizard never invokes `wiki <verb>`.**
+  The wizard's demo step never produces an `OperationRunEvent` in
+  the journal, never writes to `outputs/`, and never invokes
+  `wiki <verb>` in any mode (neither live nor `--help`). Positive
+  evidence: Claude's tool-call log contains at least one `Read`
+  of `<vault>/skills/<skill>/SKILL.md` for some skill that
+  `wiki outcomes` returned. Negative evidence: zero
+  `Bash(wiki <verb>)` invocations for any verb. Integration test
+  asserting on the journal + `outputs/` directory + Claude's
+  tool-call log after a scripted run.
 - [ ] **Malformed marker is treated as present.** Against a vault
   where `.wiki.bootstrap` exists but contains arbitrary text (not
   an ISO timestamp), the wizard short-circuits to the re-run no-op
@@ -716,23 +762,26 @@ the rest of the spec.
 > - `digest` — summarize the week's activity across the vault.
 > - `plan-meals` — produce a weekly meal plan with shopping list.
 >
-> Want to see one in detail? I'll run `wiki <verb> --help` — no
-> side effects, just the contract.
+> Want a gloss on one? I'll read the skill behind it — no shell
+> invocation, just the SKILL.md description.
 
 **User**: digest please.
 
-**Claude**: *(runs `wiki digest --help`)*
+**Claude**: *(`wiki outcomes` maps `digest` → skill
+`weekly-digest`; Claude reads
+`<vault>/skills/weekly-digest/SKILL.md` and quotes from its
+frontmatter description)*
 
-> `wiki digest` is an alias for `wiki run weekly-digest`. It takes
-> a `--window` (an ISO week like `2026-W21`) and writes a digest
-> page to `outputs/digests/<window>.md` summarizing what happened
-> in that window across the vault.
+> The `weekly-digest` skill summarizes the week's activity across
+> the vault — reads meetings, decisions, action-items in the
+> chosen ISO week, and writes a digest page to
+> `outputs/digests/<window>.md`.
 >
 > On day one you don't have anything to summarize yet — the loop
 > starts with ingest. Drop a meeting note under `raw/` and say
 > "ingest the file under raw/"; the `ingest` skill takes it from
-> there, the meeting lands under `wiki/meetings/`, and then
-> `wiki digest` has something to read.
+> there, the meeting lands under `wiki/meetings/`, and then a
+> later `wiki digest` has something to read.
 
 **Claude**: *(writes `<vault>/.wiki.bootstrap` with the current
 UTC timestamp)*
@@ -757,20 +806,22 @@ UTC timestamp)*
 > - `digest` — weekly digest across the household.
 > - `plan-meals` — meal plan + shopping list for the coming week.
 >
-> Want to see one in detail?
+> Want a gloss on one? I'll read the skill behind it.
 
 **User**: plan-meals.
 
-**Claude**: *(runs `wiki plan-meals --help`)*
+**Claude**: *(`wiki outcomes` maps `plan-meals` → skill
+`meal-planning`; Claude reads
+`<vault>/skills/meal-planning/SKILL.md` and quotes from its
+frontmatter description)*
 
-> `wiki plan-meals` is an alias for `wiki run meal-planning`. It
-> takes a `--window` (ISO week) and an optional `--theme` (e.g.
-> `"easy weeknight"`), reads `wiki/food/recipes/`, and writes a
-> plan to `outputs/meal-plans/<window>.md`.
+> The `meal-planning` skill produces a weekly meal plan with a
+> shopping list — reads `wiki/food/recipes/`, picks a coherent
+> week, and writes a plan to `outputs/meal-plans/<window>.md`.
 >
 > On day one your `wiki/food/recipes/` is empty — start by pasting
 > or dropping a recipe under `raw/` and saying "ingest this
-> recipe." Once you have a handful, `wiki plan-meals` has
+> recipe." Once you have a handful, a later `wiki plan-meals` has
 > something to choose from.
 
 **Claude**: *(writes `<vault>/.wiki.bootstrap`)*
@@ -798,22 +849,23 @@ verbs — no `digest`):
 > - *(other work-os outcome verbs that `wiki outcomes` returns,
 >   listed verbatim — the wizard reads the table at run time)*
 >
-> Want to see one in detail?
+> Want a gloss on one? I'll read the skill behind it.
 
 **User**: refresh-stakeholders.
 
-**Claude**: *(runs `wiki refresh-stakeholders --help`)*
+**Claude**: *(`wiki outcomes` maps `refresh-stakeholders` → skill
+`stakeholder-map-refresh`; Claude reads
+`<vault>/skills/stakeholder-map-refresh/SKILL.md` and quotes from
+its frontmatter description)*
 
-> `wiki refresh-stakeholders` is an alias for `wiki run
-> stakeholder-map-refresh`. It takes a `--project` flag and writes
-> a refreshed stakeholder map to
-> `outputs/stakeholder-map/<project>.md` based on the
-> `stakeholder-update` pages it reads under `wiki/`.
+> The `stakeholder-map-refresh` skill re-walks the per-project
+> stakeholder map from `stakeholder-update` pages and writes a
+> refreshed map to `outputs/stakeholder-map/<project>.md`.
 >
 > On day one you have no updates yet — drop a Slack thread, an
 > email, or a 1:1 note under `raw/` and say "ingest this as a
 > stakeholder update." A few of those and the next
-> `refresh-stakeholders` will land a useful map.
+> `wiki refresh-stakeholders` will land a useful map.
 
 **Claude**: *(writes `<vault>/.wiki.bootstrap`)*
 
@@ -866,9 +918,10 @@ them:
    re-invocation if the marker isn't written. No mid-flow state.
 8. **A journal event for bootstrap.** §Inputs §3 explains why the
    marker is a file sentinel, not a journal line.
-9. **Live verb execution.** The wizard always demos via
-   `wiki <verb> --help`. Live execution is a side-effect operation;
-   the user runs it themselves when they're ready.
+9. **Live verb execution.** The wizard does not invoke
+   `wiki <verb>` in any mode (neither live nor `--help`). The
+   demo step reads the verb's vault-side SKILL.md instead. The
+   user runs the live verb themselves when they're ready.
 10. **A TUI / progress bar / interactive prompt.** The wizard is
     Claude conversation. Anything more application-shaped breaches
     Principle 5.
@@ -898,7 +951,7 @@ What implementation strategies are off the table for this spec:
    `Edit` is not used by this SKILL.
 3. **No new CLI verb.** The kit's CLI surface is unchanged. The
    wizard only invokes already-shipped verbs (`wiki outcomes`,
-   `wiki <verb> --help`). It does not invoke `wiki journal append`
+   `wiki <verb>` not used in any mode — see Invariant 7). It does not invoke `wiki journal append`
    (which is unshipped — see §Inputs §3 for the rejected
    alternative).
 4. **No new top-level directory.** The SKILL ships at
@@ -928,8 +981,11 @@ What implementation strategies are off the table for this spec:
 9. **No personalization in v1.** The wizard does not collect or
    write owner-shaped data. Identity capture defers to a future
    kit-side `wiki config set` surface (see Non-goal 2).
-10. **No live verb execution.** Demos are `wiki <verb> --help` only.
-    See Non-goal 9.
+10. **No `wiki <verb>` invocation in any mode.** The wizard
+    never shells out to `wiki <verb>` — neither live nor with
+    `--help`. The demo step reads
+    `<vault>/skills/<skill>/SKILL.md` directly (mapped from verb
+    via `wiki outcomes`). See Non-goal 9 and Invariant 7.
 11. **No exact-prose assertions in evals.** Per Non-goal 11.
     Structural assertions (which SKILL loaded, whether the marker
     file exists, whether the transcript is ≤ N lines, whether a
