@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Owner:** `llm_wiki_kit/upgrade.py`, `llm_wiki_kit/cli.py:_cmd_upgrade`
 - **Related:** [ADR-0008](../../adr/0008-init-adopt-ownership-policy.md)
   §6 (the drift-aware re-render semantics this spec pins);
