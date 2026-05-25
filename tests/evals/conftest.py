@@ -368,3 +368,131 @@ def stakeholder_map_refresh_vault(tmp_path: Path, _seed_stakeholder_map_refresh:
     dest = tmp_path / "vault"
     shutil.copytree(_seed_stakeholder_map_refresh, dest)
     return dest
+
+
+# ---------------------------------------------------------------------------
+# Recipe-level vault builders (wiki-bootstrap evals)
+# ---------------------------------------------------------------------------
+#
+# Unlike the families above, these init from a *real* shipped recipe
+# (personal / family / work-os) against the repo's `recipes/` directory.
+# We therefore use the real REPO_ROOT as the kit root, not the tmp
+# `eval_kit_root` (which only ships the `minimal` recipe).
+
+
+def _build_recipe_vault(parent: Path, recipe: str) -> Path:
+    """``wiki init <parent>/<recipe>-vault --recipe <recipe> --no-git``.
+
+    ``--no-git`` is used for the same reason the seed builders above
+    use it: session-scoped fixtures fire before the function-scoped
+    autouse ``GIT_AUTHOR_*`` env fixture, so a default git-init would
+    hit a missing-identity failure on a hermetic CI runner. See
+    ``build_weekly_digest_vault`` for the canonical rationale.
+    """
+
+    vault = parent / f"{recipe}-vault"
+    assert cli.main(["init", str(vault), "--recipe", recipe, "--no-git"]) == 0, (
+        f"`wiki init --recipe {recipe}` failed"
+    )
+    return vault
+
+
+def build_personal_vault(parent: Path) -> Path:
+    """Seed for wiki-bootstrap evals: full `personal` recipe install.
+
+    Unlike the other ``build_*_vault`` factories in this file, the
+    personal/family/work-os recipes are shipped *inside the repo*
+    and resolved against the default kit root — they do not need
+    the tmp ``eval_kit_root`` that the ``minimal``-based families
+    require. No ``kit_root`` parameter for that reason.
+    """
+
+    return _build_recipe_vault(parent, "personal")
+
+
+def build_family_vault(parent: Path) -> Path:
+    """Seed for wiki-bootstrap evals: full `family` recipe install.
+
+    See :func:`build_personal_vault` for the kit-root rationale.
+    """
+
+    return _build_recipe_vault(parent, "family")
+
+
+def build_work_os_vault(parent: Path) -> Path:
+    """Seed for wiki-bootstrap evals: full `work-os` recipe install.
+
+    See :func:`build_personal_vault` for the kit-root rationale.
+    """
+
+    return _build_recipe_vault(parent, "work-os")
+
+
+# Pinned timestamp used by ``bootstrapped_personal_vault`` so the
+# marker is deterministic across runs. Format matches the SKILL's
+# write contract (ISO-8601 UTC, single line, trailing newline).
+_BOOTSTRAP_MARKER_TIMESTAMP = "2026-01-01T00:00:00Z\n"
+
+
+@pytest.fixture(scope="session")
+def _seed_personal(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return build_personal_vault(tmp_path_factory.mktemp("seed-personal"))
+
+
+@pytest.fixture
+def personal_vault(tmp_path: Path, _seed_personal: Path) -> Path:
+    dest = tmp_path / "vault"
+    shutil.copytree(_seed_personal, dest)
+    return dest
+
+
+@pytest.fixture(scope="session")
+def _seed_family(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return build_family_vault(tmp_path_factory.mktemp("seed-family"))
+
+
+@pytest.fixture
+def family_vault(tmp_path: Path, _seed_family: Path) -> Path:
+    dest = tmp_path / "vault"
+    shutil.copytree(_seed_family, dest)
+    return dest
+
+
+@pytest.fixture(scope="session")
+def _seed_work_os(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return build_work_os_vault(tmp_path_factory.mktemp("seed-work-os"))
+
+
+@pytest.fixture
+def work_os_vault(tmp_path: Path, _seed_work_os: Path) -> Path:
+    dest = tmp_path / "vault"
+    shutil.copytree(_seed_work_os, dest)
+    return dest
+
+
+@pytest.fixture
+def bootstrapped_personal_vault(personal_vault: Path) -> Path:
+    """Personal vault with a valid marker file.
+
+    Used by T5.2 (``test_idempotent_rerun_writes_nothing``) and T6.3
+    (``test_post_bootstrap_short_circuits``) for short-circuit
+    re-run testing. Do NOT use for replacement-flow coverage — T5.6
+    (``test_unreadable_marker_*``) writes its own mode-0o000 marker
+    inline.
+    """
+
+    (personal_vault / ".wiki.bootstrap").write_text(_BOOTSTRAP_MARKER_TIMESTAMP, encoding="utf-8")
+    return personal_vault
+
+
+@pytest.fixture
+def no_verbs_vault(minimal_vault: Path) -> Path:
+    """Minimal vault with zero installed outcome verbs.
+
+    The `minimal` recipe installs no primitives; every eval family
+    above adds primitives explicitly via `wiki add`. A `minimal`
+    vault therefore has `wiki outcomes` returning an empty set,
+    which is exactly the AC 13 condition (``test_no_verbs_degradation``).
+    """
+
+    return minimal_vault

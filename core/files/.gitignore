@@ -25,3 +25,7 @@ Thumbs.db
 *~
 .#*
 \#*\#
+
+# Bootstrap marker (per-machine SKILL scratch; see
+# docs/specs/wiki-bootstrap/spec.md §Inputs §3).
+.wiki.bootstrap

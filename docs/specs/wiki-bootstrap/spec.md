@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec
 > and code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Shipped
 - **Owner:** `core/files/skills/wiki-bootstrap/SKILL.md` (vault-side
   skill, copied into every new vault by `wiki init`); `core/files/AGENTS.md`
   (the vault contract that surfaces the skill on first read).
