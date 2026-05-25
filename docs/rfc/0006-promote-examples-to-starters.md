@@ -1,6 +1,6 @@
 # RFC-0006: Promote `examples/` to first-class starter distributions
 
-- **Status:** Open for comment
+- **Status:** Accepted
 - **Author:** maintainer
 - **Created:** 2026-05-25
 - **Discussion:** PR opened against `main` from
@@ -594,8 +594,23 @@ The honest costs.
 
 ## Outcome
 
-To be filled in when the RFC is accepted, rejected, or
-withdrawn. On acceptance, lists the implementation PR(s), the
-new top-level `starters/` directory, the new
-`docs/architecture/starters.md`, and the spec edits to
-`docs/specs/task-21-examples-tutorials/spec.md`.
+**Accepted 2026-05-25.** Accepted alongside sibling RFC-0005
+(narrow charter mission to the vault author); the two were
+reviewed and landed together.
+
+Follow-up implementation work (one PR, per §"Implementation
+outline"):
+
+- Move `examples/{family,work-os,personal}-mini/` →
+  `starters/{family,work-os,personal}/`.
+- Move `examples/conflict-pending/` →
+  `docs/guides/how-to/_examples/conflict-pending/`.
+- Move `_seed/` and `regenerate.py` under `starters/`; update path
+  constants; rerun `--check` and the renamed integration test.
+- Restructure `README.md` front page to lead with the clone-and-go
+  starter path; demote `pip install` to a secondary section.
+- Add `docs/architecture/starters.md` (kit-side machinery,
+  including the projection invariant).
+- Update `docs/specs/task-21-examples-tutorials/spec.md` and the
+  tutorial / how-to references.
+- Charter §Mission edit per RFC-0005 also lands in the same wave.
