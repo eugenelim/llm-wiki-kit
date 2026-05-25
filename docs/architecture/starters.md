@@ -88,14 +88,16 @@ Two modes, both load-bearing for the invariant:
   `content_hash`, `source_hash`), and byte-compares against the
   committed tree. Exits 0 on clean, 1 with a unified-diff fragment on
   divergence.
-- **`--apply`** (contributor command). Same build, then atomically
-  swaps each tmp tree over the committed location. POSIX `rename(2)`
+- **`--apply`** (contributor command). Same build, then swaps each
+  tmp tree over the committed location via two same-filesystem
+  renames (`committed → backup`, then `staged → committed`) with
+  rollback on the second-rename failure path. POSIX `rename(2)`
   does not allow a single-call replace of a non-empty directory, so
-  the swap is two same-filesystem renames (`committed → backup`,
-  then `staged → committed`) with rollback on the second-rename
-  failure path. A double-fault preserves the backup and surfaces a
-  recovery command. The contract is documented in
-  `starters/regenerate.py::apply_vault`.
+  there is a small in-process window where the committed path is
+  absent — this is documented and unavoidable on POSIX. A
+  double-fault preserves the backup and surfaces a recovery command.
+  The full contract (including the rare double-fault recovery path)
+  is documented in `starters/regenerate.py::apply_vault`.
 
 The build itself uses the kit's own `cli.main(["init", ...])` plus
 `safe_write` for every seed page. No bypass; no special path. If

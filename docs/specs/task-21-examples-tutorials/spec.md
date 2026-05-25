@@ -31,10 +31,11 @@
 ## What this is
 
 The user-facing on-ramp for v2.0.0: three pre-shaped vaults a
-non-engineer can browse to see what the kit produces, and the first
-two [Diátaxis](https://diataxis.fr/) **tutorials** plus one **how-to**
-that walk a reader from `pip install llm-wiki-kit` through a working
-vault they understand.
+reader can browse (Tier 2 users per RFC-0005 can clone the two
+starter vaults directly), and the first two
+[Diátaxis](https://diataxis.fr/) **tutorials** plus one **how-to**
+that walk an engineering-comfortable author from
+`pip install llm-wiki-kit` through a working vault they understand.
 
 In scope:
 
@@ -52,7 +53,7 @@ In scope:
   operation → read the journal).
 - `docs/guides/tutorials/tutorial-2-work-os-walkthrough.md` —
   work-os-recipe-specific walkthrough that ends with a populated
-  work-os-mini-shaped vault.
+  vault matching the shape of `starters/work-os/`.
 - `docs/guides/how-to/resolve-a-conflict.md` — problem-oriented walk
   through the committed drift in `docs/guides/how-to/_examples/conflict-pending/`,
   exercising the `wiki-conflict` vault-side skill.
@@ -250,9 +251,10 @@ minutes.
 
 Tutorial 1 deliberately targets the `personal` recipe — the smallest
 recipe — so the first vault feels approachable. There is no
-committed `personal-mini/` example vault; the reader builds their
-own. A reader wanting a reference vault is pointed at
-`starters/work-os/` (or family-mini) at the end.
+committed `starters/personal/` vault today (the `personal` recipe
+renders only via the conflict-pending worked example); the reader
+builds their own. A reader wanting a reference vault is pointed at
+`starters/family/` or `starters/work-os/` at the end.
 
 Executable steps (each a `$` line inside a `bash` fence):
 
@@ -543,7 +545,7 @@ Each translates to one or more tests under `tests/integration/`.
     `frontmatter.schema.yaml`) contain `{vault_name}` and
     `{recipe_name}` substitutions; the regenerator's
     build-into-tmp step pins the tmp dir's basename to the
-    committed vault's directory name (e.g. `family-mini`), so
+    committed vault's directory name (e.g. `family`), so
     `{vault_name}` resolves to the same string every run. Recipe
     variables come from the recipe's own `variables:` block —
     today only the `personal` recipe declares `owner_*` fields
@@ -654,8 +656,8 @@ Each translates to one or more tests under `tests/integration/`.
   "literate" executable-blocks format (asciidoctor `[source,bash]`,
   Jupyter, etc.) was considered and rejected — it adds a renderer
   dependency and obscures the simple "type this, see that" shape.
-- **`examples/` as a discoverability surface for primitives.** The
-  primitive catalog is `templates/`; `examples/` is shaped vaults,
+- **`starters/` as a discoverability surface for primitives.** The
+  primitive catalog is `templates/`; `starters/` is shaped vaults,
   not a catalog. A reader looking for "what primitives ship" goes
   to `docs/architecture/overview.md`.
 - **Versioning the example vaults independently.** They re-render
@@ -672,10 +674,12 @@ Each translates to one or more tests under `tests/integration/`.
 
 ## Constraints
 
-- **No new top-level directory beyond `examples/`.** All other new
+- **No new top-level directory beyond `starters/`.** All other new
   files land under existing trees (`docs/guides/`, `tests/`).
-  `examples/` is authorized by RFC-0001 Task 21's literal listing
-  (`conflict-pending/` is a subdir under that authorized umbrella).
+  `starters/` is authorized by RFC-0006; the conflict-pending
+  worked example lives under `docs/guides/how-to/_examples/` (a
+  subdir of the already-existing `docs/` tree) and does not
+  introduce a separate top-level.
 - **No new runtime dependency.** The regenerator uses stdlib +
   the kit's own modules. Dev deps may grow only with a one-line
   rationale per addition in the plan.

@@ -13,16 +13,23 @@ A kit for building LLM-maintained markdown wikis — Karpathy's LLM Wiki pattern
 
 ## Use a starter (no install required)
 
-Three steps, fresh repo to working vault — no Python, no `pip install`.
+Four steps, fresh machine to working vault — no Python, no `pip install`.
 
-**1. Pick a starter.**
+**1. Clone this repo.** You need a local copy to `cp -r` a starter out of.
+
+```bash
+git clone https://github.com/eugenelim/llm-wiki-kit
+cd llm-wiki-kit
+```
+
+**2. Pick a starter.**
 
 | Starter                    | Best for                                                         |
 |----------------------------|------------------------------------------------------------------|
 | [`starters/family/`](starters/family/)   | A household OS — meals, medical, trips, action items.          |
 | [`starters/work-os/`](starters/work-os/) | A professional OS — stakeholders, customers, projects, decisions. |
 
-**2. Copy it to a folder of your own.**
+**3. Copy it to a folder of your own.**
 
 ```bash
 cp -r starters/work-os ~/my-vault
@@ -31,7 +38,7 @@ cd ~/my-vault
 
 The vault is just markdown — works in any editor. For LLM-driven workflows, open it in Obsidian or Claude Code.
 
-**3. Talk to Claude.** Open Claude Code (or any agent that reads `AGENTS.md`) at the vault root. It will read `AGENTS.md` and `CORE.md` to learn what the vault is and what skills it can run. Then try one of the [prompts below](#talking-to-claude).
+**4. Talk to Claude.** Open Claude Code (or any agent that reads `AGENTS.md`) at the vault root. It will read `AGENTS.md` and `CORE.md` to learn what the vault is and what skills it can run. Then try one of the [prompts below](#talking-to-claude).
 
 See [`starters/README.md`](starters/README.md) for the full clone-and-go workflow, including how to pull in kit upgrades later with `wiki upgrade`.
 

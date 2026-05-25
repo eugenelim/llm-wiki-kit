@@ -59,13 +59,16 @@ a [starter](../../starters/) instead — see RFC-0005 and RFC-0006.
 │   ├── family.yaml
 │   ├── work-os.yaml
 │   └── personal.yaml
-├── starters/                  # ready-to-clone starter vaults (RFC-0006)
+├── starters/                  # ready-to-clone starter vaults (RFC-0006);
+│   │                          # `conflict-pending`, also produced by this
+│   │                          # regenerator, lives under
+│   │                          # `docs/guides/how-to/_examples/` (it is the
+│   │                          # worked example for resolve-a-conflict.md,
+│   │                          # not a usable starting point).
 │   ├── family/
 │   ├── work-os/
 │   ├── _seed/                 # hand-authored seed pages copied into starters
 │   └── regenerate.py          # rebuild starters from recipes + seeds
-│                              # (conflict-pending worked example lives at
-│                              #  docs/guides/how-to/_examples/conflict-pending/)
 ├── tests/
 │   ├── unit/                  # Python unit tests
 │   ├── fixtures/              # seed vaults for integration + evals

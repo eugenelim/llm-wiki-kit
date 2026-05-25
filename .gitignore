@@ -40,5 +40,9 @@ docs/specs/*/state.json
 docs/specs/*/notes/
 .worktrees/
 
-# Regenerator staging dirs (cleaned up on success; ignored if a crash leaks one)
-examples/.staging-*
+# Regenerator staging dirs (cleaned up on success; ignored if a crash leaks one).
+# Lives next to each committed vault's parent: starters/ for the starters,
+# docs/guides/how-to/_examples/ for the conflict-pending worked example.
+# See starters/regenerate.py::apply_vault.
+starters/.staging-*
+docs/guides/how-to/_examples/.staging-*

@@ -80,7 +80,7 @@ eval'`, and require no API keys.
    capture_output=True)` (the `capture_output=True` is
    load-bearing — without it `.stdout`/`.stderr` are `None` and
    the marker assertion below crashes). Assert per-vault outcome:
-   `family-mini` and `work-os-mini` exit 0; `conflict-pending`
+   `family` and `work-os` exit 0; `conflict-pending`
    exits non-zero with `b"pending-proposal"` (hyphen, singular —
    the literal token from `llm_wiki_kit.doctor.PENDING_PROPOSAL`)
    in stdout AND carries a `PageProposalEvent` in its journal
@@ -146,7 +146,7 @@ eval'`, and require no API keys.
    `len(list(iter_claude_prompt_lines(howto_path))) == 0`
    (equality, not floor — a stray `>` inside any `bash` fence
    fails the test).
-10. **`test_no_new_top_level_dirs_beyond_examples`** — pin the
+10. **`test_no_new_top_level_dirs_beyond_starters`** — pin the
     repo root via `Path(__file__).resolve().parents[2]` (the test
     file lives at `tests/integration/test_tutorials.py`, so
     `parents[2]` is the repo root). Pin the expected pre-task
@@ -175,10 +175,10 @@ mode explicitly per the work-loop's PLAN convention.
 - **Verification mode:** TDD (red tests are the artifact).
 - **What changes:** new files
   `tests/integration/test_tutorials.py` and
-  `tests/integration/test_examples_regenerable.py`. The eleven
+  `tests/integration/test_starters_regenerable.py`. The eleven
   tests above land as plain failing tests (no `xfail`). Both
   files pin `REPO_ROOT = Path(__file__).resolve().parents[2]`
-  at module level. `test_examples_regenerable.py` imports
+  at module level. `test_starters_regenerable.py` imports
   `regenerate` via:
   ```python
   import sys
@@ -189,7 +189,7 @@ mode explicitly per the work-loop's PLAN convention.
   reach a sibling non-package directory; the `noqa` is paired
   with the `sys.path` insert that precedes it.
 - **Done when:** `pytest tests/integration/test_tutorials.py
-  tests/integration/test_examples_regenerable.py` — every test
+  tests/integration/test_starters_regenerable.py` — every test
   fails for the expected reason (missing file, missing dir,
   missing command). Do not move on if any test fails for a
   *different* reason than "the artifact doesn't exist yet."
@@ -202,14 +202,14 @@ mode explicitly per the work-loop's PLAN convention.
   - The recipe → target → seed-dir mapping the regenerator
     operates over:
 
-    | recipe       | target.name        | seed dir                 |
-    |--------------|--------------------|--------------------------|
-    | `family`     | `family-mini`      | `starters/_seed/family/`     |
-    | `work-os`    | `work-os-mini`     | `starters/_seed/work-os/`    |
+    | recipe       | target.name        | seed dir                       |
+    |--------------|--------------------|--------------------------------|
+    | `family`     | `family`           | `starters/_seed/family/`       |
+    | `work-os`    | `work-os`          | `starters/_seed/work-os/`      |
     | `personal`   | `conflict-pending` | (no seeds — drift-replay only) |
 
   - `build_vault(recipe, target)` — requires `target.name` to
-    equal `"family-mini"` or `"work-os-mini"` per the table;
+    equal `"family"` or `"work-os"` per the table;
     calls `llm_wiki_kit.cli.main(["init", str(target), "--recipe",
     recipe])` and copies any `<seed_dir>/wiki/**` pages into the
     target via `safe_write` (each seed page lands with a
@@ -273,8 +273,8 @@ mode explicitly per the work-loop's PLAN convention.
 - **Verification mode:** Goal-based (`wiki doctor` exit code on each
   vault is the contract) plus mechanical (AC6 byte-comparison).
 - **What changes:**
-  - Seed authoring applies only to `family-mini` and
-    `work-os-mini`; `conflict-pending` is built entirely by
+  - Seed authoring applies only to `family` and
+    `work-os`; `conflict-pending` is built entirely by
     `_replay_drift` and carries no `starters/_seed/personal/`
     content (AC2 exempts it).
   - Author markdown pages under `starters/_seed/family/wiki/**`
@@ -438,7 +438,7 @@ or a mechanical-gate invocation:
 | AC11 | The four gates above |
 | AC12 | PR-body paragraph (discipline gate) |
 | AC13 | `test_no_new_runtime_dep` (#11) |
-| Invariant: "No new top-level directory beyond `examples/`" | `test_no_new_top_level_dirs_beyond_examples` (#10) |
+| Invariant: "No new top-level directory beyond `examples/`" | `test_no_new_top_level_dirs_beyond_starters` (#10) |
 
 ## Risks
 

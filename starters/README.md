@@ -13,14 +13,21 @@ starter vault — the kit produced these for you.
 ## Use a starter
 
 ```bash
-# 1. Copy the starter to a folder of your own.
+# 1. Clone this repo so you have the starter on disk.
+git clone https://github.com/eugenelim/llm-wiki-kit
+cd llm-wiki-kit
+
+# 2. Copy the starter to a folder of your own.
 cp -r starters/work-os ~/my-work-os
 cd ~/my-work-os
 
-# 2. Open it. The vault is just markdown — works in any editor.
+# 3. Optional — put your vault under version control.
+git init && git add . && git commit -m "initial"
+
+# 4. Open it. The vault is just markdown — works in any editor.
 #    For the LLM-driven side, open the folder in Claude Code.
 
-# 3. Start using it. The vault's AGENTS.md tells the agent which
+# 5. Start using it. The vault's AGENTS.md tells the agent which
 #    skills are wired up. Try something like:
 #       "Read .wiki.journal/journal.jsonl and summarize what's in
 #        this vault."
@@ -82,5 +89,5 @@ Each starter ships:
 - **Architecture and how starters get produced:**
   [`docs/architecture/starters.md`](../docs/architecture/starters.md).
 - **Roadmap, ADRs, RFCs:** see the kit-side docs under `docs/`.
-  Most of these are for people who want to maintain the kit, not for
-  starter users.
+  Most of these are kit-maintainer docs; starter users rarely need
+  them.

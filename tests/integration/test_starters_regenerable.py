@@ -264,9 +264,11 @@ def test_apply_vault_replaces_existing_committed_tree(tmp_path: Path) -> None:
     """Happy path: apply_vault must replace a populated destination.
 
     POSIX `rename(2)` returns ENOTEMPTY on non-empty directory targets,
-    so an `os.replace(staged, committed)`-only implementation would
-    silently fail every regeneration that ran against the committed
-    starter vaults — this test catches that regression class.
+    so a single-call (`os.rename(staged, committed)` or
+    `os.replace(staged, committed)`) implementation would silently fail
+    every regeneration that ran against the committed starter vaults.
+    The renderer uses two `os.rename` calls with rollback (see
+    `apply_vault`); this test catches that regression class.
     """
 
     regenerate = _import_regenerate()
