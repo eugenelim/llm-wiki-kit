@@ -1,6 +1,6 @@
 # RFC-0005: Narrow the charter mission to the vault author
 
-- **Status:** Open for comment
+- **Status:** Accepted
 - **Author:** maintainer
 - **Created:** 2026-05-25
 - **Discussion:** PR opened against `main` from
@@ -494,6 +494,18 @@ Phrased as questions so reviewers can take a position.
 
 ## Outcome
 
-To be filled in when the RFC is accepted, rejected, or withdrawn.
-Lists the follow-up PRs (charter edit, README rephrase, roadmap
-note) that came out of this RFC.
+**Accepted 2026-05-25.** The sibling RFC-0006 (promote `examples/`
+to first-class starter distributions) is accepted alongside; the
+two were reviewed and landed together.
+
+Follow-up implementation work:
+
+- A follow-up PR edits `docs/CHARTER.md` §Mission (new three-
+  paragraph audience clause per the proposed text in §Proposal)
+  and Principle 6 (one-sentence clarification that the kit's
+  ADR/RFC/spec discipline is for kit development, not vault
+  maintainers). README and tutorial wording follow under
+  RFC-0006's implementation PR.
+- The Tier 2 audience question is carried by RFC-0006 and its
+  implementation PR (rename `examples/` → `starters/`; restructure
+  the README front page; new `docs/architecture/starters.md`).
