@@ -5,9 +5,11 @@
 - **Created:** 2026-05-25
 - **Discussion:** PR opened against `main` from
   `eugenelim/rfc-charter-audience-tension`
-- **Resolves to:** A follow-up PR that edits `docs/CHARTER.md` §Mission,
-  §Principles (Principle 6 clarification only — Principle 5 unchanged),
-  and the related README framing. No code change.
+- **Resolves to:** A follow-up PR that edits `docs/CHARTER.md` §Mission
+  and §Principles (Principle 6 clarification only — Principle 5
+  unchanged). The Tier 2 audience question — how (or whether) we
+  serve non-author users — is split into the sibling RFC-0006
+  (promote `examples/` to `starters/`). No code change in this RFC.
 
 ## Summary
 
@@ -23,9 +25,12 @@ This RFC picks one of the two. It narrows the mission to the
 and for the people around them, and it keeps Principle 5 unchanged.
 Audiences who cannot install the kit themselves (true non-engineers,
 households without a tech-comfortable member) are acknowledged as a
-distinct downstream-distribution problem, addressable later by a
-clone-able starter vault — explicitly *not* by softening the library
-boundary.
+distinct downstream-distribution problem and routed to the sibling
+**RFC-0006** ("Promote `examples/` to first-class starter
+distributions"), which proposes the concrete answer: a `starters/`
+directory in this repo that ships pre-rendered, ready-to-use vaults
+producible from the kit but consumable without it. Explicitly *not*
+by softening the library boundary.
 
 A reader who agrees the mission should be narrowed — and that
 Principle 5 should stay sharp — can skip the rest. The rest is the
@@ -126,14 +131,18 @@ compound the longer the tension stays unresolved:
    Honesty over capability (Principle 1) is the kit's most-cited
    value; shipping a mission claim the kit cannot stand behind is a
    violation of Principle 1 by the *charter itself*.
-1. **Tier 2 audiences (true non-engineers) get nothing.** As long
-   as the mission claims to serve them, the kit has no incentive to
-   build the distribution surface (a clone-able starter, a managed
-   service, a hosted version) that would actually serve them. The
-   ambiguity blocks both directions: we can't sharpen the library
-   for engineers without seeming to abandon the family, and we
-   can't build the family product without contradicting the
-   library.
+1. **Tier 2 audiences (true non-engineers) get nothing, and the
+   existing `examples/*-mini/` artifacts stay mis-positioned.** The
+   kit already renders three full vaults under `examples/` (family,
+   work-os, personal) and CI verifies they match the kit's output
+   byte-for-byte. They are framed as *previews* — "browse to see
+   what the kit produces" — when they are functionally complete
+   v1-style starter vaults. As long as the mission claims to serve
+   non-engineers directly, the kit has no incentive to promote
+   those artifacts to the front door (RFC-0006). The ambiguity
+   blocks both directions: we can't sharpen the library for
+   engineers without seeming to abandon the family, and we can't
+   promote the starters without contradicting the library framing.
 
 ## Proposal
 
@@ -161,11 +170,13 @@ PR, not in this RFC):
 >
 > Audiences who cannot install the kit themselves — true non-
 > engineers, households or teams without a tech-comfortable
-> maintainer — are a Tier 2 audience. The kit may serve them in the
-> future through a separate distribution (e.g. a clone-able starter
-> vault), but that is a downstream-distribution problem, not a
-> library-shape problem. The library boundary in Principle 5 is
-> unchanged.
+> maintainer — are a Tier 2 audience served by *starter
+> distributions*: pre-rendered vaults producible from the kit but
+> consumable without it. The kit produces them; the user clones
+> one. The library boundary in Principle 5 is unchanged, because
+> a starter is a CI-generated artifact of the library, not a
+> parallel application. See sibling RFC-0006 for the concrete
+> proposal.
 
 Principle 5 stays exactly as written.
 
@@ -231,17 +242,20 @@ like under it. Five concrete recent decisions:
    remain good engineering, but they no longer have to do
    principle-defense work.
 
-1. **The proposed clone-able starter repo** (not yet drafted; named
-   on the roadmap as a future direction). Aligns, and this RFC
-   names where it belongs. Under the current "non-engineer family"
-   mission, a starter repo is either redundant (the kit was
-   supposed to onboard non-engineers directly) or it's an
-   application-edge the kit must own. Under the new mission, the
-   starter is the *Tier 2 distribution* — a separate product
-   surface that serves audiences who can't install the kit
-   themselves, plausibly a separate repo or downstream project.
-   The starter doesn't blur the library boundary because it is
-   downstream of the library, not built into it.
+1. **Starter distributions** (sibling RFC-0006, drafted alongside
+   this one). Aligns, and this RFC names where the audience the
+   primary mission no longer covers actually gets served. Under
+   the current "non-engineer family" mission, the existing
+   `examples/*-mini/` artifacts are mis-positioned: they ship as
+   "previews" because positioning them as the front door would
+   contradict the library narrative. Under the new mission, they
+   are the *Tier 2 distribution* — promoted in-place to
+   `starters/`, surfaced on the README, and consumable without
+   `pip install`. The starter doesn't blur the library boundary
+   because it is a CI-rendered artifact *of* the library
+   (verified byte-for-byte by `regenerate.py --check` today),
+   not a parallel application. RFC-0006 carries the concrete
+   proposal.
 
 1. **The journal, AGENTS.md, and the ADR/RFC/spec discipline
    themselves**. Aligns. Under the current mission, the kit's
@@ -306,10 +320,11 @@ superseded.
 
 ### Future RFCs and specs that become easier
 
-- **A starter-repo distribution RFC.** The Tier 2 audience now has
-  an explicit home; the RFC author doesn't have to argue both that
-  non-engineers deserve service *and* that the library shouldn't
-  serve them directly.
+- **RFC-0006 (starter distributions).** Drafted as a sibling. The
+  Tier 2 audience now has an explicit home, and RFC-0006 doesn't
+  have to argue both that non-engineers deserve service *and* that
+  the library shouldn't serve them directly — this RFC settles the
+  first half so RFC-0006 can focus on the *how*.
 - **Author-shaped CLI affordances.** Future verbs, doctor checks,
   inspection commands, journal explorers can be designed for the
   author without spec-length defenses against Principle 5.
