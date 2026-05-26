@@ -14,6 +14,13 @@
   named the maintainer as the primary audience whose fix path this spec
   describes. `docs/specs/task-21-examples-tutorials/spec.md` AC6 covers
   the journal-normalization rules `regenerate.py` already encodes.
+  `docs/specs/primitive-sideload/spec.md` (RFC-0007 sideload) shares this
+  spec's load-bearing dependency on `RECIPE_TARGETS` — the elevated
+  constant is what keeps user-authored recipes composing sideloaded
+  primitives outside starter rendering and seed-coverage audit by
+  construction (task T9 in the paired plan elevates the constant and
+  pins this cross-spec relationship via the `__all__` + `# Load-bearing:`
+  anchor in `starters/regenerate.py`).
 - **Constrained by:** Charter Principle 1 (honesty over capability —
   the check's false-positive shape is named in §Behavior, not papered
   over); Charter Principle 3 (no new runtime dependency — the check
@@ -55,6 +62,21 @@ semantically stale and a starter user will open an empty folder where
 they expected an example.
 
 ## Inputs
+
+`starters/regenerate.py`'s `RECIPE_TARGETS` is the **load-bearing
+definition of "starter input"** — the single source of truth that
+this check, `regenerate.py --check`, and (by RFC-0006's projection
+invariant) every future starter-related surface treat as in-scope.
+`RECIPE_TARGETS` is exported via `starters.regenerate.__all__` and
+carries a `# Load-bearing:` sigil immediately above its assignment;
+both anchors are asserted by
+`tests/unit/test_recipe_targets_anchor.py` so a refactor that
+silently duplicates the literal in a sibling file fails CI. The
+projection invariant relies on this single-source posture — user-
+authored recipes composing sideloaded primitives
+(`docs/specs/primitive-sideload/spec.md`) are *not* in
+`RECIPE_TARGETS` by construction and are therefore out of starter
+rendering and out of this check's audit.
 
 - `recipes/<name>.yaml` for each recipe that maps to a starter via
   `starters/regenerate.py`'s `RECIPE_TARGETS` (today: `family`,
@@ -502,6 +524,22 @@ integration / static-check tests in its `plan.md`.
       (the file walk uses `sorted()` per `_iter_vault_files` in
       `regenerate.py`). Asserted by running twice in the same
       test and comparing stdout byte-for-byte.
+- [ ] **AC11.** `RECIPE_TARGETS` is the load-bearing anchor for
+      "starter input" (added with the
+      `docs/specs/primitive-sideload/spec.md` amendment).
+      Three machine-readable conditions are asserted by
+      `tests/unit/test_recipe_targets_anchor.py`:
+      (a) `starters/regenerate.py` declares `__all__` and
+      `"RECIPE_TARGETS"` appears in it;
+      (b) a `# Load-bearing:` comment line precedes the
+      `RECIPE_TARGETS = ...` assignment by at most 20 lines (with
+      blank lines tolerated between them) — pinning the sigil's
+      *position* relative to the assignment so a refactor that
+      orphans the comment fails CI;
+      (c) `starters.check_coverage._load_recipe_targets()` returns
+      the same object as `starters.regenerate.RECIPE_TARGETS`
+      (identity assertion via `is`, defeating the silent
+      duplicated-literal refactor).
 
 ## Non-goals
 

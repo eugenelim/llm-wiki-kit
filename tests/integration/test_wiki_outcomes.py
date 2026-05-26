@@ -168,14 +168,20 @@ def test_wiki_outcomes_renders_table_sorted_by_verb(
     # the gutter alone. Pin the bytes of each row against the expected
     # padded form so a regression to one-space or four-space gutters
     # fails loudly.
+    # Source column added per ``docs/specs/primitive-sideload/spec.md``
+    # §"Outputs ``wiki outcomes`` provenance column" — always-present,
+    # bundled rows render ``bundled``. The four-column layout is
+    # ``verb  source  op  skill`` with a two-space gutter between
+    # auto-sized columns.
     expected_data = [
-        ("log-entry", "fixture-track", "fixture-track"),
-        ("prep-digest", "fixture-digest", "fixture-digest"),
+        ("log-entry", "bundled", "fixture-track", "fixture-track"),
+        ("prep-digest", "bundled", "fixture-digest", "fixture-digest"),
     ]
-    w_verb = max(len(v) for v, _, _ in expected_data)
-    w_op = max(len(o) for _, o, _ in expected_data)
-    for (verb, op, skill), line in zip(expected_data, lines, strict=True):
-        expected = f"{verb:<{w_verb}}  {op:<{w_op}}  {skill}"
+    w_verb = max(len(v) for v, _, _, _ in expected_data)
+    w_source = max(len(s) for _, s, _, _ in expected_data)
+    w_op = max(len(o) for _, _, o, _ in expected_data)
+    for (verb, source, op, skill), line in zip(expected_data, lines, strict=True):
+        expected = f"{verb:<{w_verb}}  {source:<{w_source}}  {op:<{w_op}}  {skill}"
         assert line == expected, f"row mismatch — expected exactly {expected!r}, got {line!r}"
 
 

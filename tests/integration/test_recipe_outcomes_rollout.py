@@ -100,8 +100,11 @@ def test_wiki_init_personal_recipe_shows_digest_in_outcomes_table(
     ]
     assert len(digest_rows) == 1, "`digest` row missing from `wiki outcomes`"
     columns = digest_rows[0].split()
-    # Three columns: verb, operation, skill.
-    assert columns == ["digest", "weekly-digest", "weekly-digest"]
+    # Four columns: verb, source, operation, skill (Source column added
+    # per ``docs/specs/primitive-sideload/spec.md`` §"Outputs ``wiki
+    # outcomes`` provenance column"; always-present, ``bundled`` for
+    # bundled operations).
+    assert columns == ["digest", "bundled", "weekly-digest", "weekly-digest"]
 
 
 def test_wiki_init_family_recipe_shows_plan_meals_and_digest(
@@ -120,8 +123,13 @@ def test_wiki_init_family_recipe_shows_plan_meals_and_digest(
     verbs_to_row = {ln.split()[0]: ln.split() for ln in captured.out.splitlines() if ln.split()}
     assert "digest" in verbs_to_row
     assert "plan-meals" in verbs_to_row
-    assert verbs_to_row["digest"] == ["digest", "weekly-digest", "weekly-digest"]
-    assert verbs_to_row["plan-meals"] == ["plan-meals", "meal-planning", "meal-planning"]
+    assert verbs_to_row["digest"] == ["digest", "bundled", "weekly-digest", "weekly-digest"]
+    assert verbs_to_row["plan-meals"] == [
+        "plan-meals",
+        "bundled",
+        "meal-planning",
+        "meal-planning",
+    ]
 
 
 def test_wiki_init_work_os_recipe_shows_refresh_stakeholders(
@@ -147,6 +155,7 @@ def test_wiki_init_work_os_recipe_shows_refresh_stakeholders(
     assert "refresh-stakeholders" in verbs_to_row
     assert verbs_to_row["refresh-stakeholders"] == [
         "refresh-stakeholders",
+        "bundled",
         "stakeholder-map-refresh",
         "stakeholder-map-refresh",
     ]

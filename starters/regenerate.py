@@ -58,16 +58,18 @@ STARTERS_DIR = REPO_ROOT / "starters"
 SEED_ROOT = STARTERS_DIR / "_seed"
 CONFLICT_PARENT = REPO_ROOT / "docs" / "guides" / "how-to" / "_examples"
 
-# Recipe → (target basename, parent directory).
-#
-# The basename is what becomes ``target.name`` on the build and gets
-# baked into ``{vault_name}`` substitutions in every kit-rendered file
-# (AC6 byte-compares those substitutions). The parent directory is
-# where the committed tree lives — ``starters/`` for the two
-# distribution-shape vaults (per RFC-0006), and
-# ``docs/guides/how-to/_examples/`` for the conflict-pending worked
-# example (also per RFC-0006, since it is documentation infrastructure,
-# not a starter).
+__all__ = ["RECIPE_TARGETS", "STARTERS_DIR", "SEED_ROOT", "CONFLICT_PARENT"]
+
+# Load-bearing: see docs/specs/starter-seed-coverage/spec.md and
+# docs/specs/primitive-sideload/spec.md (RFC-0006 projection invariant;
+# RFC-0007 sideload). RECIPE_TARGETS is the single source of truth for
+# "starter input" — the recipe set that `regenerate.py` renders and that
+# `check_coverage.py` audits. User-authored recipes composing
+# sideloaded primitives are *not* in this set by construction and are
+# therefore out of starter rendering and seed-coverage audit. The
+# `__all__` declaration above is the machine-readable anchor that
+# `tests/unit/test_recipe_targets_anchor.py` reads to verify the
+# projection invariant.
 RECIPE_TARGETS: dict[str, tuple[str, Path]] = {
     "family": ("family", STARTERS_DIR),
     "work-os": ("work-os", STARTERS_DIR),

@@ -36,6 +36,7 @@ from pathlib import Path
 from socket import gethostname
 
 from llm_wiki_kit import managed_regions
+from llm_wiki_kit import primitives as _primitives_module
 from llm_wiki_kit.errors import JournalCorruptError, ManagedRegionError, WikiError
 from llm_wiki_kit.journal import read_events_lenient, replay_state
 from llm_wiki_kit.models import (
@@ -44,6 +45,7 @@ from llm_wiki_kit.models import (
     OperationExecFailedEvent,
     OperationRunByAgentEvent,
     PageWriteEvent,
+    PrimitiveInstallEvent,
     PrimitiveKind,
     PrimitiveUpgradeEvent,
     ScheduleInstalledEvent,
@@ -453,13 +455,20 @@ def check_stale_lock(state: VaultState, threshold_hours: int) -> list[Issue]:
     return [Issue(STALE_LOCK, holder.by, f"acquired {acquired_at.isoformat()}")]
 
 
-def check_primitive_missing(state: VaultState, kit_root: Path) -> list[Issue]:
+def check_primitive_missing(state: VaultState, events: list[Event], kit_root: Path) -> list[Issue]:
     """Installed primitives the current kit catalog no longer ships.
 
     Useful when a user downgrades the kit underneath a vault — the
     journal still references primitives the new install can't render or
     upgrade. Names are surfaced verbatim; the user (or the kit's future
     ``wiki upgrade`` step) decides what to do.
+
+    For primitives whose latest install event recorded a
+    ``source="sideload:<package>"`` attribution (``docs/specs/primitive-
+    sideload/spec.md`` AC17), the finding's ``detail`` carries a hint
+    naming the previously-installed package so the user can either
+    ``pip install`` it again or remove the primitive from the recipe.
+    Older journal lines without the ``source`` field are unchanged.
     """
 
     catalog_names: set[str] = set()
@@ -469,11 +478,30 @@ def check_primitive_missing(state: VaultState, kit_root: Path) -> list[Issue]:
     for primitive in discover_primitives(kit_root / "templates"):
         catalog_names.add(primitive.name)
 
-    return [
-        Issue(PRIMITIVE_MISSING, name)
-        for name in state.installed_primitives
-        if name not in catalog_names
-    ]
+    # Build per-primitive source attribution from the latest install
+    # event so missing-primitive findings can hint at a previously
+    # installed sideload package.
+    latest_install_source: dict[str, str | None] = {}
+    for event in events:
+        if isinstance(event, PrimitiveInstallEvent):
+            latest_install_source[event.primitive] = event.source
+
+    issues: list[Issue] = []
+    for name in state.installed_primitives:
+        if name in catalog_names:
+            continue
+        source = latest_install_source.get(name)
+        if source is not None and source.startswith("sideload:"):
+            package = source.split(":", 1)[1]
+            detail = (
+                f"previously provided by sideload package '{package}'; "
+                "the package may have been uninstalled — `pip install` "
+                "it again or remove the primitive from the recipe"
+            )
+            issues.append(Issue(PRIMITIVE_MISSING, name, detail))
+        else:
+            issues.append(Issue(PRIMITIVE_MISSING, name))
+    return issues
 
 
 def _check_outcome_orphan_stubs(state: VaultState, vault_root: Path, kit_root: Path) -> list[Issue]:
@@ -827,6 +855,111 @@ def _check_agents(
     return issues
 
 
+@dataclass(frozen=True)
+class SideloadPrimitiveListing:
+    """One ``(package, version, kind, name)`` row of the installed-sideload table.
+
+    Frozen value type. The sort key is ``(package, kind, name)`` so the
+    rendered section groups primitives by package and lists them in
+    catalog-style kind-then-name order.
+    """
+
+    package: str
+    version: str
+    kind: str
+    name: str
+
+
+@dataclass(frozen=True)
+class SideloadDoctorInfo:
+    """Doctor's structural view of the installed sideload set.
+
+    Returned by :func:`gather_sideload_info`. Three independent payloads
+    drive separate render sections in ``_cmd_doctor`` per ``docs/specs/
+    primitive-sideload/spec.md`` §Outputs:
+
+    * :attr:`primitives` — one ``SideloadPrimitiveListing`` per
+      sideloaded primitive in the merged catalog. Populates the
+      "Sideload primitives:" section.
+    * :attr:`dropped_fields` — ``(package, primitive_name, fields)``
+      tuples for any sideloaded primitive whose
+      ``_dropped_fields`` is non-empty. Populates the
+      "Sideload primitives with dropped unknown fields:" subsection.
+    * :attr:`package_recipes_warnings` — ``(package, recipes_path)``
+      tuples for sideload packages that ship a ``recipes/`` directory
+      at the package root (silently inert per spec §Edge cases).
+      Populates a soft warning line per package naming both the
+      package and the dropped path so the user can act on it.
+
+    All three lists are empty when no sideload packages are installed,
+    matching the spec's "absent section" contract for the no-sideload
+    case.
+    """
+
+    primitives: list[SideloadPrimitiveListing]
+    dropped_fields: list[tuple[str, str, tuple[str, ...]]]
+    package_recipes_warnings: list[tuple[str, Path]]
+
+
+def gather_sideload_info(kit_root: Path) -> SideloadDoctorInfo:
+    """Return the doctor's structural view of installed sideload packages.
+
+    Drives the doctor's "Sideload primitives:" section and the
+    associated soft-warning subsections. Pure read-only helper: enumerates
+    the ``wiki-primitive`` entry-point group, walks each package's
+    ``templates/`` tree via the merged-catalog discovery surface, and
+    returns the listing + dropped-field surface + recipes-at-package-root
+    warning per ``docs/specs/primitive-sideload/spec.md`` §"Edge cases".
+    """
+
+    triples = _primitives_module._discover_sideloaded_template_dirs()
+    if not triples:
+        return SideloadDoctorInfo(primitives=[], dropped_fields=[], package_recipes_warnings=[])
+
+    package_versions = {pkg: version for pkg, version, _path in triples}
+    package_recipes: list[tuple[str, Path]] = []
+    for package, _version, templates_path in triples:
+        # ``templates/`` lives inside the package; ``recipes/`` lives at
+        # the package root (sibling to ``templates/``).
+        package_root = templates_path.parent
+        recipes_dir = package_root / "recipes"
+        if recipes_dir.is_dir():
+            package_recipes.append((package, recipes_dir))
+
+    # Walk the merged catalog once via the kit's own ``discover_primitives``
+    # surface so this helper sees primitives through the same
+    # validation pipeline ``wiki init`` / ``wiki add`` see — including
+    # the ``_dropped_fields`` PrivateAttr the sideload loader records.
+    merged = discover_primitives(kit_root / "templates")
+
+    listings: list[SideloadPrimitiveListing] = []
+    dropped_field_findings: list[tuple[str, str, tuple[str, ...]]] = []
+    for primitive in merged:
+        if not primitive.source.startswith("sideload:"):
+            continue
+        package = primitive.source.split(":", 1)[1]
+        listings.append(
+            SideloadPrimitiveListing(
+                package=package,
+                version=package_versions.get(package, "unknown"),
+                kind=primitive.kind.value,
+                name=primitive.name,
+            )
+        )
+        if primitive._dropped_fields:
+            dropped_field_findings.append((package, primitive.name, primitive._dropped_fields))
+
+    listings.sort(key=lambda row: (row.package, row.kind, row.name))
+    dropped_field_findings.sort(key=lambda row: (row[0], row[1]))
+    package_recipes.sort()
+
+    return SideloadDoctorInfo(
+        primitives=listings,
+        dropped_fields=dropped_field_findings,
+        package_recipes_warnings=package_recipes,
+    )
+
+
 def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     """Replay the journal and return issues: failures first, then schedule warnings.
 
@@ -858,7 +991,7 @@ def run_doctor(vault_root: Path, kit_root: Path) -> list[Issue]:
     issues.extend(check_pending_proposals(state))
     issues.extend(check_orphans(state, vault_root))
     issues.extend(check_missing(state, vault_root))
-    issues.extend(check_primitive_missing(state, kit_root))
+    issues.extend(check_primitive_missing(state, events, kit_root))
     issues.extend(check_stale_lock(state, _stale_threshold_hours()))
     issues.extend(_check_outcome_orphan_stubs(state, vault_root, kit_root))
     # Sort failures by (kind, path, detail) only. Schedule warnings are

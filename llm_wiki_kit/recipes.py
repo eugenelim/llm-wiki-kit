@@ -62,8 +62,12 @@ from pydantic import ValidationError as PydanticValidationError
 
 from llm_wiki_kit.errors import RecipeError, ValidationError
 from llm_wiki_kit.journal import read_events, replay_state
-from llm_wiki_kit.models import Primitive, PrimitiveKind, Recipe
-from llm_wiki_kit.primitives import load_operation_contract, resolve_dependencies
+from llm_wiki_kit.models import Primitive, PrimitiveKind, Recipe, VaultState
+from llm_wiki_kit.primitives import (
+    discover_primitives,
+    load_operation_contract,
+    resolve_dependencies,
+)
 
 CORE_PRIMITIVE_NAME = "core"
 
@@ -321,13 +325,69 @@ def installed_outcome_verbs(
 
     state = replay_state(read_events(journal_path))
 
-    operations_dir = kit_root / "templates" / "operations"
+    # Walk the *merged* catalog so sideloaded operation primitives
+    # surface alongside bundled ones (``docs/specs/primitive-sideload/
+    # spec.md`` §"Provenance decoration"). Each primitive's
+    # ``_source_dir`` carries the on-disk directory the contract lives
+    # in regardless of source, so a single per-primitive lookup handles
+    # bundled and sideloaded uniformly.
+    catalog = discover_primitives(kit_root / "templates")
+    verbs, _sources = _resolve_installed_outcomes(state, catalog)
+    return verbs
+
+
+def installed_outcome_verbs_with_sources(
+    vault_root: Path,
+    kit_root: Path,
+) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+    """Return ``(verb→(op, skill), verb→source)`` from a single catalog walk.
+
+    Used by ``wiki outcomes`` per ``docs/specs/primitive-sideload/
+    spec.md`` §"Outputs ``wiki outcomes`` provenance column" to render
+    the ``Source`` column without paying the discovery cost twice.
+    Returns ``({}, {})`` when the vault has no journal.
+    """
+
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        return {}, {}
+
+    state = replay_state(read_events(journal_path))
+    catalog = discover_primitives(kit_root / "templates")
+    return _resolve_installed_outcomes(state, catalog)
+
+
+def _resolve_installed_outcomes(
+    state: VaultState,
+    catalog: list[Primitive],
+) -> tuple[dict[str, tuple[str, str]], dict[str, str]]:
+    """Shared resolver for the two installed-outcome helpers above.
+
+    Walks ``state.installed_primitives`` once, looks each name up in
+    the catalog, and produces both the verb→(op, skill) map (existing
+    contract) and the verb→source map (sideload addition) from the
+    same per-primitive contract load. Single source of truth — the two
+    public helpers (``installed_outcome_verbs`` and
+    ``installed_outcome_verbs_with_sources``) cannot disagree by
+    construction.
+    """
+
+    installed_primitives = state.installed_primitives
+    catalog_by_name: dict[str, Primitive] = {p.name: p for p in catalog}
     verbs: dict[str, tuple[str, str]] = {}
-    for primitive_name in state.installed_primitives:
-        contract = load_operation_contract(operations_dir / primitive_name)
+    sources: dict[str, str] = {}
+    for primitive_name in installed_primitives:
+        primitive = catalog_by_name.get(primitive_name)
+        if primitive is None or primitive.kind is not PrimitiveKind.OPERATION:
+            continue
+        source_dir = primitive._source_dir
+        if source_dir is None:
+            continue
+        contract = load_operation_contract(source_dir)
         if contract is None or not contract.outcomes:
             continue
         skill = contract.skill or contract.name
         for verb in contract.outcomes:
             verbs[verb] = (contract.name, skill)
-    return verbs
+            sources[verb] = primitive.source
+    return verbs, sources

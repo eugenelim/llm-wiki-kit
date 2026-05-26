@@ -85,6 +85,21 @@ starter). Adding one needs new personal-vault seed content scoped
 to a single-person knowledge base; that's its own RFC when the
 audience signal warrants.
 
+## Hybrid contribution model (kit extension)
+
+Where the starter direction above is about *distributing vaults to
+non-engineers*, RFC-0007
+([`docs/rfc/0007-primitive-contribution-model.md`](rfc/0007-primitive-contribution-model.md))
+covers the complementary *kit-extension* direction: how an engineering-
+comfortable author extends the kit's primitive catalog. The hybrid
+model — upstream PR for primitives demonstrably useful to multiple
+recipes, plus a sideload extension for niche or pre-publication
+primitives discovered via the `wiki-primitive` entry-point group —
+is pinned in
+[`docs/specs/primitive-sideload/spec.md`](specs/primitive-sideload/spec.md)
+and shipped in the same wave. No timeline beyond that — the next move
+is contributor feedback, not a maintainer-driven push.
+
 ## Cleanup after PRs ship
 
 - **Delete `adopt._required_regions` alias** one release after
