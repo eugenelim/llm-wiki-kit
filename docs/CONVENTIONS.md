@@ -79,31 +79,36 @@ local), formatting choices (ruff config).
 
 ## How to add an ADR
 
-1. Copy `docs/_templates/adr.md` to `docs/adr/NNNN-<title>.md` with the
-   next free number.
-1. Fill in context, decision, consequences, alternatives.
-1. Mark `Status: Proposed`.
-1. Open a PR that adds the ADR alongside the change it justifies.
-1. On merge, change `Status:` to `Accepted` and don't touch it again.
+Use the [`new-adr`](../.claude/skills/new-adr/SKILL.md) skill — it
+scaffolds from its bundled `assets/adr.md` template, prints the next
+ordinal via `scripts/next-ordinal.py`, and pushes back when Context,
+Decision, Consequences, or Alternatives are empty or hand-wavy. The
+skill is self-contained; the procedure lives in its `SKILL.md`. Open
+the PR that adds the ADR alongside the change it justifies; flip
+`Status:` to `Accepted` on merge.
 
 ## How to add an RFC
 
-1. Copy `docs/_templates/rfc.md` to `docs/rfc/NNNN-<title>.md`.
-1. Mark `Status: Open for comment`.
-1. Open a PR. The PR is the discussion thread.
-1. When ready to decide: either land the PR with `Status: Accepted` and
-   the ADRs/specs/code it produces, or close with `Status: Rejected` or
-   `Withdrawn` and a one-paragraph rationale.
+Use the [`new-rfc`](../.claude/skills/new-rfc/SKILL.md) skill — it
+scaffolds from its bundled `assets/rfc.md` template, runs a gated
+research phase (repo sweep + external prior-art sweep + per-question
+recommendations) before drafting, and prints the next ordinal via
+`scripts/next-ordinal.py`. The skill is self-contained (per the
+[agentskills.io](https://agentskills.io) spec); the procedure lives in
+its `SKILL.md`, not duplicated here.
 
 ## How to add a spec + plan
 
-1. Create `docs/specs/<thing>/`.
-1. Copy `docs/_templates/spec.md` to `spec.md`, fill it out.
-1. Copy `docs/_templates/plan.md` to `plan.md`, fill it out — but only
-   if the work needs more than one PR. For a single-PR change, the plan
-   is overhead.
-1. Reference the spec from the code (a module-level docstring is fine).
-1. Keep them in sync as the code evolves.
+Use the [`new-spec`](../.claude/skills/new-spec/SKILL.md) skill — it
+scaffolds `spec.md` and `plan.md` from its bundled `assets/`, surfaces
+the assumption checkpoint (Verified / Unverified) before any body
+is written, and enforces the push-back rules on Objective, Boundaries,
+Testing Strategy, and per-task `Tests:`/`Depends on:`. The skill is
+self-contained; the procedure lives in its `SKILL.md`.
+
+For a single-PR change, the plan is overhead — keep `spec.md` only.
+Reference the spec from the code it governs (a module-level docstring
+is fine), and keep them in sync as the code evolves.
 
 ## Commit messages
 

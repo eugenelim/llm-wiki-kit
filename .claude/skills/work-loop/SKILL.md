@@ -155,11 +155,16 @@ For anything beyond trivial, *think before you write code*. Concretely:
   Both triggers route to the same reviewer mode and the same spec-stage
   checklist; what differs is the standard the reviewer measures against.
   When the structural-change trigger fires, the reviewer checks the
-  plan against the spec's **Constraints** subsection (see
-  [`docs/_templates/spec.md`](../../../docs/_templates/spec.md)). If
-  the spec has no Constraints subsection, fall back in order to: the
-  spec's **Non-goals**, the PLAN step's **declined-pattern register**
-  (above), and the AGENTS.md **"Check before acting"** list.
+  plan against the spec's **Boundaries** section (defined by the
+  `new-spec` skill's bundled `spec.md` template) — primarily `Never do`
+  for hard structural rules and `Ask first` for the ones that require
+  sign-off; `Always do` for positive defaults the plan must honour. If
+  `Boundaries` is empty, that's the finding to surface first — an
+  empty Boundaries section is a spec-stage gap, not a fallback cue.
+  Only when the spec has no Boundaries section at all (an older
+  unmigrated spec, say) fall back in order to: the spec's **Non-goals**,
+  the PLAN step's **declined-pattern register** (above), and the
+  AGENTS.md **"Check before acting"** list.
 
   **Re-fire on mid-EXECUTE re-plan.** If EXECUTE discovers a missing or
   wrong task and updates `plan.md` per the *Design tests up front* rule
