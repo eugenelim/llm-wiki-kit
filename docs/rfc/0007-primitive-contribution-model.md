@@ -1,9 +1,9 @@
 # RFC-0007: Primitive contribution model — upstream PR plus sideload extension
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Author:** eugenelim
 - **Date opened:** 2026-05-26
-- **Date closed:**
+- **Date closed:** 2026-05-26
 - **Related:** RFC-0001 (v2 architecture — primitive system), RFC-0005
   (narrow charter mission to the author), RFC-0006 (starters as
   projections), ADR-0002 (journal), `docs/specs/outcome-named-entry-points/spec.md`,
@@ -798,28 +798,46 @@ Each carries the author's lean.
   pip dependency ranges (`llm-wiki-kit>=2.1,<3` in the sideload's
   `pyproject.toml`).
 
-## Follow-on artifacts
+## Outcome
 
-Filled in when the RFC is accepted. Anticipated:
+**Accepted 2026-05-26.** The RFC ran a three-round adversarial
+review (PR #120) before landing as Draft on 2026-05-26 and was
+accepted the same day after the spec + plan were drafted (this
+PR). The architectural-warrant posture (no observable contributor
+demand today; sideload built proactively against the catalog-of-
+droppable-primitives framing) is accepted on the merits — the
+fallback (A) PR-only path is preserved in §Alternatives in case
+a future review chooses to demote sideload.
 
-- Spec: `docs/specs/primitive-sideload/spec.md` — pins the loader
-  change, the package-layout contract, the additive-only collision
-  policy mechanics, the `wiki doctor` check, the `wiki outcomes`
-  decoration, the slash-stub header line, and the regular-wheel
-  install requirement. Includes a worked example package and
-  acceptance tests against a fixture sideload. Also amends
-  `docs/specs/starter-seed-coverage/spec.md` so `RECIPE_TARGETS` is
-  the load-bearing anchor for "starter input."
-- New top-level `CONTRIBUTING.md` — the decision tree inlined in
-  §(1), plus the upstream-PR walkthrough and sideload walkthrough.
-- Guide: `docs/guides/explanation/extending-the-kit.md` — the
-  architectural framing (why hybrid, what each path costs, when
-  each is right). Diátaxis "explanation" quadrant.
-- Guide: `docs/guides/how-to/add-a-primitive.md` — the step-by-step
-  for the upstream PR path (paired with CONTRIBUTING.md's
-  walkthrough, but with full file-tree examples).
-- Roadmap edit: one paragraph in `docs/ROADMAP.md` naming the
-  hybrid model and pointing at this RFC. Sits alongside the Tier-2
-  starter section (lines 60–86 of today's roadmap) as the
-  *kit-extension* counterpart to RFC-0006's *vault-distribution*
-  direction.
+Follow-up implementation work — `docs/specs/primitive-sideload/`
+(spec + plan, drafted in the same PR as this acceptance) is the
+canonical source for what lands next. Eleven tasks
+(T1 loader/merge, T2 schema_version, T3 source-scoped extra,
+T4 collision policy, T5 verb + SKILL gates, T6 doctor section,
+T7 outcomes column, T8 slash-stub provenance, T9
+starter-seed-coverage amendment, T10 CONTRIBUTING + guides, T11
+roadmap edit) decompose the surface RFC §Proposal named.
+
+- Spec: [`docs/specs/primitive-sideload/spec.md`](../specs/primitive-sideload/spec.md)
+  pins the loader change, the package-layout contract, the
+  additive-only collision policy mechanics, the `wiki doctor`
+  check, the `wiki outcomes` decoration, the slash-stub
+  managed-region provenance block, and the regular-wheel install
+  requirement. 19 acceptance criteria (AC1–AC19) drive the
+  implementation tests.
+- Plan: [`docs/specs/primitive-sideload/plan.md`](../specs/primitive-sideload/plan.md)
+  breaks the spec into PR-sized tasks each with construction
+  tests, `Depends on:` declarations, and named-and-declined
+  patterns.
+- New top-level `CONTRIBUTING.md` — drafted in T10; carries the
+  inlined decision tree from §(1), plus the upstream-PR
+  walkthrough and sideload walkthrough.
+- Guide: `docs/guides/explanation/extending-the-kit.md` — T10;
+  architectural framing (Diátaxis "explanation" quadrant).
+- Guide: `docs/guides/how-to/add-a-primitive.md` — T10; the
+  step-by-step for the upstream PR path with full file-tree
+  examples.
+- Roadmap edit: T11 — one paragraph in `docs/ROADMAP.md` naming
+  the hybrid model and pointing at this RFC. Sits alongside the
+  Tier-2 starter section as the *kit-extension* counterpart to
+  RFC-0006's *vault-distribution* direction.
