@@ -1,66 +1,69 @@
 ---
 name: new-adr
-description: Use this skill when the user asks to create, write, draft, or open a new ADR (architecture decision record). Triggers on phrases like "new ADR", "write an ADR for…", "record this decision", "let's ADR this". For load-bearing decisions the kit will reference as a constraint. Do NOT use for cross-cutting proposals (use `new-rfc`) or feature contracts (use `new-spec`).
-dependencies:
-  - docs/CONVENTIONS.md
-  - docs/_templates/adr.md
+description: Use this skill when the user asks to create, write, draft, or open a new ADR (architecture decision record). Triggers on phrases like "new ADR", "write an ADR for…", "record this decision", "let's ADR this". Do NOT use for RFCs (use `new-rfc`) or feature specs (use `new-spec`).
 ---
 
 # Skill: new-adr
 
-Record a load-bearing decision as a new ADR in `docs/adr/` with the next
-sequential number.
-
-The kit's lifecycle and mechanics live in
-[`docs/CONVENTIONS.md` § How to add an ADR](../../../docs/CONVENTIONS.md#how-to-add-an-adr).
-This skill is the trigger surface; CONVENTIONS is the procedure.
+Create a new ADR in `docs/adr/` from the template, with the next sequential
+number.
 
 ## When to invoke
 
-Before scaffolding, confirm the decision is **load-bearing** per
-[CONVENTIONS § What counts as "load-bearing" (ADR-worthy)?](../../../docs/CONVENTIONS.md#what-counts-as-load-bearing-adr-worthy):
+Before invoking, confirm:
 
-- It would be expensive to reverse.
-- Future code will reference it as a constraint.
-- Reasonable people would disagree, and a tiebreak is needed.
+1. The decision is about *architecture or shared infrastructure*, not a
+   single feature's internals (that's a spec).
+2. The decision has been *made or is being formally proposed*. ADRs are not
+   a venue for open-ended discussion — that's an RFC.
+3. There is a *concrete tradeoff* — at least one viable alternative was
+   considered. If there's only one option, you don't need an ADR.
 
-If those tests don't fit, push back. Single-feature internals go in a
-spec. Open-ended discussion goes in an RFC.
+If any of these checks fail, push back rather than proceeding.
 
 ## Procedure
 
-1. Find the next number:
+1. Find the next number. The bundled helper prints the next 4-digit
+   ordinal — `0001` if no ADRs exist yet, max-plus-one otherwise. It
+   parses the full digit prefix, so a `00099-foo.md` correctly yields
+   `0100` (not `0010`):
 
    ```bash
-   ls docs/adr/ | grep -E '^[0-9]{4}' | sed 's/-.*//' | sort -n | tail -1
+   python3 scripts/next-ordinal.py docs/adr
    ```
 
-   Increment and zero-pad to four digits. Don't reuse numbers, even for
-   withdrawn ADRs ([CONVENTIONS § Numbering](../../../docs/CONVENTIONS.md#numbering)).
+   (The script lives next to this `SKILL.md` under `scripts/`. Python
+   is preferred over `ls | grep | sed | sort` so the snippet works the
+   same way on native Windows, macOS, and Linux.)
 
-2. Scaffold from the template:
+2. Pick a kebab-case title from the user's description. Keep it short and
+   declarative — `0007-use-postgres-for-primary-store.md`, not
+   `0007-decision-about-the-database.md`.
 
-   ```bash
-   cp docs/_templates/adr.md docs/adr/NNNN-<kebab-title>.md
-   ```
+3. Copy this skill's bundled `assets/adr.md` into `docs/adr/` and
+   rename to `NNNN-<title>.md`. (Paths are skill-relative — the
+   `assets/` folder lives next to this `SKILL.md` wherever your IDE
+   installed the skill.)
 
-3. Fill in **context** (constraints in play), **decision** (declarative
-   opening sentence), **consequences** (including the honest downsides),
-   and **alternatives** (with rejection rationales).
+4. Fill in the frontmatter (status `Proposed`, today's date, deciders).
 
-4. Mark `Status: Proposed`.
+5. Help the user draft the four sections (Context, Decision, Consequences,
+   Alternatives). Push back if any section is empty or hand-wavy:
+   - Context with no constraints listed → ask what's actually constraining
+     this choice.
+   - Decision without a single declarative sentence at the top → write one.
+   - Consequences without honest negatives → ask what we're giving up.
+   - Alternatives without rejection reasons → ask why each was rejected.
 
-5. Open the PR alongside the change the ADR justifies — or as its own
-   PR, whichever produces clearer history
-   ([CONVENTIONS § PR scope](../../../docs/CONVENTIONS.md#pr-scope)).
+6. Update `docs/adr/README.md` to add the new ADR to the table.
 
-6. On merge, flip `Status:` to `Accepted` and don't touch it again.
-   ADRs are frozen — if the decision turns out wrong, supersede with a
-   new ADR rather than editing.
+7. Tell the user to mark the ADR `Accepted` (and commit) once the relevant
+   reviewers have signed off.
 
-## What NOT to do
+## Anti-patterns to refuse
 
-- Don't draft an ADR for an undecided question — that's an RFC.
-- Don't edit an Accepted ADR. Supersede it with a new ADR and mark the
-  original `Status: Superseded by ADR-NNNN`.
-- Don't bundle multiple decisions into one ADR. One decision, one record.
+- "Make this ADR say we're definitely using X" before discussion has happened →
+  that's an RFC, not an ADR. Suggest opening one instead.
+- Editing an existing accepted ADR → ADRs are immutable. If a decision is being
+  reversed, write a *new* ADR that supersedes it, and update the old ADR's
+  status to `Superseded by ADR-NNNN` (status only — leave the body untouched).
