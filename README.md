@@ -168,9 +168,15 @@ Three layers compose into one vault:
 
 1. **Common core** (`core/`) — always installed. The vault-side `AGENTS.md` contract, the journal, the frontmatter-schema baseline, and the cross-cutting skills (`wiki-search`, `wiki-conflict`, `wiki-lock`, `wiki-lint`, `wiki-doctor`, `ingest`, `wiki-research`).
 2. **Primitives** (`templates/`) — independently versioned, droppable building blocks. Four kinds: *ontology* (folder shapes — `people/`, `food/`, `projects/`), *content-type* (an ingester + page template + frontmatter contribution — `meeting`, `recipe`, `medical-record`), *operation* (contract + skill + eval fixture — `weekly-digest`, `meal-planning`, `stakeholder-map-refresh`), and *infrastructure* (cross-cutting — `research`, `research-perplexity`, `research-gemini`, `research-semantic-scholar`).
-3. **Recipes** ([`recipes/`](recipes/)) — named YAML files that compose primitives for one audience. v2.0 ships three: [`family`](recipes/family.yaml), [`work-os`](recipes/work-os.yaml), [`personal`](recipes/personal.yaml).
+3. **Recipes** ([`recipes/`](recipes/)) — named YAML files that compose primitives for one audience. v2.0 ships three: [`family`](recipes/family.yaml), [`work-os`](recipes/work-os.yaml), [`personal`](recipes/personal.yaml). Recipe names describe the *vault's* purpose, not the kit user — the kit user is always the author.
 
 The deep dive — module map, journal events, write-safety layers — lives in [`docs/architecture/overview.md`](docs/architecture/overview.md). Foundational decisions (stdlib rendering, journal-as-truth, managed regions, drift detection, Pydantic schemas, additive contributions, vault-root config files) are captured as ADRs under [`docs/adr/`](docs/adr/).
+
+## Drift detection
+
+The kit will not silently overwrite a file you have edited. Every write goes through `safe_write`, which compares the on-disk content against what the journal records the kit last wrote; if you've edited the file in between, the new content lands as `<path>.proposed` next to the original instead of clobbering your version, and `wiki doctor` flags it.
+
+The design rationale lives in [ADR-0004](docs/adr/0004-drift-detection-and-proposal-flow.md); the recovery walkthrough — with a worked example — is in [`docs/guides/how-to/resolve-a-conflict.md`](docs/guides/how-to/resolve-a-conflict.md), summarized below under [*How to fix a `.proposed` sidecar*](#how-to-fix-a-proposed-sidecar).
 
 ## CLI surface
 
@@ -191,6 +197,14 @@ wiki journal {tail,grep,explain}     Read the vault journal.
 ## How to fix a `.proposed` sidecar
 
 The kit never silently overwrites a file you have edited. If your edits drift from the kit's last known state, the next write lands as `<path>.proposed` next to the original, and `wiki doctor` flags it. The walkthrough — including a worked example against the committed `docs/guides/how-to/_examples/conflict-pending/` vault — is in [`docs/guides/how-to/resolve-a-conflict.md`](docs/guides/how-to/resolve-a-conflict.md).
+
+## Troubleshooting
+
+- **`pip install llm-wiki-kit` fails on Python 3.10 or older.** The kit requires Python 3.11+. On macOS the system `python3` is often older — install a newer interpreter (`brew install python@3.12`) or `pipx install llm-wiki-kit --python python3.12`.
+- **`wiki init` reports `git commit failed` mentioning `user.name` / `user.email`.** The default `git init` step needs a global commit identity. Run `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`, then re-run — or pass `--no-git` to skip the git step.
+- **`pip install` succeeded but `wiki: command not found`.** Pip put the script in your user-site `bin/` directory, which isn't on `PATH`. Either add `$(python -m site --user-base)/bin` to your shell's `PATH`, or reinstall with `pipx install llm-wiki-kit`, which manages its own bin dir.
+- **A `.proposed` sidecar appears next to a file you didn't expect.** Your edits and the kit's last-known state diverged on that path — follow [*How to fix a `.proposed` sidecar*](#how-to-fix-a-proposed-sidecar) above; `wiki doctor` lists every pending sidecar in the vault.
+- **`lock held by <holder> since <timestamp>` when two commands run at once.** Only one journal writer is allowed per vault. Wait for the other process to finish, or — if the holder is stale — recover with `wiki lock release --force`.
 
 ## Where the docs live
 
