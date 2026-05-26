@@ -615,15 +615,19 @@ everywhere downstream.
   inputs at install-and-dispatch time, not surfaces the kit
   delegates to.
 - **RFC-0006's projection invariant is preserved by mechanical
-  anchor.** `RECIPE_TARGETS` (today `{family, work-os}` in
-  `starters/regenerate.py`) becomes the load-bearing definition
+  anchor.** `RECIPE_TARGETS` (today
+  `{family → starters/, work-os → starters/, personal → docs/guides/how-to/_examples/}`
+  in `starters/regenerate.py`) becomes the load-bearing definition
   of "starter input." `regenerate.py` and the
-  `starter-seed-coverage` check both read it. User-authored
-  recipes composing sideloaded primitives are *not* in
-  `RECIPE_TARGETS`, are not rendered by `regenerate.py`, and are
-  not audited by the seed-coverage check. This invariant is
-  enforced by task T9 in the plan (amendment to
-  `starter-seed-coverage/spec.md`).
+  `starter-seed-coverage` check both read it; the seed-coverage
+  check additionally filters to entries whose parent directory is
+  `starters/` so the `personal` entry (a docs-infrastructure
+  vault, per RFC-0006) is excluded from seed-coverage audit while
+  still being a `regenerate.py` target. User-authored recipes
+  composing sideloaded primitives are *not* in `RECIPE_TARGETS`,
+  are not rendered by `regenerate.py`, and are not audited by
+  the seed-coverage check. This invariant is enforced by task T9
+  in the plan (amendment to `starter-seed-coverage/spec.md`).
 - **No new write path.** `safe_write` remains the only sanctioned
   vault write. Sideloaded primitives contribute pages and managed
   regions through the same install pipeline bundled primitives
@@ -742,8 +746,11 @@ on disk after entry-point resolution) without the install cost.
       offending sideload package name.
 - [ ] **AC4.** Two fixture sideload packages both providing a
       primitive named `dnd-session-notes` raise a `WikiError`
-      naming both packages. Uninstalling either resolves the
-      collision; the test asserts both directions.
+      whose message names both contributing packages. (The
+      "uninstall either" remediation is verified at use-site by
+      the user, not by the test — the catalog returns to clean
+      once either package leaves the entry-point set; the test
+      asserts the *contract*, the user-visible error message.)
 - [ ] **AC5.** Outcome-verb uniqueness across merged catalog: a
       fixture sideload operation primitive declaring
       `outcomes: [weekly-digest]` (a bundled outcome verb) raises
@@ -801,8 +808,10 @@ on disk after entry-point resolution) without the install cost.
       `sideload:<package>`, respectively.
 - [ ] **AC13b.** `wiki outcomes` `Source` column always-present:
       against a vault with no sideload packages installed,
-      `wiki outcomes` output renders the `Source` column header
-      and every row shows `bundled`. The column is unconditional.
+      `wiki outcomes` output renders the `Source` column on every row
+      with the value `bundled`. The column is unconditional (no
+      header row is emitted — `wiki outcomes` has never rendered
+      column headers, and the Source column inherits that contract).
 - [ ] **AC14.** Slash-stub provenance region: the slash-stub
       generated for a sideloaded operation primitive contains a
       `<!-- BEGIN MANAGED: outcome-provenance --> … <!-- END MANAGED: outcome-provenance -->`
@@ -827,9 +836,13 @@ on disk after entry-point resolution) without the install cost.
       primitive installed and `recipes/test-vault.yaml`
       referencing it, `starters/regenerate.py --check` is
       unaffected (operates only on `RECIPE_TARGETS` recipes,
-      which remain `{family, work-os}`), and
-      `starters/check_coverage.py` likewise does not audit the
-      user-authored recipe. The assertion has two halves: (a)
+      which remain `{family, work-os, personal}` — with
+      `personal` rendering into the docs `_examples/` tree, not
+      `starters/`), and `starters/check_coverage.py` likewise
+      does not audit the user-authored recipe (the check filters
+      `RECIPE_TARGETS` to entries whose parent is `starters/`,
+      so the user-authored recipe and the docs-infrastructure
+      `personal` entry both stay out of seed-coverage scope). The assertion has two halves: (a)
       the existing tests
       (`tests/integration/test_starters_regenerable.py`,
       `tests/integration/test_starter_seed_coverage.py`) continue

@@ -31,6 +31,7 @@ already journaled by their own ``primitive.install`` events.
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import re
 from collections.abc import Mapping, Sequence
@@ -261,6 +262,77 @@ def _plan(
     return buckets
 
 
+def check_region_owner_uniqueness(primitives: Sequence[Primitive]) -> None:
+    """Reject sideload contributions to managed regions a bundled primitive already owns.
+
+    Per ``docs/specs/primitive-sideload/spec.md`` §"Collision policy"
+    case 4 and §Invariants ("cannot override a bundled region"): a
+    sideload package may not contribute to a ``(file, region)`` pair
+    that any bundled primitive also contributes to. Multiple bundled
+    primitives contributing to the same region remain supported
+    (ADR-0006 is unchanged); the asymmetry is the load-bearing
+    "additive-only at the sideload boundary" invariant — a sideload
+    package cannot piggyback on a region the bundled catalog
+    structurally owns.
+
+    Two sideload packages contributing to the same region are also
+    rejected here (cross-sideload region-content collisions can't be
+    coordinated and would silently glue together in install order).
+
+    The check runs at the install boundary so the error fires
+    against the same primitive set the aggregator is about to walk;
+    discovery-time was the wrong layer because the bundled catalog
+    contains the legitimate multi-bundled-contributor case.
+    """
+
+    # Two-pass walk so the collision contract is invariant to the
+    # caller's primitive ordering. ``aggregate_region_contributions``
+    # passes the topologically/alphabetically sorted ``all_installed``
+    # list; a one-pass walk would silently accept a bundled-vs-sideload
+    # collision when the sideload primitive's name happens to sort
+    # ahead of the bundled contributor. Pass 1 registers every bundled
+    # owner; pass 2 checks every sideload contribution against the
+    # fully-built map, plus cross-sideload uniqueness.
+    bundled_owners: dict[tuple[str, str], str] = {}
+    for primitive in primitives:
+        if primitive.source != "bundled":
+            continue
+        for contribution in primitive.contributes_to:
+            key = (contribution.file, contribution.region)
+            bundled_owners.setdefault(key, primitive.name)
+
+    sideload_owners: dict[tuple[str, str], str] = {}
+    for primitive in primitives:
+        if primitive.source == "bundled":
+            continue
+        sideload_pkg = (
+            primitive.source.split(":", 1)[1] if ":" in primitive.source else primitive.source
+        )
+        for contribution in primitive.contributes_to:
+            key = (contribution.file, contribution.region)
+            if key in bundled_owners:
+                raise WikiError(
+                    f"sideload primitive '{primitive.name}' from package "
+                    f"'{sideload_pkg}' contributes to region "
+                    f"'{contribution.file}:{contribution.region}', which is "
+                    f"already owned by bundled primitive "
+                    f"'{bundled_owners[key]}'. Sideload packages cannot "
+                    "override bundled regions; uninstall the package or "
+                    "ask the upstream maintainer to add the contribution "
+                    "to the kit."
+                )
+            if key in sideload_owners:
+                raise WikiError(
+                    f"sideload primitive '{primitive.name}' (from package "
+                    f"'{sideload_pkg}') and another sideload primitive "
+                    f"'{sideload_owners[key]}' both contribute to region "
+                    f"'{contribution.file}:{contribution.region}'. Two "
+                    "sideload packages cannot share a managed-region "
+                    "contribution; uninstall one."
+                )
+            sideload_owners[key] = primitive.name
+
+
 def aggregate_region_contributions(
     primitives: Sequence[Primitive],
     primitive_sources: Mapping[str, Path],
@@ -283,6 +355,7 @@ def aggregate_region_contributions(
     otherwise.
     """
 
+    check_region_owner_uniqueness(primitives)
     buckets = _plan(primitives, primitive_sources)
     vault_root = journal_path.parent.parent
 
@@ -335,6 +408,15 @@ def install_primitives(
     _warn_if_install_pipeline_uncached(journal_path)
     vault_root = journal_path.parent.parent
     for primitive in to_install:
+        # Sideloaded primitives record their ``"sideload:<package>"``
+        # source on the install event so ``wiki doctor`` can hint at
+        # the previously-installed package after the package is
+        # uninstalled (``docs/specs/primitive-sideload/spec.md`` AC17).
+        # Bundled primitives omit the field (write ``None``) so the
+        # journal-line shape is unchanged for installations that never
+        # touch a sideload package — older journal lines replay
+        # identically.
+        primitive_source = primitive.source if primitive.source != "bundled" else None
         append_event(
             journal_path,
             PrimitiveInstallEvent(
@@ -342,6 +424,7 @@ def install_primitives(
                 by=install_vehicle,
                 primitive=primitive.name,
                 version=primitive.version,
+                source=primitive_source,
             ),
         )
         render_tree(
@@ -391,7 +474,96 @@ _SLASH_STUB_TEMPLATE = (
     "---\n"
     "Run the `{skill}` skill from this vault. See the SKILL's own\n"
     "`when to load` section for inputs.\n"
+    "\n"
+    "<!-- BEGIN MANAGED: outcome-provenance -->\n"
+    "{provenance_block_body}"
+    "<!-- END MANAGED: outcome-provenance -->\n"
 )
+
+# Region body for the ``outcome-provenance`` managed-region inside a
+# slash stub. Bundled stubs ship the block with an empty body (an empty
+# string), so the region delimiters round-trip stably through
+# ``safe_write`` on every ``wiki upgrade``. Sideloaded stubs ship the
+# block populated with a blockquote-rendered note naming the package and
+# version, per ``docs/specs/primitive-sideload/spec.md`` §"Outputs
+# ``Slash-stub managed-region provenance block``".
+_SIDELOAD_PROVENANCE_TEMPLATE = (
+    "> From sideload package: `{package}` (version `{version}`).\n"
+    "> The kit does not validate third-party trigger rates.\n"
+)
+
+# PEP 503 normalised distribution name + PEP 440 version (loose) — used
+# to validate package + version strings sourced from third-party wheels
+# before interpolating them into a vault file Claude Code reads. A
+# hand-crafted wheel whose METADATA carries a backtick or newline in
+# Name: or Version: could otherwise break out of the slash-stub's
+# inline-code span and blockquote, injecting instructions into the
+# agent's context. The validator rejects any byte outside the
+# documented character classes; out-of-spec values render as the
+# literal placeholder ``invalid`` (see :func:`_outcome_provenance_block_body`).
+_PEP503_NORMALISED_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_PEP440_LOOSE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+!-]*$")
+
+
+def _safe_provenance_token(value: str, pattern: re.Pattern[str]) -> str:
+    """Return ``value`` if it matches ``pattern``, else the literal ``invalid``.
+
+    Defence-in-depth at the only place the kit synthesises sideload-
+    sourced bytes into vault content (the slash-stub provenance block):
+    a malicious or malformed wheel METADATA file could ship a Name or
+    Version containing newlines, backticks, or other markdown-active
+    bytes. Replacing such values with the literal string ``invalid``
+    keeps the block well-formed; the operator notices the placeholder
+    and can ``pip show`` the offending package to diagnose.
+    """
+
+    return value if pattern.fullmatch(value) else "invalid"
+
+
+def _outcome_provenance_block_body(primitive: Primitive) -> str:
+    """Return the body of the ``outcome-provenance`` managed region.
+
+    Empty string for bundled primitives (the region delimiters still
+    surround empty space — present-and-empty rather than absent — so
+    the managed-region machinery treats the block as kit-owned and
+    the diff is stable across ``wiki upgrade`` runs). For sideloaded
+    primitives, the body is a blockquote naming the package and the
+    version resolved at render time via
+    :func:`importlib.metadata.version`. A sideload package version
+    bump between runs legitimately changes the body and surfaces
+    through the existing ``.proposed`` drift path (ADR-0004) — that
+    is the spec's named contract, not a bug.
+    """
+
+    if primitive.source == "bundled":
+        return ""
+    if not primitive.source.startswith("sideload:"):
+        # Defensive: a future source label we don't recognise renders
+        # as a sanitised single-line provenance note rather than a
+        # crash. The label itself is sanitised because the source
+        # field's Pydantic validator (see ``Primitive.source``) is the
+        # primary defence — this branch is belt-and-braces.
+        token = _safe_provenance_token(primitive.source, _PEP503_NORMALISED_NAME)
+        return f"> From source: `{token}`.\n"
+    raw_package = primitive.source.split(":", 1)[1]
+    try:
+        raw_version = importlib.metadata.version(raw_package)
+    except importlib.metadata.PackageNotFoundError:
+        # The discovery walk saw the package's metadata; if the
+        # subsequent ``version()`` lookup fails the wheel was likely
+        # uninstalled between discovery and stub render. ``unknown`` is
+        # the kit's sentinel for "metadata didn't resolve"; the user
+        # notices it and can ``pip show`` to diagnose.
+        _logger.warning(
+            "sideload package '%s' metadata vanished between discovery "
+            "and slash-stub render; provenance version will render as "
+            "'unknown'",
+            raw_package,
+        )
+        raw_version = "unknown"
+    package = _safe_provenance_token(raw_package, _PEP503_NORMALISED_NAME)
+    version = _safe_provenance_token(raw_version, _PEP440_LOOSE_VERSION)
+    return _SIDELOAD_PROVENANCE_TEMPLATE.format(package=package, version=version)
 
 
 def _resolved_skill_name(contract: OperationContract) -> str:
@@ -443,11 +615,13 @@ def write_outcome_slash_stubs(
         if contract is None or not contract.outcomes:
             continue
         skill = _resolved_skill_name(contract)
+        provenance_block_body = _outcome_provenance_block_body(primitive)
         for verb in contract.outcomes:
             body = _SLASH_STUB_TEMPLATE.format(
                 operation=primitive.name,
                 verb=verb,
                 skill=skill,
+                provenance_block_body=provenance_block_body,
             )
             safe_write(
                 path=vault_root / ".claude" / "commands" / f"{verb}.md",

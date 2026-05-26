@@ -599,7 +599,7 @@ def test_primitive_missing_when_catalog_lacks_recorded_install(tmp_path: Path) -
 
     state = VaultState(installed_primitives={"core": "0.1.0", "ghost": "0.1.0"})
 
-    assert check_primitive_missing(state, kit) == [Issue("primitive-missing", "ghost")]
+    assert check_primitive_missing(state, [], kit) == [Issue("primitive-missing", "ghost")]
 
 
 def test_primitive_missing_silent_when_catalog_carries_everything(tmp_path: Path) -> None:
@@ -612,7 +612,7 @@ def test_primitive_missing_silent_when_catalog_carries_everything(tmp_path: Path
 
     state = VaultState(installed_primitives={"core": "0.1.0"})
 
-    assert check_primitive_missing(state, kit) == []
+    assert check_primitive_missing(state, [], kit) == []
 
 
 # ---------------------------------------------------------------------------

@@ -122,6 +122,9 @@ def test_write_outcome_slash_stubs_body_matches_spec_template(
         ---
         Run the `fixture-digest` skill from this vault. See the SKILL's own
         `when to load` section for inputs.
+
+        <!-- BEGIN MANAGED: outcome-provenance -->
+        <!-- END MANAGED: outcome-provenance -->
     """)
     assert body == expected
 

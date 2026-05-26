@@ -39,7 +39,12 @@ from pathlib import Path
 
 from llm_wiki_kit import __version__, adopt, journal
 from llm_wiki_kit.adopt import compute_required_regions
-from llm_wiki_kit.doctor import check_managed_region_drift, format_issue, run_doctor
+from llm_wiki_kit.doctor import (
+    check_managed_region_drift,
+    format_issue,
+    gather_sideload_info,
+    run_doctor,
+)
 from llm_wiki_kit.errors import JournalCorruptError, WikiError
 from llm_wiki_kit.git_init import initialize_git
 from llm_wiki_kit.ingest import Ambiguous, NoMatch, Routed, route
@@ -100,6 +105,7 @@ from llm_wiki_kit.primitives import (
 from llm_wiki_kit.recipes import (
     CORE_PRIMITIVE_NAME,
     installed_outcome_verbs,
+    installed_outcome_verbs_with_sources,
     load_recipe,
     resolve_recipe_primitives,
 )
@@ -272,8 +278,20 @@ def _build_context(recipe: Recipe, vault_name: str) -> dict[str, str]:
 
 
 def _primitive_source_dir(primitive: Primitive, core_dir: Path, templates_dir: Path) -> Path:
-    """Return the on-disk directory that holds ``primitive``'s ``files/`` tree."""
+    """Return the on-disk directory that holds ``primitive``'s ``files/`` tree.
 
+    Honours :attr:`Primitive._source_dir` when populated by the loader,
+    which is the load-bearing path for sideloaded primitives (whose
+    templates root lives outside the kit's own ``templates/`` tree —
+    see ``docs/specs/primitive-sideload/spec.md``). Falls back to the
+    bundled ``templates/<kind>/<name>/`` shape for primitives
+    constructed directly via ``Primitive.model_validate(...)`` without
+    a follow-up loader assignment (mostly tests) and for the special
+    ``core`` primitive.
+    """
+
+    if primitive._source_dir is not None:
+        return primitive._source_dir
     if primitive.name == CORE_PRIMITIVE_NAME:
         return core_dir
     return templates_dir / _KIND_DIRS[primitive.kind] / primitive.name
@@ -1028,6 +1046,51 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print("Warnings:")
         for issue in other_warnings:
             print(f"  {format_issue(issue)}")
+
+    # Structural sideload sections per
+    # ``docs/specs/primitive-sideload/spec.md`` §Outputs ``wiki doctor``.
+    # These are informational (not Issues): they list the installed
+    # sideload set, dropped unknown fields per primitive, and the
+    # silently-inert ``recipes/``-at-package-root soft warning. None of
+    # the three contributes to ``DOCTOR_ISSUES_EXIT``.
+    sideload_kit_root = args.kit_root if args.kit_root is not None else _kit_root()
+    sideload_info = gather_sideload_info(sideload_kit_root)
+    something_printed_before_sideload = bool(
+        failures or schedule_warnings or agent_warnings or other_warnings
+    )
+    if sideload_info.primitives:
+        if something_printed_before_sideload:
+            print()
+        print("Sideload primitives:")
+        current_package: str | None = None
+        for row in sideload_info.primitives:
+            if row.package != current_package:
+                print(f"  From package {row.package} (version {row.version}):")
+                current_package = row.package
+            print(f"    - {row.kind}: {row.name}")
+        something_printed_before_sideload = True
+    if sideload_info.dropped_fields:
+        if something_printed_before_sideload:
+            print()
+        print("Sideload primitives with dropped unknown fields:")
+        for package, primitive_name, fields in sideload_info.dropped_fields:
+            joined = ", ".join(fields)
+            print(
+                f"  {package}::{primitive_name}: unknown fields "
+                f"{{{joined}}} ignored (extra='ignore')"
+            )
+        something_printed_before_sideload = True
+    if sideload_info.package_recipes_warnings:
+        if something_printed_before_sideload:
+            print()
+        print("Sideload package warnings:")
+        for package, recipes_path in sideload_info.package_recipes_warnings:
+            print(
+                f"  sideload package '{package}' ships a recipes/ directory at "
+                f"{recipes_path}; the kit ignores it — sideloaded recipes are "
+                "not a kit feature today. Remove the directory from the package."
+            )
+
     return DOCTOR_ISSUES_EXIT if failures else 0
 
 
@@ -1051,23 +1114,34 @@ def _cmd_outcomes(args: argparse.Namespace) -> int:
         raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
 
     kit_root = args.kit_root if args.kit_root is not None else _kit_root()
-    verbs = installed_outcome_verbs(vault_root, kit_root)
+    # Source column per ``docs/specs/primitive-sideload/spec.md``
+    # §"Outputs ``wiki outcomes`` provenance column". The column is
+    # always emitted — even when no sideload packages are installed —
+    # so callers (and screen-scrapers) never have to special-case
+    # column-set drift between sideload-present and sideload-absent
+    # installations. Bundled rows render with ``"bundled"``; sideload
+    # rows render with ``"sideload:<package>"``. The combined helper
+    # below walks the merged catalog exactly once so the cost of
+    # discovery (entry-point scan + per-sideload-package walk) does
+    # not double on a vault with many sideloads.
+    verbs, sources = installed_outcome_verbs_with_sources(vault_root, kit_root)
 
     if not verbs:
         return 0
 
     # Sort rows by verb.
     rows = sorted(
-        ((verb, op, skill) for verb, (op, skill) in verbs.items()),
+        ((verb, sources.get(verb, "bundled"), op, skill) for verb, (op, skill) in verbs.items()),
         key=lambda r: r[0],
     )
 
     # Auto-size columns to the widest entry per column.
     w_verb = max(len(r[0]) for r in rows)
-    w_op = max(len(r[1]) for r in rows)
+    w_source = max(len(r[1]) for r in rows)
+    w_op = max(len(r[2]) for r in rows)
 
-    for verb, op, skill in rows:
-        print(f"{verb:<{w_verb}}  {op:<{w_op}}  {skill}")
+    for verb, source, op, skill in rows:
+        print(f"{verb:<{w_verb}}  {source:<{w_source}}  {op:<{w_op}}  {skill}")
 
     return 0
 

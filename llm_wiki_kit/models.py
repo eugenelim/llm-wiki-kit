@@ -18,9 +18,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from pathlib import Path
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, RootModel, model_validator
 
 # Load-bearing for ``git_init.initialize_git``'s commit-message argv — the
 # recipe name is interpolated into ``"Initialize wiki vault from <recipe>
@@ -83,8 +84,39 @@ class PrimitiveRouting(_StrictModel):
     url_path_patterns: list[str] = Field(default_factory=list)
 
 
+#: Supported ``primitive.yaml`` schema version range. The kit reads exactly
+#: ``schema_version: 1`` today (per ``docs/specs/primitive-sideload/spec.md``
+#: §"Schema versioning (v1 freeze)"). A future major bump may add ``2`` and
+#: read both during a stated deprecation window; the error message in
+#: :meth:`Primitive._enforce_schema_version` cites this constant verbatim.
+SUPPORTED_PRIMITIVE_SCHEMA_VERSIONS: frozenset[int] = frozenset({1})
+
+
 class Primitive(_StrictModel):
-    """The schema of a ``primitive.yaml`` manifest."""
+    """The schema of a ``primitive.yaml`` manifest.
+
+    A primitive instance carries three loader-populated pieces of metadata
+    that do not appear in ``primitive.yaml``:
+
+    * :attr:`source` — ``"bundled"`` for primitives loaded from the kit's
+      own ``templates/`` tree, ``"sideload:<package>"`` for primitives
+      discovered via the ``wiki-primitive`` entry-point group
+      (``docs/specs/primitive-sideload/spec.md`` §"Contracts with other
+      modules"). Excluded from ``model_dump()`` output so the journal
+      and any other declarative-shape serialiser sees only what the
+      author wrote.
+    * :attr:`_source_dir` — the on-disk directory containing this
+      primitive's ``primitive.yaml`` (and its ``files/``, ``regions/``,
+      ``contract.yaml``, …). Populated by the loader; consumers that
+      build a ``sources`` mapping for the install pipeline read it
+      directly so the same code path handles bundled and sideloaded
+      primitives identically.
+    * :attr:`_dropped_fields` — names of unknown top-level fields
+      stripped during :meth:`from_sideload` construction (always empty
+      for bundled primitives, which load via ``extra='forbid'`` and
+      would have raised). Surfaced by ``wiki doctor`` as a soft
+      warning.
+    """
 
     name: str = Field(pattern=NAME_PATTERN)
     kind: PrimitiveKind
@@ -94,6 +126,50 @@ class Primitive(_StrictModel):
     contributes_to: list[Contribution] = Field(default_factory=list)
     routing: PrimitiveRouting | None = None
     config: dict[str, object] = Field(default_factory=dict)
+    # Schema versioning per ``docs/specs/primitive-sideload/spec.md``
+    # §"Schema versioning". Field default keeps every existing
+    # ``primitive.yaml`` parseable without touching disk; the validator
+    # below rejects any value the current kit does not support, with a
+    # message symmetric between bundled and sideloaded sources.
+    schema_version: int = 1
+    # Loader-populated source attribution. ``exclude=True`` keeps it out
+    # of ``model_dump()`` so the journal's primitive-install events
+    # continue to serialise primitives as their declarative shape. The
+    # default of ``"bundled"`` means a primitive constructed directly
+    # via ``Primitive.model_validate(...)`` (today's bundled-load path)
+    # is correctly tagged without any loader change.
+    #
+    # The Pattern constraint rejects any out-of-vocabulary value at
+    # parse time, defending against a hand-edited bundled
+    # ``primitive.yaml`` that accidentally (or maliciously) ships a
+    # ``source:`` line. The loader path overrides the value after
+    # construction so the post-validation field is always correct in
+    # practice, but the pattern surfaces the typo before the override
+    # silently swallows it.
+    source: str = Field(
+        default="bundled",
+        exclude=True,
+        pattern=r"^(bundled|sideload:[A-Za-z0-9][A-Za-z0-9._-]*)$",
+    )
+
+    # PrivateAttr so the field is not part of the Pydantic schema at
+    # all — the loader sets it after construction, and consumers read
+    # it directly. None for primitives constructed via ``model_validate``
+    # without a follow-up loader assignment (mostly tests); the install
+    # pipeline tolerates None by falling back to the
+    # ``templates/<kind>/<name>`` shape per ``_primitive_source_dir``.
+    _source_dir: Path | None = PrivateAttr(default=None)
+    _dropped_fields: tuple[str, ...] = PrivateAttr(default=())
+
+    @model_validator(mode="after")
+    def _enforce_schema_version(self) -> Self:
+        if self.schema_version not in SUPPORTED_PRIMITIVE_SCHEMA_VERSIONS:
+            supported = ", ".join(str(v) for v in sorted(SUPPORTED_PRIMITIVE_SCHEMA_VERSIONS))
+            raise ValueError(
+                f"primitive.yaml schema_version {self.schema_version} is not "
+                f"supported by this kit; supported: {supported}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _routing_only_on_content_types(self) -> Self:
@@ -103,6 +179,87 @@ class Primitive(_StrictModel):
                 f"'{self.kind.value}'; routing is only valid on content-type primitives"
             )
         return self
+
+    @classmethod
+    def from_sideload(
+        cls,
+        data: dict[str, Any],
+        *,
+        source: str,
+    ) -> Primitive:
+        """Construct a sideloaded primitive with ``extra='ignore'`` semantics.
+
+        Parallel constructor to :meth:`model_validate` for primitives
+        discovered via the ``wiki-primitive`` entry-point group
+        (``docs/specs/primitive-sideload/spec.md`` §"Source-scoped
+        extra-field policy"). Computes the set of unknown top-level
+        and nested field names against the known schema, strips them
+        from a shallow copy of ``data``, then delegates to
+        :meth:`model_validate` against the stripped dict so the
+        existing field validators (kind enum, schema_version,
+        routing-on-content-type) all fire identically. Dropped names
+        are captured on the instance as ``_dropped_fields`` so
+        ``wiki doctor`` can surface them as a soft warning.
+
+        The pre-strip-then-validate shape is what preserves the
+        single-hierarchy invariant the spec pins: the nested
+        ``Contribution`` and ``PrimitiveRouting`` classes remain
+        ``_StrictModel``s with ``extra='forbid'``, and the call sites
+        that do ``isinstance(c, Contribution)`` keep working without
+        a parallel ``ContributionLax`` class.
+        """
+
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"Primitive.from_sideload expected a mapping, got {type(data).__name__}"
+            )
+
+        primitive_fields = set(cls.model_fields)
+        contribution_fields = set(Contribution.model_fields)
+        routing_fields = set(PrimitiveRouting.model_fields)
+
+        dropped: list[str] = []
+        for key in sorted(data.keys()):
+            if key not in primitive_fields:
+                dropped.append(key)
+
+        # ``raw_contributes`` and ``raw_routing`` are inspected only for
+        # nested unknown-field capture and downstream pre-stripping. The
+        # checks below use ``isinstance(... , list/dict)`` rather than
+        # ``or []`` / ``or {}`` so explicit ``contributes_to: null`` or
+        # ``routing: null`` flows through to Pydantic unchanged — the
+        # validator there decides whether ``None`` is acceptable for the
+        # field, which preserves bundled-vs-sideload validation symmetry
+        # on the same on-disk file.
+        raw_contributes = data.get("contributes_to")
+        if isinstance(raw_contributes, list):
+            for index, entry in enumerate(raw_contributes):
+                if isinstance(entry, dict):
+                    for nested_key in sorted(entry.keys()):
+                        if nested_key not in contribution_fields:
+                            dropped.append(f"contributes_to[{index}].{nested_key}")
+
+        raw_routing = data.get("routing")
+        if isinstance(raw_routing, dict):
+            for nested_key in sorted(raw_routing.keys()):
+                if nested_key not in routing_fields:
+                    dropped.append(f"routing.{nested_key}")
+
+        stripped: dict[str, Any] = {k: v for k, v in data.items() if k in primitive_fields}
+        if isinstance(raw_contributes, list):
+            stripped["contributes_to"] = [
+                {k: v for k, v in entry.items() if k in contribution_fields}
+                if isinstance(entry, dict)
+                else entry
+                for entry in raw_contributes
+            ]
+        if isinstance(raw_routing, dict):
+            stripped["routing"] = {k: v for k, v in raw_routing.items() if k in routing_fields}
+
+        primitive = cls.model_validate(stripped)
+        primitive.source = source
+        primitive._dropped_fields = tuple(dropped)
+        return primitive
 
 
 # ---------------------------------------------------------------------------
@@ -300,9 +457,26 @@ class VaultGitInitializedEvent(_EventBase):
 
 
 class PrimitiveInstallEvent(_EventBase):
+    """Recorded when the install pipeline lands a primitive's files into a vault.
+
+    ``source`` is additive per ADR-0002 / ``docs/specs/primitive-
+    sideload/spec.md``. The kit's JSON serialiser writes the field on
+    every install (``"source": null`` for bundled, ``"source":
+    "sideload:<package>"`` for sideloaded) — older journal lines
+    written before this field landed lack the key entirely and replay
+    cleanly via the model's ``None`` default, so the field is
+    backward-compatible at replay even though it does add bytes to
+    newly-written lines. The label is what lets ``wiki doctor`` hint at
+    the previously-installed package after a sideload uninstall (spec
+    AC17). The field does *not* extend ``by`` semantics — ``by``
+    continues to name the install vehicle (``"wiki-init"`` /
+    ``"wiki-add"``), matching every other event in the journal.
+    """
+
     type: Literal["primitive.install"] = "primitive.install"
     primitive: str
     version: str
+    source: str | None = None
 
 
 class PrimitiveRemoveEvent(_EventBase):

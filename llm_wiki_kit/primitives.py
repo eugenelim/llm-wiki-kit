@@ -37,8 +37,10 @@ honest in CI fixtures.
 
 from __future__ import annotations
 
+import importlib.metadata
+import importlib.resources
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,6 +49,21 @@ from pydantic import ValidationError as PydanticValidationError
 
 from llm_wiki_kit.errors import PrimitiveError, ValidationError, WikiError
 from llm_wiki_kit.models import OperationContract, Primitive, PrimitiveKind, VaultState
+
+# Entry-point group used by sideload packages to advertise primitives
+# (``docs/specs/primitive-sideload/spec.md`` §"The entry-point group").
+# This is the kit's public extension contract; renaming it requires
+# coordinated release-note guidance for every published sideload
+# package. Defined as a module-level constant so tests reference the
+# same string the loader does.
+SIDELOAD_ENTRY_POINT_GROUP = "wiki-primitive"
+
+# Dotted-root module names that a ``wiki-primitive`` entry-point value
+# is not allowed to claim — refused at the discovery boundary to keep
+# a malicious wheel from pointing the resolver at the kit's own
+# ``templates/`` tree. The check matches the first dotted segment of
+# ``entry_point.value`` (after stripping any ``:attr`` selector).
+_RESERVED_ENTRY_POINT_VALUE_ROOTS: frozenset[str] = frozenset({"llm_wiki_kit"})
 
 # Catalog directory names per ``docs/architecture/overview.md``. The kit ships
 # the kind subdirectories pluralized (``ontologies/`` for the ``ontology``
@@ -223,7 +240,11 @@ def is_well_formed_outcome_verb(verb: str) -> None:
     )
 
 
-def check_outcome_verb_uniqueness(contracts: Iterable[OperationContract]) -> None:
+def check_outcome_verb_uniqueness(
+    contracts: Iterable[OperationContract],
+    *,
+    source_by_operation: dict[str, str] | None = None,
+) -> None:
     """Raise :class:`WikiError` on catalog-level outcome-verb collisions.
 
     Two passes over ``contracts``:
@@ -237,10 +258,24 @@ def check_outcome_verb_uniqueness(contracts: Iterable[OperationContract]) -> Non
 
     The function consumes the iterable once, so callers passing a
     one-shot generator do not need to materialize it twice.
+
+    ``source_by_operation`` is the optional per-operation source map
+    (``operation_name → "bundled" | "sideload:<package>"``) used in
+    the pass-1 error message so a user with two packages each shipping
+    the same verb sees the contributing source attribution and can
+    decide which package to uninstall (``docs/specs/primitive-sideload/
+    spec.md`` §"Error cases"). Bundled-only callers may pass ``None``;
+    the message degrades gracefully to operation-name-only.
     """
 
     contracts_list = list(contracts)
     operation_names: set[str] = {contract.name for contract in contracts_list}
+
+    def _attrib(operation_name: str) -> str:
+        if source_by_operation is None:
+            return f"'{operation_name}'"
+        source = source_by_operation.get(operation_name, "bundled")
+        return f"'{operation_name}' ({source})"
 
     seen_verbs: dict[str, str] = {}
     for contract in contracts_list:
@@ -250,9 +285,9 @@ def check_outcome_verb_uniqueness(contracts: Iterable[OperationContract]) -> Non
             if owner is not None:
                 raise WikiError(
                     f"outcome verb '{verb}' is declared by both "
-                    f"'{owner}' and '{contract.name}'; verbs must be "
-                    "unique across the operation catalog (spec "
-                    "§Inputs §2 rule 5)"
+                    f"{_attrib(owner)} and {_attrib(contract.name)}; "
+                    "verbs must be unique across the operation catalog "
+                    "(spec §Inputs §2 rule 5)"
                 )
             seen_verbs[verb] = contract.name
 
@@ -260,7 +295,7 @@ def check_outcome_verb_uniqueness(contracts: Iterable[OperationContract]) -> Non
             if verb in operation_names:
                 raise WikiError(
                     f"outcome verb '{verb}' declared by "
-                    f"'{contract.name}' shadows the operation name "
+                    f"{_attrib(contract.name)} shadows the operation name "
                     f"'{verb}'; outcome verbs and operation names "
                     "must occupy disjoint sets (spec Invariant 8)"
                 )
@@ -301,9 +336,171 @@ def load_primitive(path: Path) -> Primitive:
         )
 
     try:
-        return Primitive.model_validate(data)
+        primitive = Primitive.model_validate(data)
     except PydanticValidationError as exc:
         raise ValidationError(f"primitive.yaml at {path}", exc) from exc
+    # The bundled load path always tags ``source="bundled"`` and records
+    # the on-disk directory so consumers building a ``sources`` mapping
+    # for the install pipeline can read it uniformly across bundled and
+    # sideloaded primitives. ``source`` is a Field with ``exclude=True``
+    # rather than a PrivateAttr per ``docs/specs/primitive-sideload/
+    # spec.md`` §"Contracts with other modules"; the post-validate
+    # override here guarantees a hand-edited ``primitive.yaml`` cannot
+    # impersonate a sideload package by declaring ``source: sideload:…``.
+    primitive.source = "bundled"
+    primitive._source_dir = path
+    return primitive
+
+
+def _load_sideload_primitive(path: Path, *, source: str) -> Primitive:
+    """Sideload sibling of :func:`load_primitive`.
+
+    Loads a single ``primitive.yaml`` from a sideload package's
+    ``templates/<kind>/<name>/`` directory under the source-scoped
+    extra-field policy from ``docs/specs/primitive-sideload/spec.md``
+    §"Source-scoped extra-field policy": top-level (and nested
+    ``contributes_to`` / ``routing``) unknown fields are dropped, not
+    rejected; the dropped names are captured on the instance for
+    ``wiki doctor`` to surface. ``source`` is the
+    ``"sideload:<package-name>"`` label written into the
+    :attr:`Primitive.source` field.
+
+    Distinct error attribution: malformed YAML or missing files in a
+    sideload package prepend the package name to the error message
+    so the user can navigate to the offending file in someone else's
+    code rather than a kit-internal path.
+    """
+
+    if not path.exists():
+        raise PrimitiveError(
+            f"sideload primitive directory does not exist: {path} (source={source})"
+        )
+    if not path.is_dir():
+        raise PrimitiveError(
+            f"sideload primitive path is not a directory: {path} (source={source})"
+        )
+
+    manifest_path = path / "primitive.yaml"
+    if not manifest_path.exists():
+        raise PrimitiveError(f"sideload primitive.yaml not found in {path} (source={source})")
+
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PrimitiveError(f"cannot read {manifest_path} (source={source}): {exc}") from exc
+
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise PrimitiveError(f"malformed YAML in {manifest_path} (source={source}): {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise PrimitiveError(
+            f"{manifest_path} must contain a YAML mapping, got "
+            f"{type(data).__name__} (source={source})"
+        )
+
+    try:
+        primitive = Primitive.from_sideload(data, source=source)
+    except PydanticValidationError as exc:
+        raise ValidationError(f"sideload primitive.yaml at {path} (source={source})", exc) from exc
+    primitive._source_dir = path
+    return primitive
+
+
+def _discover_sideloaded_template_dirs() -> list[tuple[str, str, Path]]:
+    """Resolve the ``wiki-primitive`` entry-point group to templates paths.
+
+    Returns one ``(package_name, version, templates_path)`` triple per
+    entry point, sorted by package name. An empty entry-point group
+    returns ``[]``; an installation with no sideload packages therefore
+    sees byte-equivalent loader output to today's kit.
+
+    The function uses :func:`importlib.metadata.entry_points` to
+    enumerate the group and :func:`importlib.resources.files` to
+    resolve each entry-point value (a Python package's importable
+    module path) into a filesystem-traversable ``Path`` pointing at the
+    package's bundled ``templates/`` directory. This is the
+    regular-wheel-install requirement from ``docs/specs/primitive-
+    sideload/spec.md`` §"Sideload package installation" — a zipped-
+    wheel or zipapp layout would not satisfy ``Path``'s
+    ``iterdir`` / ``open`` contracts and the kit raises a
+    :class:`PrimitiveError` naming the package at the first filesystem
+    operation.
+
+    The helper does NOT raise on a missing ``templates/`` directory
+    (that surfaces from the merge call site in
+    :func:`discover_primitives` with the exact spec-pinned error
+    message). It does raise from :func:`importlib.metadata.entry_points`
+    itself if the Python runtime cannot load the metadata; that's a
+    runtime-infrastructure failure the kit lets propagate.
+    """
+
+    entry_points = importlib.metadata.entry_points(group=SIDELOAD_ENTRY_POINT_GROUP)
+    triples: list[tuple[str, str, Path]] = []
+    for entry_point in entry_points:
+        # Defence: refuse any entry point whose dotted-root names the
+        # kit's own package. A malicious or sloppy sideload package
+        # could otherwise declare ``wiki-primitive = "llm_wiki_kit"``
+        # and the resolver would obediently walk *the kit's own*
+        # ``templates/`` directory, attributing those primitives to the
+        # attacker's package name in every collision/error message.
+        # The hard refusal here makes the confused-deputy report shape
+        # impossible at the boundary.
+        ep_root = entry_point.value.split(":", 1)[0].split(".", 1)[0]
+        if ep_root in _RESERVED_ENTRY_POINT_VALUE_ROOTS:
+            raise PrimitiveError(
+                f"sideload entry-point value '{entry_point.value}' names "
+                f"the kit's own package '{ep_root}'; refusing to resolve. "
+                "A sideload package must point its 'wiki-primitive' "
+                "entry-point value at its own module path."
+            )
+        # Prefer the *distribution* name and version recorded on the
+        # entry point itself — that's the PyPI-visible identity a user
+        # would see in ``pip list`` or ``pip install`` and the label the
+        # spec contracts on (``docs/specs/primitive-sideload/spec.md``
+        # §Outputs "the distribution name from
+        # ``importlib.metadata``"). The module name a project ships
+        # under ("wiki_primitive_pod") often differs from its
+        # distribution name ("wiki-primitive-pod"), so deriving the
+        # label from ``entry_point.value`` would render the wrong
+        # identifier across every user-visible affordance the
+        # provenance decoration touches.
+        dist = entry_point.dist
+        if dist is not None:
+            package_name = dist.name
+            version = dist.version
+        else:
+            # Fallback: an entry point produced without an attached
+            # distribution (rare; some editable-install paths on older
+            # Python versions). Derive a best-effort label from the
+            # importable module path and look up the version
+            # separately. ``"unknown"`` is the signal the spec's
+            # provenance decoration uses for "metadata didn't resolve".
+            package_name = entry_point.value.split(":", 1)[0].split(".", 1)[0]
+            try:
+                version = importlib.metadata.version(package_name)
+            except importlib.metadata.PackageNotFoundError:
+                version = "unknown"
+        try:
+            templates_traversable = importlib.resources.files(entry_point.value) / "templates"
+        except (ModuleNotFoundError, TypeError) as exc:
+            raise PrimitiveError(
+                f"sideload package '{package_name}' declares entry-point "
+                f"value '{entry_point.value}' but the kit cannot resolve "
+                f"its package root: {exc}"
+            ) from exc
+        # Sideload packages MUST install such that
+        # ``importlib.resources.files`` returns a filesystem-traversable
+        # Path; zipped layouts return a different Traversable subclass
+        # that the rest of the kit (which uses ``pathlib`` operations)
+        # cannot consume. The cast below is the contract; the
+        # PrimitiveError fires at the first ``iterdir`` / ``open`` call
+        # if the contract is violated.
+        templates_path = Path(str(templates_traversable))
+        triples.append((package_name, version, templates_path))
+    triples.sort(key=lambda triple: triple[0])
+    return triples
 
 
 def load_operation_contract(primitive_dir: Path) -> OperationContract | None:
@@ -356,6 +553,142 @@ def load_operation_contract(primitive_dir: Path) -> OperationContract | None:
         raise ValidationError(f"contract.yaml at {primitive_dir}", exc) from exc
 
 
+def _walk_templates_tree(
+    templates_dir: Path,
+    *,
+    loader: Callable[[Path], Primitive],
+) -> tuple[list[Primitive], list[OperationContract]]:
+    """Walk one ``templates/<kind>/<name>/`` tree once.
+
+    Factored out of :func:`discover_primitives` so the bundled walk and
+    each sideloaded walk share one body. ``loader`` is the
+    per-walk-flavour constructor (bundled vs. sideload-with-source);
+    everything else — kind-directory skip rules, manifest-missing skip
+    rule, outcome-verb shape check — is identical.
+
+    Returns ``(primitives_loaded, operation_contracts_loaded)``;
+    cross-walk collision and verb-uniqueness checks happen at the
+    :func:`discover_primitives` merge step against the union.
+    """
+
+    primitives: list[Primitive] = []
+    operation_contracts: list[OperationContract] = []
+    if not templates_dir.exists():
+        return primitives, operation_contracts
+    for kind_dir in sorted(templates_dir.iterdir()):
+        if not kind_dir.is_dir() or kind_dir.name not in _CATALOG_DIRS:
+            continue
+        for primitive_dir in sorted(kind_dir.iterdir()):
+            if not primitive_dir.is_dir():
+                continue
+            if not (primitive_dir / "primitive.yaml").exists():
+                continue
+            primitive = loader(primitive_dir)
+            primitives.append(primitive)
+            if primitive.kind is PrimitiveKind.OPERATION:
+                contract = load_operation_contract(primitive_dir)
+                if contract is None:
+                    continue
+                for verb in contract.outcomes:
+                    is_well_formed_outcome_verb(verb)
+                operation_contracts.append(contract)
+    return primitives, operation_contracts
+
+
+def _check_name_collisions(primitives: list[Primitive]) -> None:
+    """Raise :class:`WikiError` on any name collision across the merged catalog.
+
+    Spec §"Collision policy" cases 1 and 2: a sideloaded primitive name
+    that matches a bundled name, or that matches another sideloaded
+    primitive's name. The check is source-aware so the error message
+    can route the user to the right fix (uninstall vs. rename), but
+    primitive ordering inside ``primitives`` does not matter — the
+    function picks the bundled member as the canonical "owner" in
+    bundled-vs-sideload pairs.
+
+    Implementation note: this runs against the full merged primitive
+    list. Bundled-vs-bundled collisions cannot happen (the kit's own
+    catalog is hand-curated and would already have been caught by
+    other constraints), but the check fires symmetrically — a future
+    structural refactor that introduces a second bundled tree should
+    not silently accept a duplicate name.
+    """
+
+    seen: dict[str, Primitive] = {}
+    for primitive in primitives:
+        existing = seen.get(primitive.name)
+        if existing is None:
+            seen[primitive.name] = primitive
+            continue
+        # Order the contributors so the bundled side, if any, appears
+        # first in the message — the user typically reads
+        # "X is bundled" and decides to rename the sideload.
+        a, b = existing, primitive
+        if a.source != "bundled" and b.source == "bundled":
+            a, b = b, a
+        if a.source == "bundled" and b.source != "bundled":
+            sideload_pkg = b.source.split(":", 1)[1] if ":" in b.source else b.source
+            raise WikiError(
+                f"sideload package '{sideload_pkg}' provides primitive "
+                f"'{a.name}', but '{a.name}' is already "
+                f"bundled with the kit. Uninstall '{sideload_pkg}' or "
+                "rename its primitive."
+            )
+        # Two sideload packages provide the same name.
+        pkg_a = a.source.split(":", 1)[1] if ":" in a.source else a.source
+        pkg_b = b.source.split(":", 1)[1] if ":" in b.source else b.source
+        raise WikiError(
+            f"sideload packages '{pkg_a}' and '{pkg_b}' both provide "
+            f"primitive '{a.name}'. Uninstall one."
+        )
+
+
+def _check_skill_path_collisions(primitives: list[Primitive]) -> None:
+    """Raise :class:`WikiError` on shared ``files/skills/<skill>/`` paths.
+
+    Spec §"Collision policy" case 5. Two operation primitives across
+    the merged catalog cannot ship the same ``files/skills/<skill>/``
+    directory because the install pipeline would write conflicting
+    SKILL.md content into one vault location. The bundled-only loader
+    has no such case today (hand-curated), but the merged catalog
+    must enforce it — sideload package authors aren't coordinated.
+
+    The check inspects each primitive's ``_source_dir / "files" / "skills"``
+    for present subdirectories (operation primitives ship these as part
+    of the outcome-named-entry-points contract; non-operation
+    primitives may ship them too for other purposes). A skill
+    directory name is treated as colliding only when it appears under
+    two distinct primitives.
+    """
+
+    skill_owner: dict[str, Primitive] = {}
+    for primitive in primitives:
+        if primitive._source_dir is None:
+            continue
+        skills_root = primitive._source_dir / "files" / "skills"
+        if not skills_root.is_dir():
+            continue
+        for skill_dir in sorted(skills_root.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            existing = skill_owner.get(skill_dir.name)
+            if existing is None:
+                skill_owner[skill_dir.name] = primitive
+                continue
+            # Order contributors so the bundled side, if any, appears
+            # first in the message.
+            a, b = existing, primitive
+            if a.source != "bundled" and b.source == "bundled":
+                a, b = b, a
+            raise WikiError(
+                f"SKILL directory 'files/skills/{skill_dir.name}/' is "
+                f"contributed by both primitive '{a.name}' "
+                f"(source={a.source}) and primitive '{b.name}' "
+                f"(source={b.source}); two primitives cannot ship the "
+                "same SKILL directory."
+            )
+
+
 def discover_primitives(templates_dir: Path) -> list[Primitive]:
     """Walk ``templates_dir/<kind>/<name>/`` and load every primitive.
 
@@ -383,35 +716,97 @@ def discover_primitives(templates_dir: Path) -> list[Primitive]:
     "the catalog is the namespace" invariant fires before any
     user vault sees a primitive. Both checks raise :class:`WikiError`
     directly, matching the spec's "primitive-load-time error" framing.
+
+    **Sideload merge** (per ``docs/specs/primitive-sideload/spec.md``):
+    after the bundled walk completes, the function calls
+    :func:`_discover_sideloaded_template_dirs` to enumerate
+    ``wiki-primitive`` entry-point packages and walks each one's
+    ``templates/`` directory with the same per-kind / per-primitive
+    body. Sideloaded primitives load through :func:`_load_sideload_primitive`
+    (which uses the source-scoped ``extra='ignore'`` policy from
+    :meth:`Primitive.from_sideload`) and carry source attribution as
+    ``"sideload:<package>"`` on each instance. After every walk
+    completes, cross-source name collisions, region collisions
+    (delegated to the install pipeline), SKILL-path collisions, and
+    outcome-verb uniqueness all fire across the merged catalog. An
+    installation with no ``wiki-primitive`` entry-point packages
+    behaves bit-for-bit identically to the pre-sideload kit — no log
+    line, no synthetic event, no behavior change.
     """
 
-    if not templates_dir.exists():
-        return []
+    bundled, bundled_contracts = _walk_templates_tree(templates_dir, loader=load_primitive)
 
-    primitives: list[Primitive] = []
-    operation_contracts: list[OperationContract] = []
-    for kind_dir in sorted(templates_dir.iterdir()):
-        if not kind_dir.is_dir() or kind_dir.name not in _CATALOG_DIRS:
-            continue
-        for primitive_dir in sorted(kind_dir.iterdir()):
-            if not primitive_dir.is_dir():
-                continue
-            if not (primitive_dir / "primitive.yaml").exists():
-                continue
-            primitive = load_primitive(primitive_dir)
-            primitives.append(primitive)
-            if primitive.kind is PrimitiveKind.OPERATION:
-                contract = load_operation_contract(primitive_dir)
-                if contract is None:
-                    continue
-                for verb in contract.outcomes:
-                    is_well_formed_outcome_verb(verb)
-                operation_contracts.append(contract)
+    sideload_triples = _discover_sideloaded_template_dirs()
+    sideloaded: list[Primitive] = []
+    sideloaded_contracts: list[OperationContract] = []
+    for package_name, _version, sideload_templates_path in sideload_triples:
+        source_label = f"sideload:{package_name}"
+        if not sideload_templates_path.exists():
+            raise WikiError(
+                f"sideload package '{package_name}' is installed but no "
+                f"templates/ directory was found at its package root "
+                f"(expected: {sideload_templates_path})."
+            )
 
-    check_outcome_verb_uniqueness(operation_contracts)
+        def _loader(primitive_dir: Path, *, _source: str = source_label) -> Primitive:
+            return _load_sideload_primitive(primitive_dir, source=_source)
 
-    primitives.sort(key=lambda p: p.name)
-    return primitives
+        pkg_primitives, pkg_contracts = _walk_templates_tree(
+            sideload_templates_path, loader=_loader
+        )
+        sideloaded.extend(pkg_primitives)
+        sideloaded_contracts.extend(pkg_contracts)
+
+    merged = bundled + sideloaded
+
+    # Collision checks run against the *fully* merged catalog — bundled
+    # primitives, the kit's ``core`` primitive (which ships SKILLs like
+    # ``wiki-bootstrap`` / ``wiki-conflict`` / ``ingest`` that a
+    # sideload package could otherwise quietly shadow), and every
+    # sideloaded primitive. ``core`` lives at the kit-root level and is
+    # loaded separately by every install handler (``cli._cmd_init`` /
+    # ``_cmd_add`` / ``_cmd_upgrade``); pulling it in here ensures the
+    # collision contract from ``docs/specs/primitive-sideload/spec.md``
+    # §"Collision policy" cases 1 + 5 fires uniformly across every
+    # source the install pipeline will actually walk.
+    collision_inputs = _augment_with_core(merged, templates_dir)
+    _check_name_collisions(collision_inputs)
+    _check_skill_path_collisions(collision_inputs)
+    source_by_operation: dict[str, str] = {
+        primitive.name: primitive.source
+        for primitive in merged
+        if primitive.kind is PrimitiveKind.OPERATION
+    }
+    check_outcome_verb_uniqueness(
+        bundled_contracts + sideloaded_contracts,
+        source_by_operation=source_by_operation,
+    )
+
+    merged.sort(key=lambda p: p.name)
+    return merged
+
+
+def _augment_with_core(primitives: list[Primitive], templates_dir: Path) -> list[Primitive]:
+    """Return ``primitives`` plus the kit's ``core`` primitive when present.
+
+    ``discover_primitives`` walks ``templates/`` only — by design, since
+    ``core`` is a special primitive at the kit root. But the collision
+    checks need to see ``core`` so a sideload package shipping
+    ``files/skills/wiki-bootstrap/`` (a SKILL the core primitive
+    contributes) raises at load time rather than at the next
+    ``safe_write`` drift conflict. The helper is private because the
+    rest of the kit deliberately keeps ``core`` out of the catalog's
+    declarative shape; the collision walk is the only consumer that
+    needs the union view.
+    """
+
+    if templates_dir.parent is None:
+        return list(primitives)
+    core_dir = templates_dir.parent / "core"
+    if not (core_dir / "primitive.yaml").is_file():
+        return list(primitives)
+    core_primitive = load_primitive(core_dir)
+    return [core_primitive, *primitives]
 
 
 def is_installed_agent(name: str, state: VaultState, kit_root: Path) -> bool:
