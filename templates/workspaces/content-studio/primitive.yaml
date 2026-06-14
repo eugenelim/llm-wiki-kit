@@ -13,4 +13,4 @@ scope:
 agent: personal-coordinator
 operations: []
 view: content-studio.base
-bootstrap: bootstrap.md
+bootstrap: content-studio.bootstrap.md

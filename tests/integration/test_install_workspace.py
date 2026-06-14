@@ -2,7 +2,10 @@
 
 Spec AC-6: after ``wiki add workspace:content-studio`` the vault contains a
 ``content-studio.base`` byte-identical to the shipped template and a
-``bootstrap.md``. Also pins that the example's manifest passes ``Primitive``
+``content-studio.bootstrap.md``. The bootstrap note is namespaced per lens
+(``<name>.bootstrap.md``) so two workspaces composed in one recipe don't clobber
+a shared ``bootstrap.md`` — see ``docs/specs/personal-recipe-workspaces/``. Also
+pins that the example's manifest passes ``Primitive``
 validation and that its ``agent``/``operations`` references resolve against
 the real catalog at recipe-resolve time (exercising T4 on the real example).
 
@@ -39,7 +42,7 @@ def test_add_content_studio_installs_base_verbatim_and_bootstrap(
     shipped = _WORKSPACE_DIR / "files" / "content-studio.base"
     assert base.read_bytes() == shipped.read_bytes()
 
-    assert (vault / "bootstrap.md").is_file()
+    assert (vault / "content-studio.bootstrap.md").is_file()
 
     # End-to-end journey (plan §Construction tests): the same real install
     # that wrote the .base must surface through ``wiki workspaces``, reading

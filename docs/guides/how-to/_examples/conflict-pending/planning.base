@@ -1,0 +1,17 @@
+# planning.base — Obsidian Bases cross-cutting lens for the planning workspace.
+#
+# A *cross-cutting* lens: it carries no `workspaces:` membership filter, so it
+# surveys EVERY note in the vault, ordered by `status` first (then recency).
+# This is the empty-scope case from RFC-0008 — the manifest has no `scope`,
+# which means "all notes" rather than filtering on lens membership. Weekly
+# planning reads across every area at once instead of one filtered view.
+#
+# Installed verbatim by the kit (a `.base` file is never interpolated), so
+# Bases function syntax survives byte-for-byte. Open it in Obsidian (>= 1.9.10).
+views:
+  - type: table
+    name: Planning
+    order:
+      - status
+      - modified
+      - file.name

@@ -16,7 +16,7 @@ the strict `Primitive` model with five optional workspace-only fields, add a rec
 validator that checks a workspace's `agent`/`operations` references resolve in the closure (a
 sibling to the existing CT-3/CT-4 checks, deliberately **without** any CT-5-style uniqueness rule),
 declare a universal optional `workspaces:` field in the shipped baseline schema, ship one
-`content-studio` example workspace (manifest + `.base` + `bootstrap.md`), add a read-only `wiki
+`content-studio` example workspace (manifest + `.base` + `content-studio.bootstrap.md`), add a read-only `wiki
 workspaces` lister modelled on `wiki agents`, and document the enter-workspace `claude -p` contract.
 
 Order of operations: the enum + catalog wiring (T1) is the foundation; the model fields (T2) and
@@ -51,7 +51,7 @@ Most construction tests live under **Tasks** below. Cross-cutting only:
 
 **Integration tests:**
 - End-to-end: `wiki init` a temp vault, `wiki add workspace:content-studio`, assert
-  `content-studio.base` is byte-identical to the shipped template and `bootstrap.md` exists, then
+  `content-studio.base` is byte-identical to the shipped template and `content-studio.bootstrap.md` exists, then
   `wiki workspaces` prints the expected NAME/SCOPE/AGENT/OPERATIONS row. (Mirrors
   `tests/integration/test_install_agent.py`.)
 - Regression guard: `tests/unit/test_recipes_agents.py` runs **unmodified** and green — proof CT-5
@@ -166,19 +166,20 @@ diff shows zero edits to `_validate_agent_bindings`.
 
 **Tests:**
 - *Goal-based / integration*: `wiki add workspace:content-studio` into a temp vault produces
-  `content-studio.base` byte-identical to the shipped template and a `bootstrap.md`. Verifies AC-6.
+  `content-studio.base` byte-identical to the shipped template and a `content-studio.bootstrap.md`. Verifies AC-6.
 - *Goal-based*: the example's manifest passes `Primitive` validation and recipe-reference
   validation (its `agent`, if set, resolves).
 
 **Approach:**
 - Create `templates/workspaces/content-studio/`:
   - `primitive.yaml`: `kind: workspace`, `scope: {workspaces: [content-studio]}`,
-    `view: content-studio.base`, `bootstrap: bootstrap.md`, `operations: []`, and
+    `view: content-studio.base`, `bootstrap: content-studio.bootstrap.md`, `operations: []`, and
     `agent: personal-coordinator` with `requires: [personal-coordinator]` (demonstrates Model A's
     *reuse an existing agent* — `personal-coordinator` already exists).
   - `files/content-studio.base`: a Bases view filtering `workspaces.contains("content-studio")`
     (verbatim; braces safe).
-  - `files/bootstrap.md`: the lens context for an enter-workspace session.
+  - `files/content-studio.bootstrap.md`: the lens context for an enter-workspace session
+    (namespaced per lens so multi-workspace recipes don't clobber a shared `bootstrap.md`).
 
 **Done when:** the example installs and the `.base` lands byte-identical in the vault.
 
@@ -251,3 +252,11 @@ separate follow-up PR.
   vault-relative path (where the `files/` tree flattens to), so the
   enter-workspace driver this spec documents finds the note where it actually
   lands. The two declarative references are now consistent.
+- 2026-06-14: bootstrap renamed `bootstrap.md` → `content-studio.bootstrap.md`
+  (manifest `bootstrap:`, `.base`-sibling file, AC-6, this plan's references, and
+  the install test). The single-workspace install path never hit it, but the
+  personal-recipe-workspaces follow-on composes two workspaces in one recipe,
+  where two bare `files/bootstrap.md` flatten to the same vault-root path and the
+  second clobbers the first. Bootstraps are now namespaced per lens
+  (`<name>.bootstrap.md`), symmetric with `<name>.base`. See
+  `docs/specs/personal-recipe-workspaces/`.

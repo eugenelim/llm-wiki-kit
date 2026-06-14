@@ -483,6 +483,11 @@ def test_personal_recipe_resolves_against_live_catalog() -> None:
 
     expected = {
         "action-item",
+        # RFC-0008 workspace lenses (personal-recipe-workspaces follow-on):
+        # a membership lens + a cross-cutting lens, both reusing the
+        # existing personal-coordinator agent (Model A — no new binding).
+        "content-studio",
+        "planning",
         "core",
         "decision",
         # PR-7 / RFC-0004 default agent catalog. ``personal-coordinator``

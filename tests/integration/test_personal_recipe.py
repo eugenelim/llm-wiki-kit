@@ -31,6 +31,12 @@ RECIPE = "personal"
 # for why.
 EXPECTED_PRIMITIVES = {
     "action-item",
+    # RFC-0008 workspace lenses (personal-recipe-workspaces follow-on).
+    # ``content-studio`` is a membership lens; ``planning`` is a
+    # cross-cutting (empty-scope) lens. Both reference the existing
+    # ``personal-coordinator`` agent and surface operations the closure
+    # already installs — no new content-type/operation enters here.
+    "content-studio",
     "core",
     "decision",
     # PR-7 / RFC-0004 — installed-but-unbound; reserved for a future
@@ -47,6 +53,7 @@ EXPECTED_PRIMITIVES = {
     # ``follow-up-tracker``, ``meal-planning`` in ``personal.yaml``'s
     # ``agents:`` block.
     "personal-coordinator",
+    "planning",
     "recipe",
     "trip-doc",
     "trip-prep",
