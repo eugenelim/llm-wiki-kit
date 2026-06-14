@@ -500,3 +500,24 @@ loop tooling, not just the prose.
   monorepo seed `AGENTS.md`/`CONVENTIONS.md`, the `adapt-to-project` /
   `init-project` / `receive-brief` skills (pack-installer-specific), and
   conventional-commit defaults (kept `v2: task <N>` through v2).
+
+#### 2026-06-14 — core 0.4.9 (work-loop user-level verification)
+
+Incremental refresh of the work-loop SKILL only, tracking upstream
+`840b3e5` (`feat(core): make real-user verification first-class for
+non-UI tools`). No version pin, gate, or other artifact changed.
+
+- **work-loop SKILL** — broadened the **Visual / manual QA**
+  verification mode (PLAN and EXECUTE sections) so "exercise the real
+  built artifact end-to-end the way a user would, through the documented
+  happy path, and record what you observed" is first-class for any
+  user-invoked artifact (CLI, library public API, agent/skill, service),
+  not only UIs. Assert on the observed result (real stdout/exit code,
+  returned value, file written), not internal state or a passing unit
+  gate standing in for the real invocation. Framed harness-agnostic
+  (`/verify` and `/run` are an optional accelerant, never a dependency).
+  Added a DECIDE end-of-session checklist line refusing "done" until
+  that end-to-end exercise has happened. UI guidance and the
+  exploratory / visual-fuzz flavor preserved verbatim. Upstream's
+  parallel `docs/specs/work-loop-user-level-verification/` is the
+  authoring record; the kit adopts only the shipped SKILL change.
