@@ -90,12 +90,14 @@ the PR that adds the ADR alongside the change it justifies; flip
 ## How to add an RFC
 
 Use the [`new-rfc`](../.claude/skills/new-rfc/SKILL.md) skill — it
-scaffolds from its bundled `assets/rfc.md` template, runs a gated
-research phase (repo sweep + external prior-art sweep + per-question
-recommendations) before drafting, and prints the next ordinal via
-`scripts/next-ordinal.py`. The skill is self-contained (per the
-[agentskills.io](https://agentskills.io) spec); the procedure lives in
-its `SKILL.md`, not duplicated here.
+scaffolds from its bundled **answer-first** `assets/rfc.md` template
+(lead with "The ask"), runs a gated per-subpoint research-and-de-risk
+phase (repo sweep + external prior-art sweep + MECE options + spike the
+riskiest assumption + per-decision recommendations) before drafting,
+enforces a mandatory pre-handoff self-review gate, and prints the next
+ordinal via `scripts/next-ordinal.py`. The skill is self-contained (per
+the [agentskills.io](https://agentskills.io) spec); the procedure lives
+in its `SKILL.md`, not duplicated here.
 
 ## How to add a spec + plan
 
