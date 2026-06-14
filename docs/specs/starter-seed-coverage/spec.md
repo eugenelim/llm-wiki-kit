@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec and
 > code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Shipped
 - **Owner:** `starters/check_coverage.py` (kit-author tooling, sits next
   to `starters/regenerate.py` — outside `llm_wiki_kit/` per RFC-0006's
   same-as-regenerator placement).
