@@ -56,6 +56,13 @@ class PrimitiveKind(StrEnum):
     OPERATION = "operation"
     INFRASTRUCTURE = "infrastructure"
     AGENT = "agent"
+    # A workspace is a named, filtered *lens* over a single vault (RFC-0008).
+    # It composes like any other primitive but ships a Bases ``.base`` view,
+    # an optional bootstrap note, and references (never mints) an agent.
+    # Read via ``is`` / ``is not`` guards like every other kind; the
+    # exclusive filters across ingest/operations/install/doctor/recipes
+    # correctly exclude a workspace without a dedicated branch.
+    WORKSPACE = "workspace"
 
 
 class Contribution(_StrictModel):
@@ -82,6 +89,23 @@ class PrimitiveRouting(_StrictModel):
     filename_patterns: list[str] = Field(default_factory=list)
     url_domains: list[str] = Field(default_factory=list)
     url_path_patterns: list[str] = Field(default_factory=list)
+
+
+class WorkspaceScope(_StrictModel):
+    """Which notes a workspace lens covers (RFC-0008, workspace-primitive spec).
+
+    ``workspaces`` lists the membership tags a note's ``workspaces:``
+    frontmatter must contain to fall inside this lens. An **empty or
+    absent** scope is the *cross-cutting* case: the lens covers all
+    notes (e.g. a ``planning`` lens that surveys the whole bank by
+    status) rather than filtering on membership. The kit does not
+    render ``scope`` into the shipped ``.base`` view — the view is
+    installed verbatim (Bases ``{...}`` braces survive); ``scope`` is
+    the declarative record of intent that the lister and the
+    enter-workspace contract read.
+    """
+
+    workspaces: list[str] = Field(default_factory=list)
 
 
 #: Supported ``primitive.yaml`` schema version range. The kit reads exactly
@@ -126,6 +150,24 @@ class Primitive(_StrictModel):
     contributes_to: list[Contribution] = Field(default_factory=list)
     routing: PrimitiveRouting | None = None
     config: dict[str, object] = Field(default_factory=dict)
+    # Workspace-only fields (RFC-0008, workspace-primitive spec). All five
+    # are optional and rejected on any non-workspace kind by
+    # ``_workspace_fields_only_on_workspaces`` below — mirroring
+    # ``_routing_only_on_content_types``. ``agent`` and each ``operations``
+    # entry are primitive *names* (pattern-validated here for early
+    # typo-catching, like ``AgentBinding.runs`` / ``preferred_agent``);
+    # they are cross-checked against the recipe's resolved closure at
+    # ``recipes._validate_workspace_references`` time. ``bootstrap`` and
+    # ``view`` are vault-relative file references, not names, so they carry
+    # no pattern. A workspace never synthesizes agent→operation execution
+    # bindings from ``agent``/``operations`` — that is the Model A
+    # invariant; execution bindings live only in the recipe ``agents:``
+    # block (spec §Boundaries "Never do").
+    scope: WorkspaceScope | None = None
+    agent: str | None = Field(default=None, pattern=NAME_PATTERN)
+    operations: list[Annotated[str, Field(pattern=NAME_PATTERN)]] = Field(default_factory=list)
+    bootstrap: str | None = None
+    view: str | None = None
     # Schema versioning per ``docs/specs/primitive-sideload/spec.md``
     # §"Schema versioning". Field default keeps every existing
     # ``primitive.yaml`` parseable without touching disk; the validator
@@ -177,6 +219,39 @@ class Primitive(_StrictModel):
             raise ValueError(
                 f"primitive '{self.name}' declares routing but kind is "
                 f"'{self.kind.value}'; routing is only valid on content-type primitives"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _workspace_fields_only_on_workspaces(self) -> Self:
+        """Reject the five workspace-only fields on any non-workspace kind.
+
+        Sibling of :meth:`_routing_only_on_content_types`. A field is
+        "declared" when it departs from its default — ``None`` for
+        ``scope``/``agent``/``bootstrap``/``view``, the empty list for
+        ``operations`` — so a workspace field accidentally added to, say,
+        a content-type manifest surfaces as a load-time error naming both
+        the field(s) and the offending kind.
+        """
+
+        if self.kind is PrimitiveKind.WORKSPACE:
+            return self
+        offenders: list[str] = []
+        if self.scope is not None:
+            offenders.append("scope")
+        if self.agent is not None:
+            offenders.append("agent")
+        if self.operations:
+            offenders.append("operations")
+        if self.bootstrap is not None:
+            offenders.append("bootstrap")
+        if self.view is not None:
+            offenders.append("view")
+        if offenders:
+            raise ValueError(
+                f"primitive '{self.name}' declares workspace-only field(s) "
+                f"{', '.join(offenders)} but kind is '{self.kind.value}'; "
+                "these fields are only valid on workspace primitives"
             )
         return self
 

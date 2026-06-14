@@ -185,6 +185,7 @@ def resolve_recipe_primitives(
                 pending.append(required)
 
     _validate_agent_bindings(recipe, closed)
+    _validate_workspace_references(recipe, closed)
 
     return resolve_dependencies(list(closed.values()))
 
@@ -259,6 +260,66 @@ def _validate_agent_bindings(
                     f"preferred agent per recipe"
                 )
             seen_operations[operation_name] = agent_name
+
+
+def _validate_workspace_references(
+    recipe: Recipe,
+    closed: dict[str, Primitive],
+) -> None:
+    """Validate every ``kind: workspace`` primitive's references in the closure.
+
+    Sibling of :func:`_validate_agent_bindings` for the workspace
+    primitive (RFC-0008, workspace-primitive spec §"Recipe resolution").
+    For each workspace in the resolved closure:
+
+    1. If ``agent`` is set, it must be a primitive in the closure whose
+       ``kind`` is ``agent``. "Not in closure" and "wrong kind" are
+       distinct error shapes so a typo never masquerades as a kind
+       mismatch — mirroring the CT-3 / CT-4 split.
+    2. Every ``operations`` entry must be a primitive in the closure
+       whose ``kind`` is ``operation``.
+
+    **No CT-5-style uniqueness check.** Two workspaces may surface the
+    same operation — this is the Model A invariant (spec §Boundaries
+    "Never do"): workspaces are lenses, not schedulers, and never
+    synthesize agent→operation execution bindings. Execution bindings
+    live only in the recipe ``agents:`` block, validated separately by
+    :func:`_validate_agent_bindings`, which this function never touches.
+    """
+
+    for primitive in closed.values():
+        if primitive.kind is not PrimitiveKind.WORKSPACE:
+            continue
+        if primitive.agent is not None:
+            agent_primitive = closed.get(primitive.agent)
+            if agent_primitive is None:
+                raise RecipeError(
+                    f"recipe '{recipe.name}' workspace '{primitive.name}' "
+                    f"references agent '{primitive.agent}' but the primitive "
+                    f"is not in the recipe's closure"
+                )
+            if agent_primitive.kind is not PrimitiveKind.AGENT:
+                raise RecipeError(
+                    f"recipe '{recipe.name}' workspace '{primitive.name}' "
+                    f"references agent '{primitive.agent}' but the primitive "
+                    f"resolves to kind: {agent_primitive.kind.value} "
+                    f"(kind: agent expected)"
+                )
+        for operation_name in primitive.operations:
+            op_primitive = closed.get(operation_name)
+            if op_primitive is None:
+                raise RecipeError(
+                    f"recipe '{recipe.name}' workspace '{primitive.name}' "
+                    f"references operation '{operation_name}' but the "
+                    f"primitive is not in the recipe's closure"
+                )
+            if op_primitive.kind is not PrimitiveKind.OPERATION:
+                raise RecipeError(
+                    f"recipe '{recipe.name}' workspace '{primitive.name}' "
+                    f"references operation '{operation_name}' but the "
+                    f"primitive resolves to kind: {op_primitive.kind.value} "
+                    f"(kind: operation expected)"
+                )
 
 
 def installed_outcome_verbs(

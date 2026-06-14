@@ -99,6 +99,7 @@ from llm_wiki_kit.models import (
 from llm_wiki_kit.primitives import (
     discover_primitives,
     list_agents,
+    list_workspaces,
     load_primitive,
     resolve_dependencies,
 )
@@ -234,6 +235,7 @@ _KIND_DIRS: dict[PrimitiveKind, str] = {
     PrimitiveKind.OPERATION: "operations",
     PrimitiveKind.INFRASTRUCTURE: "infrastructure",
     PrimitiveKind.AGENT: "agents",
+    PrimitiveKind.WORKSPACE: "workspaces",
 }
 
 
@@ -1181,6 +1183,46 @@ def _cmd_agents(args: argparse.Namespace) -> int:
         recipes_cell = ", ".join(row.recipes) if row.recipes else _AGENTS_EMPTY_RENDER
         operations_cell = ", ".join(row.operations) if row.operations else _AGENTS_EMPTY_RENDER
         print(f"{row.name}\t{recipes_cell}\t{operations_cell}")
+    return 0
+
+
+# Cross-cutting lens marker — a workspace with empty/absent ``scope``
+# covers all notes rather than filtering on ``workspaces`` membership
+# (workspace-primitive spec §Objective). Distinct from the em-dash, which
+# means "empty list"; "(all notes)" means "no membership filter."
+_WORKSPACE_ALL_NOTES_RENDER = "(all notes)"
+
+
+def _cmd_workspaces(args: argparse.Namespace) -> int:
+    """Print the installed-workspace table, tab-separated, header first.
+
+    Mirrors ``wiki agents`` (``cli.py:_cmd_agents``) in structure and
+    behavior — one subject, no subcommands, read-only, no journal write,
+    vault-scoped — but defines its own NAME / SCOPE / AGENT / OPERATIONS
+    columns backed by :class:`~llm_wiki_kit.primitives.WorkspaceRow`.
+    Empty workspace set (or empty vault) prints only the header line and
+    exits ``0``. A workspace with empty/absent ``scope`` is a
+    cross-cutting lens and renders its SCOPE cell as ``(all notes)``;
+    an absent ``agent`` or empty ``operations`` renders the em-dash.
+
+    Errors with :class:`WikiError` when run outside a vault directory
+    (matching ``wiki doctor`` / ``wiki outcomes`` / ``wiki agents``).
+    """
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        raise WikiError(f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl")
+
+    kit_root = args.kit_root if args.kit_root is not None else _kit_root()
+    rows = list_workspaces(vault_root, kit_root)
+
+    print("NAME\tSCOPE\tAGENT\tOPERATIONS")
+    for row in rows:
+        scope_cell = ", ".join(row.scope) if row.scope else _WORKSPACE_ALL_NOTES_RENDER
+        agent_cell = row.agent if row.agent else _AGENTS_EMPTY_RENDER
+        operations_cell = ", ".join(row.operations) if row.operations else _AGENTS_EMPTY_RENDER
+        print(f"{row.name}\t{scope_cell}\t{agent_cell}\t{operations_cell}")
     return 0
 
 
@@ -2612,6 +2654,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="List installed agents (name → recipes → operations).",
     )
     agents.set_defaults(func=_cmd_agents)
+
+    workspaces = subparsers.add_parser(
+        "workspaces",
+        parents=[verbose_parent],
+        help="List installed workspaces (name → scope → agent → operations).",
+    )
+    workspaces.set_defaults(func=_cmd_workspaces)
 
     ingest = subparsers.add_parser(
         "ingest",
