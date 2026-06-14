@@ -521,3 +521,53 @@ non-UI tools`). No version pin, gate, or other artifact changed.
   exploratory / visual-fuzz flavor preserved verbatim. Upstream's
   parallel `docs/specs/work-loop-user-level-verification/` is the
   authoring record; the kit adopts only the shipped SKILL change.
+
+#### 2026-06-14 — governance-extras (RFC-0014 answer-first new-rfc)
+
+Refresh of the `new-rfc` skill from upstream's `governance-extras` pack,
+tracking `3554107` (`feat(new-rfc): implement RFC-0014 — answer-first
+template + research-and-de-risk flow`). The skill was originally ported
+in kit `6717bce` (2026-05-26) against the pre-RFC-0014 upstream; this
+brings it current.
+
+- **`new-rfc` SKILL** — adopted the rearchitected upstream body:
+  **answer-first** framing (lead with "The ask"); a **per-subpoint**
+  research-and-de-risk checkpoint (decompose first; research each
+  subpoint; MECE option enumeration along a stated axis; Self-Ask;
+  **spike the riskiest assumption**; cite-as-you-go); a **per-decision**
+  recommendation pass (recommendation + owner + decide-by); and a
+  **mandatory pre-handoff gate** (citation-integrity protocol,
+  verify-before-you-assert, completeness checklist, different-lens
+  `adversarial-reviewer` dispatch). Kit paths (`docs/rfc/`,
+  `docs/CHARTER.md`, …) already matched upstream; the `adversarial-`/
+  `security-reviewer` subagents the gate dispatches exist kit-side under
+  `.claude/agents/`.
+- **`new-rfc` `assets/rfc.md` template** — adopted the answer-first
+  section shape (The ask · Problem & goals · Proposal · Options
+  considered · Risks & what would make this wrong · Evidence & prior
+  art · Experiment / validation · Open questions · Follow-on artifacts)
+  and the new `Approver:` header field. Existing RFCs 0001–0008 (all
+  Accepted, frozen historical record) keep their prior section shape;
+  templates evolving without retro-fitting closed RFCs is expected.
+- **`docs/CONVENTIONS.md` § How to add an RFC** — one-sentence flow
+  description rewritten to match (answer-first template, per-subpoint
+  research-and-de-risk, pre-handoff self-review gate). No anchor or
+  status-vocabulary change.
+- **Skipped per kit scope:** the optional **`Experimental` RFC status**
+  (`cdb1727`). The kit's `docs/CONVENTIONS.md` defines no "RFC lifecycle"
+  section and its RFC status set excludes `Experimental`; adopting it
+  would dangle the template/SKILL's `§ RFC lifecycle` reference. The
+  Experiment / validation *section* is kept (it's optional and useful),
+  reworded so an experimental RFC stays `Open` while the trial runs
+  rather than transitioning to a status the kit doesn't define. Also
+  skipped: the pack-distribution / per-pack Diátaxis-guide machinery
+  (`9821e4e`, `a368241`) and the `seeds/docs/{adr,rfc}/README.md`
+  scaffolds (the kit's `docs/rfc/README.md` is a populated live index
+  and the kit keeps no `docs/adr/README.md`).
+- **No-op (local already matches or is kit-adapted):** `new-adr` SKILL
+  (only a cosmetic `…`-vs-`...` ellipsis glyph differs; assets/scripts
+  byte-identical), `update-conventions` SKILL (kit's is the more
+  elaborate kit-adapted body; upstream's only delta was dropping a
+  frontmatter dependencies block, entangled with the kit's own retired-
+  manifest decision), `next-ordinal.py` + tests (byte-identical),
+  `new-adr/assets/adr.md` (byte-identical).
