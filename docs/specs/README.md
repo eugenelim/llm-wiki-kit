@@ -10,6 +10,7 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 | Spec | Status |
 |------|--------|
 | [workspace-primitive](workspace-primitive/spec.md) | Draft |
+| [personal-recipe-workspaces](personal-recipe-workspaces/spec.md) | Implementing |
 | [primitive-sideload](primitive-sideload/spec.md) | Draft |
 | [starter-seed-coverage](starter-seed-coverage/spec.md) | Draft |
 

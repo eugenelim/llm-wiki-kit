@@ -1,0 +1,18 @@
+name: planning
+kind: workspace
+version: 0.1.0
+description: >-
+  A cross-cutting planning lens over the vault: it surveys *all* notes by
+  status (no `workspaces:` membership filter), so weekly planning can see
+  across every area at once. Reuses the existing `personal-coordinator`
+  agent and surfaces the `follow-up-tracker` and `weekly-digest` operations.
+requires:
+  - follow-up-tracker
+  - personal-coordinator
+  - weekly-digest
+agent: personal-coordinator
+operations:
+  - follow-up-tracker
+  - weekly-digest
+view: planning.base
+bootstrap: planning.bootstrap.md

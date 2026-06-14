@@ -134,7 +134,9 @@ RFC-0008's follow-on list.
 - [ ] A fresh vault's `frontmatter.schema.yaml` declares an optional multi-valued `workspaces`
       field; no kit code validates page `workspaces:` values.
 - [ ] After `wiki add workspace:content-studio`, the vault contains `content-studio.base`
-      byte-identical to the shipped template, and a `bootstrap.md`.
+      byte-identical to the shipped template, and a `content-studio.bootstrap.md`. *(Bootstrap
+      notes are namespaced per lens — `<name>.bootstrap.md` — so two workspaces composed in one
+      recipe don't clobber a shared `bootstrap.md`; see the personal-recipe-workspaces spec.)*
 - [ ] `wiki workspaces` in a vault with the example installed prints a NAME/SCOPE/AGENT/OPERATIONS
       table; in an empty vault prints only the header and exits 0; outside a vault exits with the
       standard "not a wiki vault" error.

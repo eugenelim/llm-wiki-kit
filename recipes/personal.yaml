@@ -27,6 +27,18 @@
 #   what I considered." Useful for personal decisions (job offers,
 #   moves, big purchases) as well as work-os ones, and ships without
 #   any work-OS-shaped dependencies (no `projects`/`customers`).
+# * `content-studio`, `planning` (RFC-0008 workspace lenses) — the two
+#   default lenses that turn the personal vault into a multi-area
+#   knowledge bank. `content-studio` is a *membership* lens (notes whose
+#   `workspaces:` frontmatter contains `content-studio` — drafting and
+#   publishing). `planning` is a *cross-cutting* lens (no membership
+#   filter; it surveys every note by status for weekly planning). Both
+#   reference the existing `personal-coordinator` agent and surface
+#   operations the closure already installs; per RFC-0008's Model A a
+#   lens never mints an agent→operation binding, so the `agents:` block
+#   below is unchanged. Each lens's `requires:` (`personal-coordinator`
+#   for content-studio; `follow-up-tracker`/`personal-coordinator`/
+#   `weekly-digest` for planning) is already in this closure.
 #
 # Deliberately excluded from the default closure:
 #
@@ -59,6 +71,7 @@ description: >-
   follow-up tracker to keep them coordinated.
 primitives:
   - action-item
+  - content-studio
   - decision
   - decision-companion
   - follow-up-tracker
@@ -68,6 +81,7 @@ primitives:
   - meeting
   - people
   - personal-coordinator
+  - planning
   - recipe
   - trip-doc
   - trip-prep
