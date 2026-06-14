@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*;
 > this plan says *how, in what order, with what verification*.
 
-- **Status:** Drafting
+- **Status:** Done
 - **Spec:** `docs/specs/primitive-sideload/spec.md`
 - **Owner:** the implementer for each PR; long-term ownership is the
   maintainer per the spec's §Owner clause.

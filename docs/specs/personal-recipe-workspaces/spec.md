@@ -1,6 +1,6 @@
 # Spec: personal-recipe-workspaces
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0008 (workspace-as-lens — this is its deferred "Recipe update" follow-on); `docs/specs/workspace-primitive/spec.md` (the shipped machinery this consumes; its Model A invariant and CT-3/4/5 leave-untouched rule bind here too — and this spec **amends its AC-6 bootstrap path**, see below). The one-recipe-per-vault invariant and CT-3/4/5 agent-binding rules in `docs/specs/wiki-agents/spec.md` are a constraint this spec must **not** modify.

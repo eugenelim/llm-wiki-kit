@@ -3,7 +3,7 @@
 > **Living document.** Updated alongside the code. Drift between spec
 > and code is a bug — fix the code or the spec in the same PR.
 
-- **Status:** Draft
+- **Status:** Shipped
 - **Owner:** `llm_wiki_kit/primitives.py` (catalog discovery + merge);
   `llm_wiki_kit/models.py` (`Primitive` schema + `schema_version` +
   sideload-scoped extra-field policy); `llm_wiki_kit/install.py`

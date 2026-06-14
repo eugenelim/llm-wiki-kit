@@ -7,12 +7,7 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 
 ## Active (Draft / Implementing)
 
-| Spec | Status |
-|------|--------|
-| [workspace-primitive](workspace-primitive/spec.md) | Draft |
-| [personal-recipe-workspaces](personal-recipe-workspaces/spec.md) | Implementing |
-| [primitive-sideload](primitive-sideload/spec.md) | Draft |
-| [starter-seed-coverage](starter-seed-coverage/spec.md) | Draft |
+_None currently active._
 
 ## Shipped / Implemented
 
@@ -20,6 +15,10 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 |------|--------|
 | [wiki-agents](wiki-agents/spec.md) | Shipped |
 | [wiki-bootstrap](wiki-bootstrap/spec.md) | Shipped |
+| [workspace-primitive](workspace-primitive/spec.md) | Shipped |
+| [personal-recipe-workspaces](personal-recipe-workspaces/spec.md) | Shipped |
+| [primitive-sideload](primitive-sideload/spec.md) | Shipped |
+| [starter-seed-coverage](starter-seed-coverage/spec.md) | Shipped |
 | [journal-locking](journal-locking/spec.md) | Implemented |
 | [journal-reader-cache](journal-reader-cache/spec.md) | Implemented |
 | [outcome-named-entry-points](outcome-named-entry-points/spec.md) | Implemented |

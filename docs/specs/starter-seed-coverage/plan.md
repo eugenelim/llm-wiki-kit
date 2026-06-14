@@ -3,7 +3,7 @@
 > **Implementation plan paired with `spec.md`.** The spec says *what*;
 > this plan says *how, in what order, with what verification*.
 
-- **Status:** Drafting
+- **Status:** Done
 - **Spec:** `docs/specs/starter-seed-coverage/spec.md`
 - **Owner:** the implementer for this PR; long-term ownership is the
   maintainer per the spec's §Owner clause.
