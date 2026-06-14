@@ -445,3 +445,58 @@ First post-adoption refresh after the initial RFC-0002 imports
   (deferred), brownfield-adopter guidance (#12, template-only),
   `USING_THIS_TEMPLATE.md`, `LICENSE-*`, template README refresh,
   `packages/_example/`.
+
+#### 2026-06-14 — baseline `7808eb1`
+
+Full re-adoption after upstream rearchitected its core pack (now
+distributed as `packs/core/.apm/`) since the May baseline. This is the
+largest refresh since the initial adoption — it re-architects the kit's
+loop tooling, not just the prose.
+
+- **State machine: `check-done.py` → `loop-cohort.py`.** Upstream
+  replaced the single-purpose caps script with a state-machine tool
+  (verbs: `init`, `approve-plan`, `check`, `review record`, `schedule`,
+  `dispatch-decision`, `auto-parallel`, `worktree …`). It now ships
+  **inside** the work-loop skill folder
+  (`.claude/skills/work-loop/scripts/loop-cohort.py` +
+  `lint-spec-status.py` + `test-lint-spec-status.py`), and the
+  `state.json` template moved to
+  `.claude/skills/work-loop/assets/state.json` (adds `auto_parallel`).
+  `tools/check-done.py` and `docs/_templates/state.json` were deleted.
+  `pre-pr.sh`, `agent-artifacts.yml` (caps job), `lint-agents-md.sh`
+  (drift-watch `max_iterations` home), the enforcement-triplet docs, and
+  `test_install_skill_closure.py`'s expected set were rewired to match.
+- **work-loop SKILL** — adopted the rearchitected upstream body:
+  **light/full risk modes**, **bundled-fixes carve-out**, **simplify
+  pass**, **scale-with-a-tool**, **context hygiene**, **pre-EXECUTE
+  secure-design review**, **DECIDE apply/defer → `docs/backlog.md`**, and
+  externalized `references/` (`state-schema`, `supervisor-mode`,
+  `tdd-stubs`, `scale-with-a-tool`). Kit adaptations: gates →
+  ruff/mypy/pytest; commit format → `v2: task <N>`; structural-change
+  checklist → `llm_wiki_kit/` + repo-root-dir RFC rule; Ralph kept as a
+  prose-only, non-closure opt-in; `dependencies:` block updated.
+- **security-checklists** — new skill adopted (SKILL + ten
+  boundary-keyed reference modules); wired as a work-loop dependency so
+  the REVIEW step can inline boundary-matching modules into the
+  `security-reviewer` brief.
+- **Four reviewer agents** — bodies refreshed from upstream (multi-
+  framework security lens, raised quality floor, bundled-fixes scope
+  check); kit `tools:`/`model:`/`dependencies:` frontmatter preserved.
+- **new-spec / bug-fix** — refreshed from upstream; new-spec now ships
+  `references/contract-types.md` alongside its `assets/` templates.
+- **CONVENTIONS.md** — added a **Spec metadata contract** section and a
+  light/full **risk-triggers** block (byte-identical to the SKILL's);
+  rewired the Work-loop-state, Enforcement-triplet, and Scaling-profile
+  references from `check-done.py` to `loop-cohort.py`. Existing pinned
+  H2 anchors (`work-loop-state`, `supervisor-mode`,
+  `contract-tests-vs-construction-tests`, `knowledge-base`,
+  `model-selection`) preserved so skill-dep manifests stay green.
+- **`docs/backlog.md`** — new deferral register seeded from upstream.
+- **Not gated:** `lint-spec-status.py` ships as an agent-invoked skill
+  script, deliberately **not** wired into `pre-pr.sh`/CI — existing kit
+  specs predate the Spec metadata contract.
+- **Skipped per kit scope:** the APM/`packs/` distribution machinery
+  (`.adapt-discovery.toml`, `pack.toml`, `.claude-plugin/`), the
+  monorepo seed `AGENTS.md`/`CONVENTIONS.md`, the `adapt-to-project` /
+  `init-project` / `receive-brief` skills (pack-installer-specific), and
+  conventional-commit defaults (kept `v2: task <N>` through v2).

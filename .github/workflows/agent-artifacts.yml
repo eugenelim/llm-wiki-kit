@@ -2,7 +2,7 @@ name: agent-artifacts
 
 # Mirrors the enforcement triplet documented in
 # docs/CONVENTIONS.md § Enforcement (the triplet):
-#   caps        — tools/check-done.py
+#   caps        — .claude/skills/work-loop/scripts/loop-cohort.py
 #   artifacts   — the four lint-*.sh scripts
 #   aggregation — tools/hooks/pre-pr.sh
 #
@@ -44,25 +44,28 @@ jobs:
         run: bash tools/lint-knowledge.sh
 
   caps:
-    name: Caps enforcer (check-done.py)
+    name: Caps enforcer (loop-cohort.py)
     runs-on: ubuntu-latest
+    env:
+      COHORT: .claude/skills/work-loop/scripts/loop-cohort.py
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Seed a healthy state.json so check-done exercises a real input
+      - name: Seed a healthy state.json so loop-cohort exercises a real input
         run: |
           mkdir -p docs/specs/_ci-smoke
-          sed 's/"pending"/"approved"/' docs/_templates/state.json \
+          sed 's/"pending"/"approved"/' \
+            .claude/skills/work-loop/assets/state.json \
             > docs/specs/_ci-smoke/state.json
-      - name: check-done.py --phase plan
-        run: python3 tools/check-done.py docs/specs/_ci-smoke/state.json --phase plan
-      - name: check-done.py --phase implement
-        run: python3 tools/check-done.py docs/specs/_ci-smoke/state.json --phase implement
-      - name: check-done.py --phase review
-        run: python3 tools/check-done.py docs/specs/_ci-smoke/state.json --phase review
+      - name: loop-cohort check --phase plan
+        run: python3 "$COHORT" check docs/specs/_ci-smoke --phase plan
+      - name: loop-cohort check --phase implement
+        run: python3 "$COHORT" check docs/specs/_ci-smoke --phase implement
+      - name: loop-cohort check --phase review
+        run: python3 "$COHORT" check docs/specs/_ci-smoke --phase review
 
   aggregation:
     name: Aggregation (pre-pr.sh end-to-end)
@@ -79,10 +82,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Seed a healthy state.json so the aggregator exercises check-done
+      - name: Seed a healthy state.json so the aggregator exercises loop-cohort
         run: |
           mkdir -p docs/specs/_ci-smoke
-          sed 's/"pending"/"approved"/' docs/_templates/state.json \
+          sed 's/"pending"/"approved"/' \
+            .claude/skills/work-loop/assets/state.json \
             > docs/specs/_ci-smoke/state.json
       - name: Run pre-pr aggregator
         run: bash tools/hooks/pre-pr.sh

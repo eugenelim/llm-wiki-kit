@@ -110,6 +110,30 @@ For a single-PR change, the plan is overhead — keep `spec.md` only.
 Reference the spec from the code it governs (a module-level docstring
 is fine), and keep them in sync as the code evolves.
 
+## Spec metadata contract
+
+A few machine-checkable invariants keep specs honest over time. They are
+checked by the work-loop skill's bundled
+[`lint-spec-status.py`](../.claude/skills/work-loop/scripts/lint-spec-status.py)
+— agent-invoked at the loop's finish-time checklist, **not** wired into
+`pre-pr.sh` or CI (existing kit specs predate this contract; promote it to
+a CI gate once the corpus is migrated). The invariants:
+
+1. **Status vocabulary.** A spec's `- **Status:**` field leads with one of
+   `Draft`, `Approved`, `Implementing`, `Shipped`, `Archived` (an annotated
+   suffix like `Shipped (2026-06-14)` is fine).
+2. **ACs at the ship transition.** When a spec's status changes *to*
+   `Shipped`, every Acceptance Criterion is `[x]` or carries a
+   `(deferred: <anchor>)` marker. Specs already shipped are grandfathered.
+3. **No dangling references** (warn-only) — intra-repo doc and code
+   references in a spec should resolve.
+4. **Deferral anchors resolve.** A criterion written
+   `- [ ] <outcome> (deferred: <anchor>)` means `<anchor>` resolves to a
+   heading in [`docs/backlog.md`](backlog.md), the durable deferral
+   register — version-controlled and greppable, not a PR comment that rots.
+5. **Spec↔contract traceability** (warn-only) — no-ops for the kit, which
+   has no API `contracts/` tree.
+
 ## Commit messages
 
 During v2 development: `v2: task <N> - <one-line summary>` where N is
@@ -157,6 +181,35 @@ agents declare victory when they *feel* done. Mechanical gates (`ruff`,
 `mypy`, `pytest`) plus an adversarial review pass replace "feel" with
 verifiable termination. The loop keeps going until both kinds of check
 are satisfied, or until it hits a hard cap and surfaces.
+
+**Light mode vs. full mode.** Once you're in the loop, **risk** (not file
+count) decides which mode runs: a familiar two-file change is light; a
+one-file change to a security boundary is full. Light mode keeps the loop's
+spine (EXECUTE, GATES, FIX, capture-learnings) and trims the ceremony — a
+lean inline spec, a single bounded `adversarial-reviewer` pass, no default
+`quality-engineer` pass, no `loop-cohort` state machine. Full mode is the
+loop exactly as the `work-loop` skill describes it. The triggers below are
+single-sourced with the skill; keep the two copies byte-identical.
+
+<!-- risk-triggers:start — canonical wording lives in the work-loop skill;
+     copied verbatim here. Keep the two copies byte-identical. -->
+**Risk triggers — any one routes the work to full mode:**
+
+- **Unfamiliar** — territory you don't know well.
+- **Multi-person** — more than one person builds or reviews it.
+- **Multi-feature or dependent tasks** — it decomposes a multi-feature
+  brief, or its tasks depend on one another.
+- **Compliance, governance, or security boundary** — it touches a
+  compliance or governance surface, or a security boundary (auth,
+  secrets, user input, deserialization, file or network I/O).
+- **Structural or public-interface change** — it changes structure (a new
+  module, layer, or boundary) or a public or published interface.
+- **Destructive or irreversible operation** — it deletes data,
+  force-pushes, drops tables, or otherwise can't be cleanly undone.
+- **New dependency** — it adds a dependency.
+
+No trigger fires → **light mode**.
+<!-- risk-triggers:end -->
 
 **Why think before acting.** The cost of a wrong start is higher than the
 cost of thinking. For high-stakes work (load-bearing decisions, multi-file
@@ -257,17 +310,24 @@ The two failure modes the reviewer subagents watch for here:
 A spec-driven loop carries a small amount of session-scoped state — how
 many iterations have run, what budget is left, what findings the last
 review surfaced. Putting that in prose leaves it un-enforceable; putting
-it on disk as data lets a tiny script gate each phase. That script is
-[`tools/check-done.py`](../tools/check-done.py); the data lives at
-`docs/specs/<feature>/state.json`, and the schema lives at
-[`docs/_templates/state.json`](_templates/state.json).
+it on disk as data lets a tiny tool gate each phase. That tool is the
+work-loop skill's bundled
+[`loop-cohort.py`](../.claude/skills/work-loop/scripts/loop-cohort.py)
+(verbs: `init`, `approve-plan`, `check`, `review record`, `schedule`,
+`dispatch-decision`, `auto-parallel`, `worktree …`); the data lives at
+`docs/specs/<feature>/state.json`, and the template lives at
+[`.claude/skills/work-loop/assets/state.json`](../.claude/skills/work-loop/assets/state.json).
+Every state mutation is owned by the tool — agents do not hand-edit
+`state.json`. Full field-by-field schema:
+[`references/state-schema.md`](../.claude/skills/work-loop/references/state-schema.md).
 
 **Fields:**
 
 | Field | Meaning |
 |---|---|
 | `feature` | spec slug (informational) |
-| `iteration_count` and the iteration cap field | how many in-session loops have run / the hard ceiling. The cap is data, not prose — tune it per spec rather than editing the SKILL. The literal JSON form lives in [`docs/_templates/state.json`](_templates/state.json); refer to it from prose by name. |
+| `iteration_count` and the iteration cap field | how many in-session loops have run / the hard ceiling. The cap is data, not prose — tune it per spec rather than editing the SKILL. The literal JSON form lives in [`.claude/skills/work-loop/assets/state.json`](../.claude/skills/work-loop/assets/state.json); refer to it from prose by name. |
+| `auto_parallel` | per-run opt-in (default `false`) for unattended parallel implementer fan-out: when set, a gate-cleared wave fans out without the human-confirm step. Never a gate input — it only skips confirmation for an already-cleared wave. Set via `loop-cohort auto-parallel`. See [§ Supervisor mode](#supervisor-mode). |
 | `token_budget_used_pct` / `token_budget_cap_pct` | session token budget — **advisory** until the orchestrator populates `_used_pct`. The threshold lives in data so a project can tune it. |
 | `consecutive_same_error_count` / `consecutive_same_error_threshold` | gate-error stuck-loop counter / cap. Advisory until the SKILL prescribes when to increment `_count`. |
 | `plan_review_status` | `pending` until the spec-mode adversarial review clears, then `approved`. Enforced as a gate on **all phases** (`plan`, `implement`, `review`) — not just `--phase plan`. |
@@ -275,13 +335,13 @@ it on disk as data lets a tiny script gate each phase. That script is
 | `finding_fingerprints` / `previous_finding_fingerprints` | hashes of reviewer findings, rotated each REVIEW iteration; used to detect circling. Algorithm pinned in the work-loop SKILL §REVIEW. |
 | `worktrees` | one entry per `implementer` subagent dispatched in the current session's supervisor pass: `{task_id, branch, path, status, report_path}` where status is `in-progress` / `ready` / `blocked` / `failed` and `report_path` points at the implementer's markdown report under `docs/specs/<feature>/notes/`. Report files are gitignored — session-scratch, not history. Entries persist with their terminal status for the rest of the loop. Empty in single-agent loops. See [§ Supervisor mode](#supervisor-mode). |
 
-**Exit contract.** `check-done.py` exits 0 when the phase is satisfied
-and non-zero when it isn't, with a one-line reason on stderr. Treat
-non-zero as "stop and surface" — with one deliberate exception: the
-SKILL's PLAN-init step calls the script with `--phase plan` *expecting*
-exit 1 with `plan not approved`. That exit-1 is the cue to run the
-spec-mode reviewer, not a real stop. Any other non-zero exit terminates
-the loop.
+**Exit contract.** `loop-cohort check <spec-dir> --phase <phase>` exits 0
+when the phase is satisfied and non-zero when it isn't, with a one-line
+reason on stderr. Treat non-zero as "stop and surface" — with one
+deliberate exception: the SKILL's PLAN-init step calls `check` with
+`--phase plan` *expecting* exit 1 with `plan not approved`. That exit-1
+is the cue to run the spec-mode reviewer, not a real stop. Any other
+non-zero exit terminates the loop.
 
 **Lifecycle.** `state.json` is **per-session scratch**, not history. The
 file is gitignored (`docs/specs/*/state.json` in
@@ -289,13 +349,13 @@ file is gitignored (`docs/specs/*/state.json` in
 template at PLAN start. Across sessions, a fresh run re-initializes —
 intentionally; a new session deserves a fresh budget.
 
-**Atomic writes.** The orchestrator updates `state.json` mid-iteration;
-`check-done.py` reads it between phases. Always write atomically
-(tmp-file + `os.replace`, or shell `mv`) so a partial-write doesn't
-present as malformed JSON and falsely stop the loop.
+**Atomic writes.** `loop-cohort.py` owns every `state.json` mutation and
+writes atomically (tmp-file + `os.replace`) so a partial write never
+presents as malformed JSON and falsely stops the loop. Do not hand-edit
+`state.json` mid-loop — go through the tool's verbs.
 
 **Changing the cap.** Editing
-[`docs/_templates/state.json`](_templates/state.json) changes the
+[`.claude/skills/work-loop/assets/state.json`](../.claude/skills/work-loop/assets/state.json) changes the
 *starting point* for any **newly-initialized** spec. To change the cap
 for a spec that's already running, edit that spec's own (gitignored)
 `docs/specs/<feature>/state.json` — the template edit doesn't propagate
@@ -406,7 +466,7 @@ they are "the enforcement triplet":
 
 | Layer | Mechanism | What it gates |
 |---|---|---|
-| Caps | [`tools/check-done.py`](../tools/check-done.py) | Iteration cap, token budget, plan approval, fingerprint stasis (see [§ Work-loop state](#work-loop-state)). |
+| Caps | [`loop-cohort.py`](../.claude/skills/work-loop/scripts/loop-cohort.py) (the work-loop skill's bundled state machine) | Iteration cap, token budget, plan approval, fingerprint stasis (see [§ Work-loop state](#work-loop-state)). |
 | Artifacts | [`tools/lint-agents-md.sh`](../tools/lint-agents-md.sh), [`tools/lint-agent-artifacts.sh`](../tools/lint-agent-artifacts.sh), [`tools/lint-skill-deps.sh`](../tools/lint-skill-deps.sh), [`tools/lint-knowledge.sh`](../tools/lint-knowledge.sh) | Shape, manifest, and content hygiene for every `.claude/`, `AGENTS.md`, and `docs/knowledge/` artifact. |
 | Aggregation | [`tools/hooks/pre-pr.sh`](../tools/hooks/pre-pr.sh) | Runs caps + artifact linters together before a PR opens, plus the kit's `ruff` / `mypy` / `pytest` gates. CI mirrors this. |
 
@@ -422,7 +482,7 @@ Python matrix.
 The vendored work-loop is designed to work across three repo sizes:
 
 - **Profile A** — microservice or single-component, 1–3 contributors.
-  Minimum viable set: work-loop SKILL, `check-done.py`, an `AGENTS.md`.
+  Minimum viable set: work-loop SKILL, `loop-cohort.py`, an `AGENTS.md`.
   Supervisor mode and specialist reviewers are usually overkill.
 - **Profile B** — single library or app, 4–10 contributors. Supervisor
   mode earns its keep when a plan has two or more `Depends on: none`
