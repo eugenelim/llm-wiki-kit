@@ -1,0 +1,16 @@
+name: content-studio
+kind: workspace
+version: 0.1.0
+description: >-
+  A content-studio lens over the vault: the notes you draft, edit, and
+  publish. Filters to pages whose `workspaces:` frontmatter contains
+  `content-studio` and reuses the existing `personal-coordinator` agent.
+requires:
+  - personal-coordinator
+scope:
+  workspaces:
+    - content-studio
+agent: personal-coordinator
+operations: []
+view: content-studio.base
+bootstrap: bootstrap.md

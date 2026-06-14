@@ -8,6 +8,12 @@
 # `fields` sections via managed regions; the kit owns the inside of each
 # `# BEGIN MANAGED: id` / `# END MANAGED: id` block, your edits outside
 # the markers survive.
+#
+# `workspaces:` (see `fields:` below) opts a note into one or more
+# workspace lenses: list the lens names a note belongs to, e.g.
+# `workspaces: [research, content-studio]`. It is a discoverable
+# convention — the kit does not validate the values — that Obsidian Bases
+# views (`.base`) filter on.
 
 required:
   - type
@@ -61,6 +67,13 @@ fields:
     items: string
   source:
     type: string
+    optional: true
+  # Membership axis for workspace lenses (RFC-0008). Optional and
+  # universal — every page may carry it — so it lives in the baseline
+  # `fields:` block, not a content-type managed region.
+  workspaces:
+    type: list
+    items: string
     optional: true
   # BEGIN MANAGED: fields
   feedback_date:

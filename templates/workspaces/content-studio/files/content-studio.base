@@ -1,0 +1,19 @@
+# content-studio.base — Obsidian Bases lens for the content-studio workspace.
+#
+# Shows every note whose `workspaces:` frontmatter contains "content-studio",
+# and nothing else. A note opts in by adding the lens name to its frontmatter:
+#
+#     workspaces: [content-studio]
+#
+# Installed verbatim by the kit (a `.base` file is never interpolated), so
+# Bases function syntax survives byte-for-byte. Open it in Obsidian (>= 1.9.10).
+filters:
+  and:
+    - 'workspaces.contains("content-studio")'
+views:
+  - type: table
+    name: Content Studio
+    order:
+      - file.name
+      - status
+      - modified

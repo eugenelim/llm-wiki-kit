@@ -82,6 +82,7 @@ _CATALOG_DIRS: frozenset[str] = frozenset(
         "operations",
         "infrastructure",
         "agents",
+        "workspaces",
     ]
 )
 
@@ -120,6 +121,7 @@ RESERVED_OUTCOME_VERBS: frozenset[str] = frozenset(
         "journal",
         "schedule",
         "agents",
+        "workspaces",
         # Discovery aliases — never registered as subparsers but
         # reserved so a primitive cannot claim them.
         "help",
@@ -1056,6 +1058,69 @@ def list_agents(vault_root: Path, kit_root: Path) -> list[AgentRow]:
                 name=installed_name,
                 recipes=sorted(recipe_names),
                 operations=sorted(operation_names),
+            )
+        )
+    return rows
+
+
+@dataclass(frozen=True)
+class WorkspaceRow:
+    """One row in the ``wiki workspaces`` table (workspace-primitive spec).
+
+    A distinct value type from :class:`AgentRow` — the workspace lister's
+    columns are NAME / SCOPE / AGENT / OPERATIONS, where ``scope`` is the
+    lens's membership tags (empty ⇒ a cross-cutting lens that covers all
+    notes), ``agent`` is the single referenced agent name (or ``None``),
+    and ``operations`` are the operations surfaced in the lens. Frozen —
+    every consumer treats the row as a value. ``scope`` and ``operations``
+    are sorted at construction for reproducible output; the CLI renders the
+    empty cases at its boundary.
+    """
+
+    name: str
+    scope: list[str] = field(default_factory=list)
+    agent: str | None = None
+    operations: list[str] = field(default_factory=list)
+
+
+def list_workspaces(vault_root: Path, kit_root: Path) -> list[WorkspaceRow]:
+    """Enumerate installed workspace primitives with their scope/agent/operations.
+
+    Driven by ``cli._cmd_workspaces`` (``wiki workspaces``). Mirrors the
+    *structure* of :func:`list_agents` — read the vault journal to derive
+    the installed set, walk the catalog once to recover each name's
+    primitive — but the workspace's lens fields (``scope``, ``agent``,
+    ``operations``) come straight off the ``primitive.yaml`` manifest, so
+    no recipe or contract walk is needed.
+
+    A vault with no journal returns ``[]`` (matches the
+    :func:`list_agents` / :func:`installed_outcome_verbs` precedent — the
+    helper is pure and the dispatcher handles "not a vault" at its
+    boundary). Rows are sorted alphabetically by NAME.
+    """
+
+    from llm_wiki_kit.journal import read_events, replay_state
+
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
+        return []
+    state = replay_state(read_events(journal_path))
+
+    catalog = discover_primitives(kit_root / "templates")
+    catalog_by_name: dict[str, Primitive] = {primitive.name: primitive for primitive in catalog}
+
+    rows: list[WorkspaceRow] = []
+    for installed_name in sorted(state.installed_primitives):
+        primitive = catalog_by_name.get(installed_name)
+        if primitive is None or primitive.kind is not PrimitiveKind.WORKSPACE:
+            continue
+        scope_tags = list(primitive.scope.workspaces) if primitive.scope is not None else []
+        rows.append(
+            WorkspaceRow(
+                name=installed_name,
+                scope=sorted(scope_tags),
+                agent=primitive.agent,
+                operations=sorted(primitive.operations),
             )
         )
     return rows

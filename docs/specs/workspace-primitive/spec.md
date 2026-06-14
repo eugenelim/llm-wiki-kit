@@ -1,6 +1,6 @@
 # Spec: workspace-primitive
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0008 (workspace-as-lens), RFC-0004 (agent identity primitives), ADR-0009 (headless `claude -p` invocation), ADR-0010 (`--agent` passthrough). The recipe agent-binding rules (CT-3/4/5) in `docs/specs/wiki-agents/spec.md` are a constraint this spec must **not** modify.

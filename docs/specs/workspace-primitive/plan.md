@@ -1,7 +1,7 @@
 # Plan: workspace-primitive
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Executing <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -173,7 +173,7 @@ diff shows zero edits to `_validate_agent_bindings`.
 **Approach:**
 - Create `templates/workspaces/content-studio/`:
   - `primitive.yaml`: `kind: workspace`, `scope: {workspaces: [content-studio]}`,
-    `view: content-studio.base`, `bootstrap: files/bootstrap.md`, `operations: []`, and
+    `view: content-studio.base`, `bootstrap: bootstrap.md`, `operations: []`, and
     `agent: personal-coordinator` with `requires: [personal-coordinator]` (demonstrates Model A's
     *reuse an existing agent* — `personal-coordinator` already exists).
   - `files/content-studio.base`: a Bases view filtering `workspaces.contains("content-studio")`
@@ -246,3 +246,8 @@ separate follow-up PR.
 ## Changelog
 
 - 2026-06-14: initial plan.
+- 2026-06-14: T5 example `bootstrap` value corrected from `files/bootstrap.md`
+  to `bootstrap.md` — both `view` and `bootstrap` reference the *installed*
+  vault-relative path (where the `files/` tree flattens to), so the
+  enter-workspace driver this spec documents finds the note where it actually
+  lands. The two declarative references are now consistent.
