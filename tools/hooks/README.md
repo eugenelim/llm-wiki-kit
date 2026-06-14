@@ -2,7 +2,7 @@
 
 Two agent-lifecycle hooks ship in this directory. Runtime: bash plus
 `python3` (already required by the artifact linters and
-`check-done.py`); neither depends on any one agent tool's runtime.
+`loop-cohort.py`); neither depends on any one agent tool's runtime.
 Wiring lives in the consumer's hook surface (Claude Code's
 `.claude/settings.json`, Gemini CLI's config, etc.); this README
 documents the contracts and shows an example wiring.
@@ -48,17 +48,18 @@ What it runs, in order:
 2. `tools/lint-agent-artifacts.sh` — skill/agent/command frontmatter
 3. `tools/lint-skill-deps.sh` — manifest dependency resolution
 4. `tools/lint-knowledge.sh` — `patterns.jsonl` validation
-5. `tools/check-done.py` against every `docs/specs/*/state.json`, in
-   both `--phase implement` and `--phase review` modes
+5. `.claude/skills/work-loop/scripts/loop-cohort.py check` against every
+   `docs/specs/*/` directory with a `state.json`, in both
+   `--phase implement` and `--phase review` modes
 6. `ruff check llm_wiki_kit tests` — kit lint (CI parity)
 7. `ruff format --check llm_wiki_kit tests` — format check (CI parity)
 8. `mypy llm_wiki_kit tests` — type check (CI parity)
 9. `pytest` — behaviour
 
 Exits non-zero on the first failure with a one-line reason. If there
-are no active `state.json` files, the check-done step is skipped.
+are no active `state.json` files, the loop-cohort step is skipped.
 
-These three layers — `check-done.py` (caps) + the four linters
+These three layers — `loop-cohort.py` (caps) + the four linters
 (artifact hygiene) + `pre-pr.sh` (the gate that runs them together) —
 make up the project's **enforcement triplet**. Documented in
 [`docs/CONVENTIONS.md` § Enforcement](../../docs/CONVENTIONS.md#enforcement-the-triplet).
@@ -116,7 +117,7 @@ bash tools/hooks/pre-pr.sh
 **CI parity.** `pre-pr.sh` and CI run the same set of checks. CI's
 [`.github/workflows/agent-artifacts.yml`](../../.github/workflows/agent-artifacts.yml)
 mirrors the enforcement triplet: an `artifacts` job runs the four
-linters, a `caps` job exercises `check-done.py` against a seeded
+linters, a `caps` job exercises `loop-cohort.py` against a seeded
 healthy `state.json`, and an `aggregation` job runs `pre-pr.sh`
 end-to-end. The existing
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) keeps

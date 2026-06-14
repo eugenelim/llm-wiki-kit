@@ -116,6 +116,13 @@ look like?" before any code.
      items that name an ADR or RFC the feature must cite. The header
      lands before any body section; Verified items don't gate the
      Unverified loop but they do gate `Constrained by:`.
+   - Stamp the optional `Brief:` header **only** when this spec is
+     derived from a product brief — i.e. you arrived here from
+     `receive-brief`, which decomposes a received brief into specs. Set
+     it to the brief's slug (`docs/product/briefs/<slug>.md`); leave it
+     blank or `none` for a spec authored directly. It records *product
+     provenance* and is distinct from `Constrained by:` (governance).
+     A spec without it stays valid — the field is additive.
 
 4. Fill in the spec — including the **Testing Strategy** section. Push
    back hard on these failure modes:
@@ -134,6 +141,90 @@ look like?" before any code.
      dependency, no new module boundary) so the diff can't sprawl into
      hypothetical futures.
    - **No Acceptance Criteria.** Without a checklist, "done" is opinion.
+   - **Body narrates history or the future.** Write the spec in the
+     present tense, as if the feature already exists and always worked
+     this way — the *retcon* discipline. No "will be implemented", no
+     "previously X, now Y", no deprecation timelines, no version-stamped
+     history in the body. Mixed tenses make an agent reading the spec
+     guess wrong about what is current; a present-tense body reads as a
+     clean description of the contract as it stands. Decision history
+     lives in ADRs and the changelog, not the spec body — the plan
+     (`plan.md`) is the one exception, since it carries its own changelog
+     of how the approach evolved.
+
+   While writing Testing Strategy, sanity-check that each TDD-mode AC is
+   concrete enough to *stub* — see `work-loop`'s
+   [`references/tdd-stubs.md`](../work-loop/references/tdd-stubs.md). This
+   is a **self-check only**: do **not** commit stubs at spec-authoring time —
+   the stack and `Contract:` may not be settled yet, so committed stubs are
+   generated later, in `work-loop` PLAN. An AC you can't imagine typing a test
+   against is the signal to sharpen it now.
+
+4b. **Author the interface contract — only if this feature exposes an interface
+   surface.** This conditional step sits between the spec body and the plan, and
+   is **contract-type-agnostic** — it handles any interface, not just REST APIs.
+   If the feature exposes **no** interface surface, skip it: the spec→plan path
+   runs unchanged.
+
+   - **Detect & confirm the type.** From the Objective's interface-facing
+     Acceptance Criteria, auto-detect whether the feature exposes a contract
+     surface and of **which type** — a synchronous REST API (`openapi`), an
+     **event interface** (`asyncapi`), an RPC service (`proto`), a GraphQL schema
+     (`graphql`), a standalone schema (`jsonschema`), … The type drives
+     everything below. Confirm with the user — it's a judgment, not a flag.
+   - **Locate or create** the contract at its type's conventional path
+     `contracts/<type>/<domain>.<ext>` (CONVENTIONS § 4 *Contracts*;
+     [`references/contract-types.md`](references/contract-types.md) maps every
+     type to its location) — a new file for a new interface, the existing file
+     when this spec modifies a known one. The **location convention is the
+     anchor**: anyone finds contracts by globbing `contracts/<type>/`, no
+     installed skill required, so *any* type (events included) lands in its
+     canonical place.
+   - **Author it.** Look up the type's authoring skill in
+     [`references/contract-types.md`](references/contract-types.md) and check your
+     available-skills roster (the same roster step 6 uses). **If a skill is
+     present** (today: `api-contract` for `openapi`), invoke it to author/modify
+     the contract against the active standard. **If absent** (today: every
+     non-OpenAPI type, e.g. events), **edit the file directly and note** it was
+     authored without rule-enforcement — a serviceable file for YAML-shaped types
+     (AsyncAPI, JSON Schema), a **stub + note** for formats you can't reliably
+     hand-author unaided (proto, GraphQL). A missing skill degrades *enforcement*,
+     never the *integration*, and **never blocks** the spec.
+   - **Link it (both ways).** Fill the spec's `- **Contract:**` header with the
+     contract file(s) this spec defines or touches, and add the backward pointer
+     in the contract (an `x-spec` extension, or a `contracts/REGISTRY.md` row for
+     extensionless formats) — CONVENTIONS § 4 *Contracts*.
+   - **Point the plan at it.** The plan's construction tests reference the
+     contract as the artifact the implementation is verified against.
+
+4c. **Derive the spec's `Shape:` and the implementation stack — this primes the
+   plan's `## Design (LLD)`.** Between the spec body and the plan, settle two
+   things so the design scaffolds at the right size and against the right stack:
+
+   - **Shape.** Pick the spec's `Shape:` — `ui | service | data | integration |
+     mixed` — from the feature itself: a screen or flow is `ui`, a backend
+     endpoint or worker is `service`, a schema/model change is `data`, a wiring
+     of external systems is `integration`, anything spanning several is `mixed`.
+     If you arrived here from `receive-brief`, the brief's framing usually
+     decides it; otherwise **ask the user**. The shape selects which
+     `## Design (LLD)` sub-sections the plan scaffolds — a narrower shape keeps
+     the plan thin. Stamp the resolved value on the spec's `Shape:` header.
+   - **Stack.** Determine the stack the `## Design (LLD)` sub-sections will name:
+     - **When `docs/architecture/reference.md` is present**, read it and
+       **conform** the design to it — reference its named components,
+       stereotypes, layers, and standards *by name* rather than inventing
+       parallel ones. The reference architecture is the source of truth for the
+       stack; the LLD is an instance of it.
+     - **When it is absent**, **degrade** to detecting the established stack from
+       the repo — lockfiles (`package.json`, `pyproject.toml`, `go.mod`,
+       `Cargo.toml`, …), build / orchestration files, and the imports in the
+       module the feature touches — plus any stack context a brief carried.
+     - **Elicit, don't invent.** When detection is ambiguous or the repo is
+       greenfield, **ask** which stack to target. Never guess a framework into
+       the design — an invented stack is worse than one asked question.
+
+   The headings in `## Design (LLD)` stay universal; the prose under them is the
+   stack-specific instance you resolved here.
 
 5. Fill in the plan second. The plan should:
    - Cite any ADRs or RFCs it follows from.
@@ -175,8 +266,17 @@ look like?" before any code.
 
 7. Update `docs/specs/README.md` to add the feature to the active list.
 
-8. Remind the user: when implementation diverges from the spec, the spec is
-   wrong. Update the spec in the same PR.
+8. **Keep the spec the single source of truth — drift is a bug.** When
+   implementation diverges from the spec, the spec is wrong: update it in
+   the same PR. The failure mode this discipline prevents has a name —
+   **context poisoning**: an agent loads a stale, duplicated, or
+   self-contradicting doc and makes a confident, wrong decision from it,
+   because nothing in the document tells it which part is current. Two
+   habits are the defense, one for each way a doc poisons: **one canonical
+   home per fact** (the *Source of truth* map in `AGENTS.md`) stops a fact
+   from living in two places that can drift apart, and the **present-tense
+   retcon body** (the failure mode in step 4) stops a single document from
+   contradicting itself across tenses. Remind the user of both.
 
 ## Anti-patterns to refuse
 

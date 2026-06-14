@@ -165,11 +165,11 @@ drift_check() {
 }
 
 # Iteration-cap value lives as data, not prose. The literal number lives
-# in the state.json template; SKILL/CONVENTIONS/AGENTS describe the field
-# conceptually but must not restate the number.
+# in the work-loop skill's bundled state.json template; SKILL/CONVENTIONS/
+# AGENTS describe the field conceptually but must not restate the number.
 drift_check \
   '"max_iterations":[[:space:]]*[0-9]+' \
-  "docs/_templates/state.json" \
+  ".claude/skills/work-loop/assets/state.json" \
   ".claude/skills/work-loop/SKILL.md" "AGENTS.md" "docs/CONVENTIONS.md"
 
 # Belt-and-braces prose probe: the original drift-watch caught the number

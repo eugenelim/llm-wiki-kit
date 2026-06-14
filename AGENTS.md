@@ -84,6 +84,9 @@ review** loop. Summary:
    For architecturally significant work, use Plan Mode and the agent’s
    deepest-thinking setting. Phrase every plan task as a verifiable goal,
    not a list of steps — the task name should be the success criterion.
+   The `work-loop` skill runs in two modes — **light** for low-risk work,
+   **full** when any risk trigger fires (see
+   [`docs/CONVENTIONS.md` § How we do non-trivial work](docs/CONVENTIONS.md#how-we-do-non-trivial-work)).
 1. **Tasks come from the migration plan.** During v2 development, every
    piece of work corresponds to a numbered task in
    `docs/rfc/0001-v2-architecture.md`. Pick one, do it, ship it. Don’t

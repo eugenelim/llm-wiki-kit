@@ -89,13 +89,20 @@ def test_bugfix_closure_keeps_workloop_non_ralph_deps() -> None:
         ".claude/agents/security-reviewer.md",
         ".claude/agents/quality-engineer.md",
         ".claude/agents/implementer.md",
-        # Loop machinery and knowledge base.
-        "tools/check-done.py",
+        # security-checklists is the depth library the security-reviewer
+        # reasons from; work-loop's REVIEW step inlines its modules.
+        ".claude/skills/security-checklists/SKILL.md",
+        # Loop machinery now ships inside the self-contained work-loop skill
+        # folder (loop-cohort state machine + the state.json template), not
+        # under tools/ — install-skill.py copies the whole skill folder.
+        ".claude/skills/work-loop/scripts/loop-cohort.py",
+        ".claude/skills/work-loop/scripts/lint-spec-status.py",
+        ".claude/skills/work-loop/assets/state.json",
+        # Hooks and knowledge base.
         "tools/hooks/session-start.sh",
         "tools/hooks/pre-pr.sh",
-        "docs/_templates/state.json",
-        # Spec + plan templates now ship inside the self-contained new-spec
-        # skill (agentskills.io convention), not under docs/_templates/.
+        # Spec + plan templates ship inside the self-contained new-spec skill
+        # (agentskills.io convention), not under docs/_templates/.
         ".claude/skills/new-spec/assets/spec.md",
         ".claude/skills/new-spec/assets/plan.md",
         "docs/knowledge/README.md",
