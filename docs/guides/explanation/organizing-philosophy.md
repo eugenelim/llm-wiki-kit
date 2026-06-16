@@ -39,8 +39,8 @@ So connection is the primary structure: **wikilinks, relations, and
 frontmatter facets**. Folders remain — they are a thin, browsable
 convenience — but they never carry the classification. You find things by
 links, maps, and queries, not by navigating a tree. A page's *kind*
-(`genre`), its *life-area* (`domain`), and its *form* (`subtype`) are
-facets it declares, not folders it is trapped in.
+(`genre`), its *area* (`workspaces`, RFC-0008's lens axis), and its *form*
+(`subtype`) are facets it declares, not folders it is trapped in.
 
 ### 2. MOCs are the navigation layer
 
@@ -52,8 +52,8 @@ to it, without clicking through folders.
 MOCs are how both you and the agent enter the vault:
 
 - `index.md` is the vault's root MOC — the dashboard.
-- An **area MOC** (e.g. a "Health" page) gathers everything in a `domain`,
-  usually by an embedded query.
+- An **area MOC** (e.g. a "Health" page) gathers everything in a workspace
+  (RFC-0008's `workspaces:` area axis), usually by an embedded query.
 - Each **container** carries an `_index.md` MOC that groups its contents.
 
 A MOC is itself a kind of note — its `genre` is `moc`. When you see a page
@@ -65,9 +65,10 @@ You do not design the whole taxonomy up front. The vault ships a small,
 fixed **spine** — a handful of generic genres, the role folders, the facet
 keys — and everything else *grows from use*: new facet values, new MOCs,
 new connections. The agent may *propose* additions (a recurring tag worth
-promoting to a controlled `domain`, a new `subtype`), but a human accepts
-them before they enter the controlled vocabulary. The structure earns its
-shape from your actual material instead of a guess made on day one.
+promoting to a controlled `subtype` value), but a human accepts them before
+they enter the controlled vocabulary. Workspaces are composed from recipe
+primitives, not grown emergently (RFC-0008). The structure earns its shape
+from your actual material instead of a guess made on day one.
 
 ### 4. Protect the synthesis peak
 
@@ -117,8 +118,9 @@ wiki/
   grouped by an `_index.md` MOC — never re-siloed into per-kind subfolders.
 - **Lifecycle is a facet** (`status`), not a folder: archiving a note sets
   its status; it never loses its home.
-- **An "area"** (Health, Finances) is not a folder — it is a `domain` value
-  with an optional MOC page that queries everything in it.
+- **An "area"** (Health, Finances) is not a folder — it is a workspace
+  (RFC-0008's `workspaces:` lens) with an optional `genre: moc` page that
+  queries everything in it.
 
 The deeper rationale for the facet model, the container rules, and the
 emergent-growth mechanics is recorded in the RFC that introduced them.

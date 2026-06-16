@@ -9,14 +9,18 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 
 | Spec | Status |
 |------|--------|
-| [faceted-frontmatter-schema](faceted-frontmatter-schema/spec.md) | Draft |
+| [role-folders-and-containers](role-folders-and-containers/spec.md) | Draft |
 
-RFC-0009 follow-on; the foundational, must-land-first spec of its sequence.
+RFC-0009 follow-on #2: realizes the LYT role-folder layout (people/ nodes,
+efforts/<type>/ containers, library/ capture, atlas/ synthesis) on top of the
+facets `faceted-frontmatter-schema` shipped. Lands before
+`operations-and-search-rekey` and `capture-synthesis-gating`.
 
 ## Shipped / Implemented
 
 | Spec | Status |
 |------|--------|
+| [faceted-frontmatter-schema](faceted-frontmatter-schema/spec.md) | Shipped |
 | [wiki-agents](wiki-agents/spec.md) | Shipped |
 | [wiki-bootstrap](wiki-bootstrap/spec.md) | Shipped |
 | [workspace-primitive](workspace-primitive/spec.md) | Shipped |
