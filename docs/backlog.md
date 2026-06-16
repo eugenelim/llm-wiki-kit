@@ -82,12 +82,14 @@ interim):
   vault-side-doc faceting pass (RFC-0009 §H), alongside the
   `faceted-frontmatter-schema` content-type-doc item above.
 - **Operation SKILLs + `wiki search` / `search.py` glob the old kind folders**
-  — six operation SKILLs (`status-synthesis`, `action-item-rollup`,
-  `medical-summary`, `renewal-reminders`, `onboarding-pack`,
-  `stakeholder-map-refresh`) and the search surface still glob the removed
-  entity-kind / content-type-kind folders (`customers/`, `meetings/`,
-  `decisions/`, …). Re-keyed to the role folders (and to `genre`/`subtype`
-  filters) by the `operations-and-search-rekey` spec (RFC-0009 follow-on).
+  — every operation SKILL that walks pages by folder (e.g. `status-synthesis`,
+  `action-item-rollup`, `medical-summary`, `follow-up-tracker`, `trip-prep`,
+  `renewal-reminders`, `onboarding-pack`, `stakeholder-map-refresh`) and the
+  search surface still glob the removed entity-kind / content-type-kind folders
+  (`customers/`, `meetings/`, `decisions/`, `medical/`, …) or the re-homed
+  containers (`trips/`→`efforts/trips/`). Re-keyed to the role folders (and to
+  `genre`/`subtype` filters) by the `operations-and-search-rekey` spec
+  (RFC-0009 follow-on).
 - **Hand-authored starter seed pages** (`starters/_seed/**/*.md`) still declare
   the fused `type:` frontmatter value. Their *folders* were relocated into the
   four-role layout by this spec's T6 (required by the "rendered tree matches the
