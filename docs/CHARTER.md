@@ -38,6 +38,24 @@ genuinely valuable but currently lives in scattered, hand-rolled vaults
 that only their authors can maintain. The kit’s job is to make that
 pattern reproducible.
 
+### Organizing philosophy — link, don’t file
+
+The vaults this kit produces are thinking spaces, not filing cabinets.
+Following Linking Your Thinking (Nick Milo), structure comes from
+*connection and synthesis*, not from where a file is filed: wikilinks,
+relations, and frontmatter facets are the primary structure; folders are a
+thin browsable convenience. Maps of Content are the navigation layer;
+structure is allowed to emerge from use rather than be designed up front;
+and the synthesis layer is protected from the volume of capture. We adopt
+LYT’s vocabulary and principles and credit the lineage (the synthesis layer
+is `atlas/`, its maps are MOCs); we are not affiliated with LYT and take no
+dependency on its commercial tools. This governs the *vaults the kit
+produces* — it adds no ADR/RFC/spec ceremony to kit development, consistent
+with the “Eat our own dogfood” carve-out under Principles. Karpathy’s
+LLM-Wiki pattern remains the *maintenance* model; LYT is the *organization*
+model layered over it. See [RFC-0009](rfc/0009-faceted-ontology-and-lyt-philosophy.md)
+and [`docs/guides/explanation/organizing-philosophy.md`](guides/explanation/organizing-philosophy.md).
+
 ## Scope
 
 What this project does:

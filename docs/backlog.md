@@ -30,7 +30,17 @@ rots. See the Spec metadata contract in [`CONVENTIONS.md`](CONVENTIONS.md).
 
 ---
 
-<!-- no deferred items yet -->
+## faceted-frontmatter-schema
+
+- **Operation SKILLs reference the removed `type` field and `types` region**
+  — six operation SKILLs (`status-synthesis`, `action-item-rollup`,
+  `medical-summary`, `renewal-reminders`, `onboarding-pack`,
+  `stakeholder-map-refresh`) read the page `type` value and/or name the
+  `frontmatter.schema.yaml` managed `types` region, which
+  `faceted-frontmatter-schema` removes. They go stale the moment that spec
+  lands. Re-keyed to `genre`/`subtype` in the `operations-and-search-rekey`
+  spec (RFC-0009 follow-on); registered here so the known-stale state is
+  tracked, not discovered.
 
 <!-- Add one section per spec with open work, e.g.:
 
