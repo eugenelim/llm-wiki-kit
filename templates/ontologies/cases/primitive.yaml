@@ -1,0 +1,16 @@
+name: cases
+kind: ontology
+version: 0.1.0
+description: >-
+  Case container registry (RFC-0009 §D). Seeds `wiki/efforts/cases/` with a
+  README and a `genre: moc` `_index.md` map. A case is a folder-mode container:
+  each case is a folder `efforts/cases/<case>/` holding its pages flat — the
+  bounded thread of a medical episode, a claim, a legal matter, a household
+  project with a start and an end. The `medical-record` content-type homes a
+  case's records here (the patient node stays in `people/`, individual records
+  in `library/`). Does not declare schema fields itself.
+requires:
+  - efforts
+contributes_to: []
+config:
+  container_mode: folder
