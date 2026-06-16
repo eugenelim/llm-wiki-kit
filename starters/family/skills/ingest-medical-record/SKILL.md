@@ -1,6 +1,6 @@
 ---
 name: ingest-medical-record
-description: "Ingest a medical document (visit summary, EOB, lab result, prescription note) into a structured `medical-record` page, append a dated entry to the per-person medical page, and update medications and providers. Load from the `ingest` skill when content-type routing identifies the source as medical (clinic or insurer letterhead, EOB layout, lab-result format). Pairs with the `medical-summary` operation (visit prep) and `follow-up-tracker` (recheck reminders)."
+description: "Ingest a medical document (visit summary, EOB, lab result, prescription note) into a `medical-record` capture page in `wiki/library/`, append a dated entry to the patient's case overview under `wiki/efforts/cases/`, and update the patient's medications page and providers. Load from the `ingest` skill when content-type routing identifies the source as medical (clinic or insurer letterhead, EOB layout, lab-result format). Pairs with the `medical-summary` operation (visit prep) and `follow-up-tracker` (recheck reminders)."
 license: MIT
 ---
 

@@ -6,7 +6,7 @@ description: >-
   1098, K-1, brokerage year-end statement, or tax-prep summary), a page
   template, and the schema contributions that make `genre: record, subtype: tax`
   valid with tax-scoped fields. Issuer nodes live under `wiki/people/`
-  (subtype: vendor); the tax-document page itself homes in `wiki/library/`.
+  (`type: vendor`); the tax-document page itself homes in `wiki/library/`.
   SSNs are redacted in body before write — the raw PDF stays in raw/.
 requires:
   - people

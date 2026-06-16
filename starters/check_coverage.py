@@ -111,6 +111,15 @@ def _ontology_seeded_wiki_dirs(kit_root: Path, name: str) -> list[str]:
 
     src = kit_root / "templates" / "ontologies" / name / "files" / "wiki"
     if not src.is_dir():
+        # A bundled ontology with no ``files/wiki/`` tree is an authoring bug,
+        # not a sideload — surface it so the ``wiki/<name>/`` fallback below
+        # isn't a silent mis-point. (A genuinely sideloaded primitive lives
+        # outside ``templates/ontologies`` and this path simply doesn't apply.)
+        if (kit_root / "templates" / "ontologies" / name).is_dir():
+            sys.stderr.write(
+                f"check_coverage: ontology {name!r} ships no files/wiki/ seed tree; "
+                f"falling back to coverage check against wiki/{name}/\n"
+            )
         return [name]
     rels = {
         str(f.parent.relative_to(src)).replace("\\", "/") for f in src.rglob("*") if f.is_file()
