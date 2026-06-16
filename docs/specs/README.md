@@ -7,7 +7,11 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 
 ## Active (Draft / Implementing)
 
-_None currently active._
+| Spec | Status |
+|------|--------|
+| [faceted-frontmatter-schema](faceted-frontmatter-schema/spec.md) | Draft |
+
+RFC-0009 follow-on; the foundational, must-land-first spec of its sequence.
 
 ## Shipped / Implemented
 
