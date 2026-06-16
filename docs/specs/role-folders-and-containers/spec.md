@@ -1,6 +1,6 @@
 # Spec: role-folders-and-containers
 
-- **Status:** Draft <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0009, RFC-0008, RFC-0004, ADR-0011, ADR-0006

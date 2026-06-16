@@ -9,7 +9,7 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 
 | Spec | Status |
 |------|--------|
-| [role-folders-and-containers](role-folders-and-containers/spec.md) | Draft |
+| [role-folders-and-containers](role-folders-and-containers/spec.md) | Approved |
 
 RFC-0009 follow-on #2: realizes the LYT role-folder layout (people/ nodes,
 efforts/<type>/ containers, library/ capture, atlas/ synthesis) on top of the
