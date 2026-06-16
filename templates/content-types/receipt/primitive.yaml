@@ -6,7 +6,7 @@ description: >-
   PDF, statement entry, or emailed receipt), a page template, and the
   schema contributions that make `genre: record, subtype: receipt` valid with receipt-
   scoped fields. Vendor nodes are stubbed on first reference under
-  `wiki/people/` (`type: vendor`); warranty and tax-relevant items surface
+  `wiki/people/` (`subtype: vendor`); warranty and tax-relevant items surface
   as flags. The receipt page itself homes in `wiki/library/`.
 requires:
   - people
