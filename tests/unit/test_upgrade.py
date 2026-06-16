@@ -512,8 +512,8 @@ def test_upgrade_primitives_returns_proposal_paths_for_aggregator_drift(
     host = vault / "frontmatter.schema.yaml"
     text = host.read_text(encoding="utf-8")
     drifted = text.replace(
-        "# BEGIN MANAGED: types\n  - meeting\n",
-        "# BEGIN MANAGED: types\n  - meeting\n  - user-injected-type\n",
+        "# BEGIN MANAGED: subtype\n  - meeting\n",
+        "# BEGIN MANAGED: subtype\n  - meeting\n  - user-injected-subtype\n",
         1,
     )
     assert drifted != text, "fixture precondition: expected to find a region body to drift"
@@ -696,10 +696,10 @@ def test_upgrade_primitives_force_render_preserves_aggregator_pass(
     )
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
-    types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
-        0
-    ]
-    assert "- meeting" in types_block
+    subtype_block = schema.split("# BEGIN MANAGED: subtype\n", 1)[1].split(
+        "  # END MANAGED: subtype", 1
+    )[0]
+    assert "- meeting" in subtype_block
 
 
 def test_upgrade_primitives_force_render_emits_event_before_render(

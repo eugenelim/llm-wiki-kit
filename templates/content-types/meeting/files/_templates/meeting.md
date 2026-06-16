@@ -1,5 +1,6 @@
 ---
-type: meeting
+genre: record
+subtype: meeting
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

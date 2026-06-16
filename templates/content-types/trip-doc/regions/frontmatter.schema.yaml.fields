@@ -1,18 +1,18 @@
   trip_destination:
     type: string
-    when: type == trip-doc
+    when: subtype == trip
   trip_start_date:
     type: date
     format: YYYY-MM-DD
-    when: type == trip-doc
+    when: subtype == trip
   trip_end_date:
     type: date
     format: YYYY-MM-DD
-    when: type == trip-doc
+    when: subtype == trip
   trip_travelers:
     type: list
     items: string
-    when: type == trip-doc
+    when: subtype == trip
   trip_status:
     type: string
-    when: type == trip-doc
+    when: subtype == trip

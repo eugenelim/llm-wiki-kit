@@ -905,10 +905,10 @@ def test_wiki_upgrade_force_render_recovers_shared_host_file(
     host = vault.vault_root / "frontmatter.schema.yaml"
     assert host.is_file()
     body = host.read_text(encoding="utf-8")
-    types_section = body.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
-        0
-    ]
-    assert "- meeting" in types_section
+    subtype_section = body.split("# BEGIN MANAGED: subtype\n", 1)[1].split(
+        "  # END MANAGED: subtype", 1
+    )[0]
+    assert "- meeting" in subtype_section
 
     # (b) Journal contains one PrimitiveForceRenderEvent per primitive
     # in state.installed_primitives, plus a PageWriteEvent for the host

@@ -1,5 +1,6 @@
 ---
-type: interview
+genre: record
+subtype: interview
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

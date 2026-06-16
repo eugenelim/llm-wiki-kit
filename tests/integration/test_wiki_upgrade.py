@@ -413,11 +413,11 @@ def test_upgrade_aggregator_drift_on_shared_file_produces_sidecar_line(
     host = vault / "frontmatter.schema.yaml"
     text = host.read_text(encoding="utf-8")
     drifted = text.replace(
-        "# BEGIN MANAGED: types\n  - meeting\n",
-        "# BEGIN MANAGED: types\n  - meeting\n  - user-injected-type\n",
+        "# BEGIN MANAGED: subtype\n  - meeting\n",
+        "# BEGIN MANAGED: subtype\n  - meeting\n  - user-injected-subtype\n",
         1,
     )
-    assert drifted != text, "fixture precondition: types-region body must be drifted"
+    assert drifted != text, "fixture precondition: subtype-region body must be drifted"
     host.write_text(drifted, encoding="utf-8")
 
     _bump_primitive_version(kit_root, "meeting", "0.2.0")
@@ -490,14 +490,14 @@ def test_upgrade_aggregator_runs_over_full_installed_set(
     assert cli.main(["upgrade"], kit_root=kit_root) == 0
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
-    types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
-        0
-    ]
+    subtype_block = schema.split("# BEGIN MANAGED: subtype\n", 1)[1].split(
+        "  # END MANAGED: subtype", 1
+    )[0]
     # ``meeting`` is the only declared content-type in this minimal kit;
     # the contract is that re-aggregation preserves the bucket (vs.
     # collapsing it to "this upgrade's contributors only", which would
     # be empty for a bump-without-content-change).
-    assert "- meeting" in types_block
+    assert "- meeting" in subtype_block
 
 
 # ---------------------------------------------------------------------------

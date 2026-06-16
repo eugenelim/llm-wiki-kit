@@ -4,7 +4,7 @@ version: 0.1.0
 description: >-
   Recipe page type. Ships an ingester skill (capture a recipe from a URL,
   photo, or pasted text), a page template, and the schema contributions
-  that make `type: recipe` valid with recipe-scoped fields. Pages land
+  that make `genre: reference, subtype: recipe` valid with recipe-scoped fields. Pages land
   under `wiki/food/`; the `meal-planning` operation reads the library.
 requires:
   - food
@@ -24,6 +24,6 @@ routing:
     - /recipes/*
 contributes_to:
   - file: frontmatter.schema.yaml
-    region: types
+    region: subtype
   - file: frontmatter.schema.yaml
     region: fields

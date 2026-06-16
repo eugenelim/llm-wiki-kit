@@ -137,17 +137,17 @@ def test_add_aggregator_runs_over_full_installed_set(
     assert cli.main(["add", "content-type:meeting"], kit_root=kit_root) == 0
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
-    types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
-        0
-    ]
-    assert types_block == "  - meeting\n"
+    subtype_block = schema.split("# BEGIN MANAGED: subtype\n", 1)[1].split(
+        "  # END MANAGED: subtype", 1
+    )[0]
+    assert subtype_block == "  - meeting\n"
 
     events = read_events(_journal_path(vault))
     region_events = [e for e in events if isinstance(e, ManagedRegionWriteEvent)]
     # Both buckets were written by the wiki-add aggregator pass.
     assert [(e.file, e.region, e.by) for e in region_events] == [
         ("frontmatter.schema.yaml", "fields", "wiki-add"),
-        ("frontmatter.schema.yaml", "types", "wiki-add"),
+        ("frontmatter.schema.yaml", "subtype", "wiki-add"),
     ]
 
 

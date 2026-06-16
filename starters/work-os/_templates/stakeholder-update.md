@@ -1,5 +1,6 @@
 ---
-type: stakeholder-update
+genre: update
+subtype: stakeholder
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

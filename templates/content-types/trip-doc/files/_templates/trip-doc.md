@@ -1,5 +1,6 @@
 ---
-type: trip-doc
+genre: record
+subtype: trip
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

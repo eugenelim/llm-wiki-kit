@@ -1,25 +1,25 @@
   interview_date:
     type: date
     format: YYYY-MM-DD
-    when: type == interview
+    when: subtype == interview
   interview_subject:
     type: string
-    when: type == interview
+    when: subtype == interview
   interview_purpose:
     type: string
-    when: type == interview
+    when: subtype == interview
   interview_questions:
     type: list
     items: string
     optional: true
-    when: type == interview
+    when: subtype == interview
   interview_findings:
     type: list
     items: string
     optional: true
-    when: type == interview
+    when: subtype == interview
   interview_follow_ups:
     type: list
     items: string
     optional: true
-    when: type == interview
+    when: subtype == interview

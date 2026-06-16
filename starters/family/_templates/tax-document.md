@@ -1,5 +1,6 @@
 ---
-type: tax-document
+genre: record
+subtype: tax
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

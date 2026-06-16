@@ -1,5 +1,6 @@
 ---
-type: medical-record
+genre: record
+subtype: medical
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

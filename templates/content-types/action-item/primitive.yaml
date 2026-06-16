@@ -6,7 +6,7 @@ description: >-
   other pages (meeting follow-ups, medical recheck callouts), but some
   warrant their own page — a household chore being tracked over weeks,
   a project task with sub-items. Ships a page template plus the schema
-  contributions that make `type: action-item` valid with owner / due /
+  contributions that make `genre: note, subtype: action-item` valid with owner / due /
   source fields. Pairs with the `follow-up-tracker` operation.
 requires:
   - people
@@ -15,6 +15,6 @@ requires:
 # via `wiki ingest --as action-item`.
 contributes_to:
   - file: frontmatter.schema.yaml
-    region: types
+    region: subtype
   - file: frontmatter.schema.yaml
     region: fields

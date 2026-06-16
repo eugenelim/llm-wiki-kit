@@ -1,14 +1,14 @@
   receipt_vendor:
     type: string
-    when: type == receipt
+    when: subtype == receipt
   receipt_date:
     type: date
     format: YYYY-MM-DD
-    when: type == receipt
+    when: subtype == receipt
   receipt_amount:
     type: string
-    when: type == receipt
+    when: subtype == receipt
   receipt_category:
     type: string
     optional: true
-    when: type == receipt
+    when: subtype == receipt

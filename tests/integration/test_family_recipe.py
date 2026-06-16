@@ -109,26 +109,27 @@ def test_family_init_aggregates_every_content_type_into_schema(tmp_path: Path) -
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
 
-    # The ``types`` region holds every content-type value in install
-    # order. ``install_order`` for content-types under the family recipe
-    # is alphabetical among independent peers and topological for the
-    # ones that ``require:`` each other; we assert membership rather
-    # than ordering here so the test stays robust to ``requires:``
-    # rewrites.
-    types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
-        0
-    ]
-    for content_type in (
+    # The ``subtype`` region holds every content-type's crosswalk subtype in
+    # install order. ``install_order`` for content-types under the family
+    # recipe is alphabetical among independent peers and topological for the
+    # ones that ``require:`` each other; we assert membership rather than
+    # ordering here so the test stays robust to ``requires:`` rewrites.
+    # (``medical-record`` -> ``medical``, ``trip-doc`` -> ``trip``; the rest
+    # map name-for-name per the crosswalk.)
+    subtype_block = schema.split("# BEGIN MANAGED: subtype\n", 1)[1].split(
+        "  # END MANAGED: subtype", 1
+    )[0]
+    for subtype in (
         "action-item",
-        "medical-record",
+        "medical",
         "meeting",
         "receipt",
         "recipe",
-        "tax-document",
-        "trip-doc",
+        "tax",
+        "trip",
     ):
-        assert f"- {content_type}\n" in types_block, (
-            f"types region missing `- {content_type}`; got: {types_block!r}"
+        assert f"- {subtype}\n" in subtype_block, (
+            f"subtype region missing `- {subtype}`; got: {subtype_block!r}"
         )
 
     # The ``fields`` region holds the type-scoped field declarations
@@ -189,10 +190,10 @@ def test_family_init_journal_shape(tmp_path: Path) -> None:
 
     # Region writes happen after every primitive's files/ tree is on
     # disk (ADR-0006 §Mechanics step 5). The two managed regions in the
-    # schema — `fields` and `types` — are written in alphabetical
+    # schema — `fields` and `subtype` — are written in alphabetical
     # bucket order.
     region_events = [e for e in events if isinstance(e, ManagedRegionWriteEvent)]
     assert [(e.file, e.region) for e in region_events] == [
         ("frontmatter.schema.yaml", "fields"),
-        ("frontmatter.schema.yaml", "types"),
+        ("frontmatter.schema.yaml", "subtype"),
     ]

@@ -1,5 +1,6 @@
 ---
-type: receipt
+genre: record
+subtype: receipt
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

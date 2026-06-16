@@ -1,0 +1,74 @@
+# crosswalk.yaml — legacy fused `type` → `genre` + `subtype` facets.
+#
+# RFC-0009 (faceted ontology) and ADR-0011 split the fused page `type` into two
+# orthogonal page-kind facets: `genre` (a fixed, generic nine-shape vocabulary)
+# and `subtype` (the controlled, growable specific form). This file pins the
+# one-time, kit-internal mapping for every shipped content-type.
+#
+# Each top-level key is a former fused `type`, which is the content-type's
+# *directory name* under `templates/content-types/` (the `.types` snippet that
+# also carried the string is removed by this migration, so the directory name
+# is the stable identifier). Each row carries:
+#
+#   genre           one of the fixed nine: note, record, update, decision,
+#                   reference, profile, log, contract, moc.
+#   subtype         the specific form; differs from `genre` (refines, never
+#                   duplicates it) and is pairwise-distinct across all rows
+#                   (the assembled `subtype` enum is a concatenation with no
+#                   deduplication, so a collision would ship a duplicate value).
+#   lifecycle_field present only where a shipped operation reads a
+#                   subtype-scoped lifecycle field that does not collapse into
+#                   the generic `status` facet (RFC-0009 §B).
+#
+# Validated by tests/unit/test_facet_crosswalk.py.
+
+action-item:
+  genre: note
+  subtype: action-item
+
+customer-feedback:
+  genre: record
+  subtype: customer-feedback
+
+decision:
+  genre: decision
+  subtype: decision-record
+  lifecycle_field: decision_status
+
+interview:
+  genre: record
+  subtype: interview
+
+medical-record:
+  genre: record
+  subtype: medical
+
+meeting:
+  genre: record
+  subtype: meeting
+
+receipt:
+  genre: record
+  subtype: receipt
+
+recipe:
+  genre: reference
+  subtype: recipe
+
+stakeholder-update:
+  genre: update
+  subtype: stakeholder
+  lifecycle_field: update_status
+
+tax-document:
+  genre: record
+  subtype: tax
+
+trip-doc:
+  genre: record
+  subtype: trip
+  lifecycle_field: trip_status
+
+vendor-contract:
+  genre: contract
+  subtype: vendor

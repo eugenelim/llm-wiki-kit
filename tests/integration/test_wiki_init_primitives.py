@@ -106,12 +106,13 @@ def test_init_aggregates_meeting_into_schema_regions(tmp_path: Path, kit_root: P
     assert cli.main(["init", str(vault), "--recipe", "full"], kit_root=kit_root) == 0
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
-    # The ``types`` region's seed body is replaced by ``- meeting``.
-    types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
-        0
-    ]
-    assert types_block == "  - meeting\n"
-    assert "Populated by content-type primitives" not in types_block
+    # The ``subtype`` region's seed body is replaced by ``- meeting`` (the
+    # meeting content-type's crosswalk subtype).
+    subtype_block = schema.split("# BEGIN MANAGED: subtype\n", 1)[1].split(
+        "  # END MANAGED: subtype", 1
+    )[0]
+    assert subtype_block == "  - meeting\n"
+    assert "Populated by content-type primitives" not in subtype_block
 
     # The ``fields`` region holds the meeting-scoped fields.
     fields_block = schema.split("# BEGIN MANAGED: fields\n", 1)[1].split(
@@ -170,11 +171,11 @@ def test_init_journal_order_with_three_primitives(tmp_path: Path, kit_root: Path
         "kit-render PageWriteEvents must precede the region aggregator (ADR-0006 §Mechanics step 5)"
     )
 
-    # (4) Two region writes: fields then types (alphabetical bucket order).
+    # (4) Two region writes: fields then subtype (alphabetical bucket order).
     region_events = [e for e in events if isinstance(e, ManagedRegionWriteEvent)]
     assert [(e.file, e.region) for e in region_events] == [
         ("frontmatter.schema.yaml", "fields"),
-        ("frontmatter.schema.yaml", "types"),
+        ("frontmatter.schema.yaml", "subtype"),
     ]
 
     # (5) Replayed state lists all four primitives.
@@ -185,7 +186,7 @@ def test_init_journal_order_with_three_primitives(tmp_path: Path, kit_root: Path
 def test_init_fails_loudly_on_missing_snippet(
     tmp_path: Path, kit_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Remove meeting's ``types`` snippet to provoke the validator
+    # Remove meeting's ``subtype`` snippet to provoke the validator
     # before any state write happens.
     snippet = (
         kit_root
@@ -193,7 +194,7 @@ def test_init_fails_loudly_on_missing_snippet(
         / "content-types"
         / "meeting"
         / "regions"
-        / ("frontmatter.schema.yaml.types")
+        / ("frontmatter.schema.yaml.subtype")
     )
     snippet.unlink()
 

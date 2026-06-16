@@ -4,10 +4,13 @@
 # Recipe: work-os
 #
 # Every page under wiki/ has YAML frontmatter that conforms to this
-# schema. Content-type primitives extend the `types`, `statuses`, and
-# `fields` sections via managed regions; the kit owns the inside of each
-# `# BEGIN MANAGED: id` / `# END MANAGED: id` block, your edits outside
-# the markers survive.
+# schema. The page-kind axis is two orthogonal facets: `genre` (a fixed,
+# generic vocabulary of nine document shapes, hand-maintained below) and
+# `subtype` (the specific form). Content-type primitives extend the
+# `subtypes` and `fields` sections via managed regions; the kit owns the
+# inside of each `# BEGIN MANAGED: id` / `# END MANAGED: id` block, your
+# edits outside the markers survive. `genre` is fixed, not growable, so it
+# is a baseline enum rather than a managed region.
 #
 # `workspaces:` (see `fields:` below) opts a note into one or more
 # workspace lenses: list the lens names a note belongs to, e.g.
@@ -16,30 +19,49 @@
 # views (`.base`) filter on.
 
 required:
-  - type
+  - genre
+  - subtype
   - status
   - provenance
   - created
   - modified
 
-# Allowed values for `type:`. Content-type primitives append to this list.
-types:
-  # BEGIN MANAGED: types
+# Allowed values for `genre:` — the fixed, generic nine-shape vocabulary
+# (RFC-0009 / ADR-0011). Fixed, not growable: content-type primitives add
+# `subtype` values, never genres, so this is a hand-maintained baseline
+# enum, not a managed region.
+genres:
+  - note
+  - record
+  - update
+  - decision
+  - reference
+  - profile
+  - log
+  - contract
+  - moc
+
+# Allowed values for `subtype:` — the controlled, growable specific form
+# that refines `genre`. Content-type primitives append to this list.
+subtypes:
+  # BEGIN MANAGED: subtype
   - customer-feedback
   - interview
   - meeting
-  - stakeholder-update
-  - decision
-  - vendor-contract
-  # END MANAGED: types
+  - stakeholder
+  - decision-record
+  - vendor
+  # END MANAGED: subtype
 
 # Allowed values for `status:`. Most pages start `active`; archive when
 # the underlying thing is no longer relevant; draft for in-progress
-# pages.
+# pages; someday for deferred-but-not-abandoned pages (excluded from
+# active views, not archived).
 statuses:
   - active
   - draft
   - archived
+  - someday
 
 # Allowed values for `provenance:`.
 provenance:
@@ -48,9 +70,11 @@ provenance:
   - mixed        # both
 
 # Field-level schema. The baseline below covers every page; content-type
-# primitives append type-scoped fields inside the managed region.
+# primitives append subtype-scoped fields inside the managed region.
 fields:
-  type:
+  genre:
+    type: string
+  subtype:
     type: string
   status:
     type: string
@@ -68,6 +92,13 @@ fields:
   source:
     type: string
     optional: true
+  # Container / hub membership (RFC-0009): wikilink(s) to the parent
+  # container or hub a page belongs to. Optional and universal — every
+  # page may carry it — so it lives in the baseline `fields:` block.
+  parent:
+    type: list
+    items: string
+    optional: true
   # Membership axis for workspace lenses (RFC-0008). Optional and
   # universal — every page may carry it — so it lives in the baseline
   # `fields:` block, not a content-type managed region.
@@ -79,157 +110,157 @@ fields:
   feedback_date:
     type: date
     format: YYYY-MM-DD
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   feedback_customer:
     type: string
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   feedback_contact:
     type: string
     optional: true
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   feedback_channel:
     type: string
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   feedback_sentiment:
     type: string
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   feedback_themes:
     type: list
     items: string
     optional: true
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   feedback_quotes:
     type: list
     items: string
     optional: true
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   feedback_follow_ups:
     type: list
     items: string
     optional: true
-    when: type == customer-feedback
+    when: subtype == customer-feedback
   interview_date:
     type: date
     format: YYYY-MM-DD
-    when: type == interview
+    when: subtype == interview
   interview_subject:
     type: string
-    when: type == interview
+    when: subtype == interview
   interview_purpose:
     type: string
-    when: type == interview
+    when: subtype == interview
   interview_questions:
     type: list
     items: string
     optional: true
-    when: type == interview
+    when: subtype == interview
   interview_findings:
     type: list
     items: string
     optional: true
-    when: type == interview
+    when: subtype == interview
   interview_follow_ups:
     type: list
     items: string
     optional: true
-    when: type == interview
+    when: subtype == interview
   meeting_date:
     type: date
     format: YYYY-MM-DD
-    when: type == meeting
+    when: subtype == meeting
   meeting_attendees:
     type: list
     items: string
-    when: type == meeting
+    when: subtype == meeting
   meeting_decisions:
     type: list
     items: string
     optional: true
-    when: type == meeting
+    when: subtype == meeting
   meeting_follow_ups:
     type: list
     items: string
     optional: true
-    when: type == meeting
+    when: subtype == meeting
   update_date:
     type: date
     format: YYYY-MM-DD
-    when: type == stakeholder-update
+    when: subtype == stakeholder
   update_project:
     type: string
-    when: type == stakeholder-update
+    when: subtype == stakeholder
   update_audience:
     type: list
     items: string
-    when: type == stakeholder-update
+    when: subtype == stakeholder
   update_status:
     type: string
-    when: type == stakeholder-update
+    when: subtype == stakeholder
   update_highlights:
     type: list
     items: string
     optional: true
-    when: type == stakeholder-update
+    when: subtype == stakeholder
   update_risks:
     type: list
     items: string
     optional: true
-    when: type == stakeholder-update
+    when: subtype == stakeholder
   update_asks:
     type: list
     items: string
     optional: true
-    when: type == stakeholder-update
+    when: subtype == stakeholder
   decision_date:
     type: date
     format: YYYY-MM-DD
-    when: type == decision
+    when: subtype == decision-record
   decision_owner:
     type: string
-    when: type == decision
+    when: subtype == decision-record
   decision_status:
     type: string
-    when: type == decision
+    when: subtype == decision-record
   decision_context:
     type: string
     optional: true
-    when: type == decision
+    when: subtype == decision-record
   decision_alternatives:
     type: list
     items: string
     optional: true
-    when: type == decision
+    when: subtype == decision-record
   decision_supersedes:
     type: string
     optional: true
-    when: type == decision
+    when: subtype == decision-record
   contract_vendor:
     type: string
-    when: type == vendor-contract
+    when: subtype == vendor
   contract_start:
     type: date
     format: YYYY-MM-DD
-    when: type == vendor-contract
+    when: subtype == vendor
   contract_end:
     type: date
     format: YYYY-MM-DD
     optional: true
-    when: type == vendor-contract
+    when: subtype == vendor
   contract_renewal_date:
     type: date
     format: YYYY-MM-DD
     optional: true
-    when: type == vendor-contract
+    when: subtype == vendor
   contract_amount:
     type: string
     optional: true
-    when: type == vendor-contract
+    when: subtype == vendor
   contract_owner:
     type: string
-    when: type == vendor-contract
+    when: subtype == vendor
   contract_terms_summary:
     type: list
     items: string
     optional: true
-    when: type == vendor-contract
+    when: subtype == vendor
   # END MANAGED: fields
