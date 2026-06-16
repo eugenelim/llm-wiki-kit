@@ -36,6 +36,9 @@ def _install_kit(tmp_path: Path) -> Path:
     (kit / "templates").mkdir()
     for relative in (
         "ontologies/people",
+        # meeting now re-points its `requires:` to `library` (RFC-0009 role
+        # folders), so the synthetic kit must carry the library ontology too.
+        "ontologies/library",
         "content-types/meeting",
         "operations/weekly-digest",
     ):
@@ -110,8 +113,9 @@ def test_add_installs_a_zero_requires_primitive(
 def test_add_pulls_transitive_requires_in_topological_order(
     tmp_path: Path, kit_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # ``meeting`` requires ``people``; adding it should install both, in
-    # the order ``primitives.resolve_dependencies`` produces.
+    # ``meeting`` requires ``people`` and ``library`` (RFC-0009 role folders);
+    # adding it should install all three deps, in the order
+    # ``primitives.resolve_dependencies`` produces.
     vault = _init_vault(tmp_path, kit_root)
     monkeypatch.chdir(vault)
 
@@ -119,10 +123,10 @@ def test_add_pulls_transitive_requires_in_topological_order(
 
     events = read_events(_journal_path(vault))
     install_order = [e.primitive for e in events if isinstance(e, PrimitiveInstallEvent)]
-    assert install_order == ["core", "people", "meeting"]
+    assert install_order == ["core", "library", "people", "meeting"]
 
     state = replay_state(events)
-    assert set(state.installed_primitives) == {"core", "people", "meeting"}
+    assert set(state.installed_primitives) == {"core", "library", "people", "meeting"}
 
 
 def test_add_aggregator_runs_over_full_installed_set(

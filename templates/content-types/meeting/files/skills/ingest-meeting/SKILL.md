@@ -1,6 +1,6 @@
 ---
 name: ingest-meeting
-description: "Ingest a meeting source (transcript, notes paste, recording link) into a structured meeting page. Load from the `ingest` skill when content-type routing identifies the source as a meeting (calendar invite text, transcript turns, agenda+notes shape). Produces one page under `wiki/meetings/`, links attendees to `wiki/people/`, and registers decisions and follow-ups for downstream operations (weekly-digest, follow-up-tracker)."
+description: "Ingest a meeting source (transcript, notes paste, recording link) into a structured meeting page. Load from the `ingest` skill when content-type routing identifies the source as a meeting (calendar invite text, transcript turns, agenda+notes shape). Produces one page under `wiki/library/`, links attendees to `wiki/people/`, and registers decisions and follow-ups for downstream operations (weekly-digest, follow-up-tracker)."
 license: MIT
 ---
 
@@ -44,7 +44,7 @@ For each, you need to extract:
 ## Page shape
 
 Render the page from `_templates/meeting.md`. The filename convention
-is `wiki/meetings/YYYY-MM-DD-<slug>.md` where the slug is a kebab-case
+is `wiki/library/YYYY-MM-DD-<slug>.md` where the slug is a kebab-case
 two-to-four-word summary (e.g. `2026-05-16-q2-planning-kickoff.md`).
 Multiple meetings on the same day get `-2`, `-3` suffixes.
 
@@ -57,7 +57,7 @@ For each name in `meeting_attendees`:
 2. If a match exists, use its wikilink (`[[jane-doe]]`).
 3. If no match, stub a new person page under `wiki/people/` with
    `type: person`, `status: draft`, `provenance: synthesized`, and a
-   one-line note "First seen in `[[meetings/<this-meeting>]]`."
+   one-line note "First seen in `[[library/<this-meeting>]]`."
    Wikilink to the stub.
 
 ## Decisions and follow-ups

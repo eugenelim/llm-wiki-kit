@@ -451,10 +451,14 @@ def test_work_os_recipe_resolves_against_live_catalog() -> None:
         "customer-listener",
         "renewals-watch",
         "stakeholder-steward",
+        # RFC-0009 role folders: atlas/library/efforts listed explicitly so
+        # the four-role floor holds; the customers/domains ontologies are gone
+        # (a customer is a `subtype: customer` node in people/).
+        "atlas",
+        "library",
+        "efforts",
         "customer-feedback",
-        "customers",
         "decision",
-        "domains",
         "interview",
         "meeting",
         "onboarding-pack",
@@ -497,7 +501,12 @@ def test_personal_recipe_resolves_against_live_catalog() -> None:
         "decision-companion",
         "personal-coordinator",
         "follow-up-tracker",
-        "food",
+        # RFC-0009 role folders: atlas/library/efforts listed explicitly; the
+        # food ontology is gone (a recipe is a `genre: reference` capture in
+        # library/).
+        "atlas",
+        "library",
+        "efforts",
         "identity",
         "meal-planning",
         "meeting",

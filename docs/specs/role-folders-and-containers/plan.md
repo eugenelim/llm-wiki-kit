@@ -1,7 +1,7 @@
 # Plan: role-folders-and-containers
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Executing <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -341,9 +341,25 @@ no backlog deferral pointer names a spec that no longer owns the work.
   regenerated).
 
 **Approach:**
-- Add the end-to-end test; run `python starters/regenerate.py --apply` to rebuild
-  the committed starters against the new layout (seed pages stay verbatim — their
-  faceting is the registered deferral).
+- Add the end-to-end test. **Relocate** the hand-authored `starters/_seed/**`
+  pages into the role folders (entity nodes → `people/`, captures → `library/`,
+  trips → `efforts/trips/`, projects → `efforts/projects/`, a medical record →
+  `efforts/cases/`, a former domain page → `atlas/`) and re-point their
+  cross-folder wikilinks, so no committed starter retains a removed
+  kind/ontology folder (AC "rendered tree matches the four-role layout"). The
+  `type:`→`genre`/`subtype` frontmatter-value faceting stays deferred. Teach
+  `starters/check_coverage.py` to resolve each ontology's seeded folder from its
+  source `files/wiki/` tree (so the `efforts/<type>/` registries map correctly),
+  author a minimal `atlas/` MOC + `efforts/cases/` seed where a recipe installs
+  the ontology but has no natural seed, then run
+  `python starters/regenerate.py --apply` to rebuild the committed starters.
+
+  *Scope note:* the spec originally framed seed-page relocation as deferred
+  ("seed pages stay verbatim"), but that contradicts the AC requiring the
+  committed tree to match the four-role layout — leaving seed pages in deleted
+  folders means the committed starter still shows `food/`, `customers/`, etc.
+  Resolved toward the AC: folders relocated here, value-faceting deferred. The
+  backlog entry is reconciled to match.
 
 **Done when:** the integration + goal-based tests are green,
 `starters/regenerate.py --check` exits 0, and `pytest -m 'not slow'`,

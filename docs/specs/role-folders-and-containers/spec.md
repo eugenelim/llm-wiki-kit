@@ -1,6 +1,6 @@
 # Spec: role-folders-and-containers
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0009, RFC-0008, RFC-0004, ADR-0011, ADR-0006
@@ -144,31 +144,31 @@ no production logic mirrors the assertion.
 
 ## Acceptance Criteria
 
-- [ ] `templates/ontologies/` contains exactly `people`, `efforts`, `library`,
+- [x] `templates/ontologies/` contains exactly `people`, `efforts`, `library`,
       `atlas`, `trips`, `cases`, `projects`, and the unchanged `identity`; the
       collapsed `customers`, `vendors`, `food`, `domains`, and `medical`
       ontology primitives are removed.
-- [ ] The `people` ontology seeds `wiki/people/` and its README documents that
+- [x] The `people` ontology seeds `wiki/people/` and its README documents that
       people, organizations, vendors, and customers are all node `subtype`s in
       one folder (the former `customers`/`vendors` homes collapse here).
-- [ ] The `library` ontology seeds `wiki/library/` (capture & reference,
+- [x] The `library` ontology seeds `wiki/library/` (capture & reference,
       absorbing the former `food` and per-record `medical` material); the
       `atlas` ontology seeds `wiki/atlas/` (synthesis); each ships a README and
       a `genre: moc` `_index.md`.
-- [ ] Every seeded `_index.md` carries all six `required:` schema fields with
+- [x] Every seeded `_index.md` carries all six `required:` schema fields with
       schema-valid values — `genre: moc`, `subtype: moc`, `status: active`,
       `provenance: synthesized`, and literal `created`/`modified` dates (a
       `moc`-genre page is navigational and not content-type-produced, so its
       `subtype` mirrors its `genre`; the content-type-owned `subtype` managed
       region is untouched).
-- [ ] The `efforts` ontology seeds `wiki/efforts/` with a README and a
+- [x] The `efforts` ontology seeds `wiki/efforts/` with a README and a
       `genre: moc` `_index.md`; the `trips`, `cases`, and `projects` container
       registries each seed `wiki/efforts/<type>/` with a README and a
       `genre: moc` `_index.md`.
-- [ ] Each container primitive declares `config.container_mode` ∈
+- [x] Each container primitive declares `config.container_mode` ∈
       {`folder`, `hub`}: `trips` and `cases` are `folder`, `projects` is `hub`;
       a goal-based test parses each container manifest and asserts the value.
-- [ ] No content-type *or operation* `primitive.yaml` `requires:` names a removed
+- [x] No content-type *or operation* `primitive.yaml` `requires:` names a removed
       ontology, and no re-point silently drops a dependency that is not itself
       removed (a relocation preserves every surviving dep; a removal is listed):
       the plan's old→new re-pointing table is the reference, every named target
@@ -180,11 +180,11 @@ no production logic mirrors the assertion.
       `recipe`/`receipt`/`tax-document` (`food`/`vendors`→`library`, adding
       `people` where a vendor node is stubbed), and `decision`→`library`
       (capture; any `atlas/` decision-synthesis is `capture-synthesis-gating`).
-- [ ] `wiki init` over `family`, `work-os`, and `personal` renders
+- [x] `wiki init` over `family`, `work-os`, and `personal` renders
       `wiki/{people,efforts,library,atlas}/` and the recipe's per-type
       `efforts/<type>/` registries; `resolve_dependencies` accepts each recipe
       and `wiki doctor` reports no orphan/missing files.
-- [ ] No produced-vault folder is kind-keyed, lifecycle-keyed, or area-keyed,
+- [x] No produced-vault folder is kind-keyed, lifecycle-keyed, or area-keyed,
       and no folder-mode container carries a genre/lifecycle subfolder: a grep
       asserts no kind folder is seeded by any primitive — both the
       ontology-seeded `customers/`, `vendors/`, `food/`, `medical/`,
@@ -194,13 +194,17 @@ no production logic mirrors the assertion.
       lifecycle/area/synthesis-subfolder set `records/`, `sources/`,
       `drafts/`, `archive/`, `someday/`, `upcoming/`, `past/`, `areas/` (only
       `_assets/`/`_working/` bulk sinks are permitted inside a container).
-- [ ] The shipped `templates/workspaces/*/files/*.base` files are
+- [x] The shipped `templates/workspaces/*/files/*.base` files are
       byte-unchanged and the rendered schema still carries `workspaces`.
-- [ ] The committed starters (`starters/{family,work-os}/`, the
+- [x] The committed starters (`starters/{family,work-os}/`, the
       `conflict-pending` example vault) are regenerated so their rendered tree
-      matches the four-role layout; `python starters/regenerate.py --check`
-      exits 0.
-- [ ] Every folder reference in the vault-side content-type ingest `SKILL.md`
+      matches the four-role layout — the hand-authored `starters/_seed/**`
+      pages are **relocated** into the role folders (so no committed starter
+      retains a removed kind/ontology folder) and their cross-folder wikilinks
+      re-pointed; their `type:`→`genre`/`subtype` frontmatter-value faceting
+      stays deferred. `python starters/regenerate.py --check` exits 0 and
+      `python starters/check_coverage.py` exits 0.
+- [x] Every folder reference in the vault-side content-type ingest `SKILL.md`
       docs is re-pointed so none names a deleted or re-homed folder: entity-stub
       references (person/org/vendor/customer node) home in `people/`, page-home
       references home in `library/` (capture) or the re-homed `efforts/<type>/`
@@ -214,7 +218,7 @@ no production logic mirrors the assertion.
       content-type doc re-key and the starter seed-page faceting to this spec /
       `recipe-organization-model` are reconciled to point at the spec that now
       owns each (this spec absorbs the recipe-rewrite + starter-regen).
-- [ ] `ruff check llm_wiki_kit tests`, `ruff format --check llm_wiki_kit tests`,
+- [x] `ruff check llm_wiki_kit tests`, `ruff format --check llm_wiki_kit tests`,
       `mypy llm_wiki_kit tests`, and `pytest -m 'not slow'` pass.
 
 ## Assumptions

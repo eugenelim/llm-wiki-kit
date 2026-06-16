@@ -290,6 +290,9 @@ def _install_kit(tmp_path: Path) -> Path:
     (kit / "templates").mkdir()
     for relative in (
         "ontologies/people",
+        # meeting now re-points its `requires:` to `library` (RFC-0009 role
+        # folders), so the synthetic kit must carry the library ontology too.
+        "ontologies/library",
         "content-types/meeting",
         "operations/weekly-digest",
     ):

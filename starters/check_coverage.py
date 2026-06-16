@@ -11,9 +11,10 @@ Read-only mechanical check. For each starter recipe (``family``,
 * for every ``content-type`` primitive, asserts at least one seed page
   under ``starters/_seed/<recipe>/wiki/**/*.md`` carries that primitive
   name in YAML frontmatter ``type:``;
-* for every ``ontology`` primitive, asserts
-  ``starters/_seed/<recipe>/wiki/<name>/`` contains at least one ``.md``
-  file;
+* for every ``ontology`` primitive, asserts the wiki folder(s) it
+  actually seeds (resolved from its ``files/wiki/`` tree — usually
+  ``wiki/<name>/``, but the RFC-0009 container registries nest under
+  ``efforts/<type>/``) contain at least one ``.md`` file;
 * skips ``operation`` / ``agent`` / ``infrastructure`` primitives —
   they carry no structural seed-page signal (see spec §Non-goal 1).
 
@@ -93,6 +94,28 @@ def _load_recipe_targets() -> dict[str, tuple[str, Path]]:
 
 def _seed_dir(kit_root: Path, recipe: str) -> Path:
     return kit_root / "starters" / "_seed" / recipe
+
+
+def _ontology_seeded_wiki_dirs(kit_root: Path, name: str) -> list[str]:
+    """Return the wiki-relative folder(s) an ontology seeds, from its source tree.
+
+    Most ontologies seed ``wiki/<name>/``, but the RFC-0009 container
+    registries nest under ``efforts/<type>/`` (the ``trips`` ontology seeds
+    ``files/wiki/efforts/trips/``). We read the primitive's own
+    ``files/wiki/`` tree and return the relative path of every directory that
+    directly contains a file — so coverage is checked against where the
+    ontology *actually* seeds, not an assumed ``wiki/<name>/``. Falls back to
+    ``[name]`` when the source tree is absent (e.g. a sideloaded primitive
+    outside ``templates/ontologies``).
+    """
+
+    src = kit_root / "templates" / "ontologies" / name / "files" / "wiki"
+    if not src.is_dir():
+        return [name]
+    rels = {
+        str(f.parent.relative_to(src)).replace("\\", "/") for f in src.rglob("*") if f.is_file()
+    }
+    return sorted(rels) or [name]
 
 
 # ---------------------------------------------------------------------------
@@ -225,8 +248,21 @@ def _walk_coverage(kit_root: Path) -> tuple[list[Finding], int, int]:
                     )
             elif primitive.kind is PrimitiveKind.ONTOLOGY:
                 scored += 1
-                ontology_dir = seed_dir / "wiki" / primitive.name
-                if not ontology_dir.is_dir() or not any(ontology_dir.rglob("*.md")):
+                # An ontology's seeded folder is *not* always ``wiki/<name>/``:
+                # the RFC-0009 container registries nest under
+                # ``efforts/<type>/`` (e.g. the ``trips`` ontology seeds
+                # ``wiki/efforts/trips/``). Resolve the real seeded folder(s)
+                # from the primitive's own ``files/wiki/`` tree rather than
+                # assuming name == folder.
+                seeded_rels = _ontology_seeded_wiki_dirs(kit_root, primitive.name)
+                covered = any(
+                    (d := seed_dir / "wiki" / rel).is_dir() and any(d.rglob("*.md"))
+                    for rel in seeded_rels
+                )
+                if not covered:
+                    where = " or ".join(f"wiki/{rel}/" for rel in seeded_rels) or (
+                        f"wiki/{primitive.name}/"
+                    )
                     findings.append(
                         Finding(
                             recipe=recipe_name,
@@ -234,7 +270,7 @@ def _walk_coverage(kit_root: Path) -> tuple[list[Finding], int, int]:
                             kind="ontology",
                             hint=(
                                 f"author at least one .md file under "
-                                f"starters/_seed/{recipe_name}/wiki/{primitive.name}/"
+                                f"starters/_seed/{recipe_name}/{where}"
                             ),
                         )
                     )

@@ -1,6 +1,6 @@
 ---
 name: ingest-customer-feedback
-description: "Ingest a customer-feedback source (support ticket, sales call note, survey response, NPS comment, churn-call summary, in-app feedback) into a structured customer-feedback page. Load from the `ingest` skill when content-type routing identifies the source as customer-originated commentary on the product, the relationship, or a recent experience. Produces one page under `wiki/customer-feedback/`, links the customer to `wiki/customers/`, the contact (if a named individual) to `wiki/people/`, and registers the page for downstream operations (status-synthesis, onboarding-pack)."
+description: "Ingest a customer-feedback source (support ticket, sales call note, survey response, NPS comment, churn-call summary, in-app feedback) into a structured customer-feedback page. Load from the `ingest` skill when content-type routing identifies the source as customer-originated commentary on the product, the relationship, or a recent experience. Produces one page under `wiki/library/`, links the customer to `wiki/people/`, the contact (if a named individual) to `wiki/people/`, and registers the page for downstream operations (status-synthesis, onboarding-pack)."
 license: MIT
 ---
 
@@ -40,7 +40,7 @@ For each, extract:
 - **`feedback_date`** — when the feedback was *given*, not today. For
   tickets, the original submission date.
 - **`feedback_customer`** — the customer org. Wikilink to
-  `wiki/customers/`.
+  `wiki/people/`.
 - **`feedback_contact`** — the named individual when known. Wikilink
   to `wiki/people/`. Anonymous survey responses leave this empty.
 - **`feedback_channel`** — `call`, `email`, `ticket`, `survey`,
@@ -62,7 +62,7 @@ For each, extract:
 ## Page shape
 
 Render the page from `_templates/customer-feedback.md`. The filename
-convention is `wiki/customer-feedback/YYYY-MM-DD-<customer>-<slug>.md`,
+convention is `wiki/library/YYYY-MM-DD-<customer>-<slug>.md`,
 where `<customer>` is the kebab-case customer name and `<slug>` is a
 two-to-three-word theme summary. Multiple feedback items from the
 same customer on the same day get `-2`, `-3` suffixes.
@@ -70,14 +70,14 @@ same customer on the same day get `-2`, `-3` suffixes.
 ## Customer linking
 
 The `feedback_customer` field must resolve to a page under
-`wiki/customers/`:
+`wiki/people/`:
 
-1. Search `wiki/customers/` for an existing page (tolerate legal-name
+1. Search `wiki/people/` for an existing page (tolerate legal-name
    vs. common-name variants).
 2. If a match exists, use its wikilink.
 3. If no match, stub a new customer page with `type: customer`,
    `status: draft`, `provenance: synthesized`, and a one-line note
-   "First seen in `[[customer-feedback/<this-feedback>]]`."
+   "First seen in `[[library/<this-feedback>]]`."
 
 ## Contact linking
 

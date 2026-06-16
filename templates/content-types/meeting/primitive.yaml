@@ -8,6 +8,7 @@ description: >-
   a valid value with meeting-scoped fields.
 requires:
   - people
+  - library
 routing:
   filename_patterns:
     - "*transcript*"

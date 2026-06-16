@@ -5,12 +5,15 @@ description: >-
   Medical-record page type. Ships an ingester skill (capture a visit
   summary, EOB, lab result, or prescription note), a page template for
   per-person medical histories, and the schema contributions that make
-  `genre: record, subtype: medical` valid with medical-scoped fields. Updates
-  `wiki/medical/medications.md` and `wiki/medical/providers.md` as
-  side-effects of an ingest.
+  `genre: record, subtype: medical` valid with medical-scoped fields. The
+  record page homes in `wiki/library/`; it links the patient node in
+  `wiki/people/` and joins its case in `wiki/efforts/cases/` via `parent:`.
+  Updates a `wiki/library/medications.md` list and stubs providers as
+  `subtype: vendor` nodes in `wiki/people/` as side-effects of an ingest.
 requires:
-  - medical
   - people
+  - library
+  - cases
 routing:
   filename_patterns:
     - "EOB-*"

@@ -41,29 +41,62 @@ rots. See the Spec metadata contract in [`CONVENTIONS.md`](CONVENTIONS.md).
   lands. Re-keyed to `genre`/`subtype` in the `operations-and-search-rekey`
   spec (RFC-0009 follow-on); registered here so the known-stale state is
   tracked, not discovered.
-- **Content-type ingest SKILLs and `wiki/` READMEs still reference `type:`**
-  — each content-type primitive ships an ingest `SKILL.md` and a `wiki/<area>/`
-  `README.md` (vault-side, copied into a user's vault). After faceting, the
-  READMEs still document `type: <content-type>` for the page's own frontmatter,
-  and the ingest SKILLs still instruct the agent to stub *entity* pages with
-  `type: person` / `type: customer` / `type: project`. Re-keying the own-kind
-  references is mechanical, but the entity-page references depend on the
-  **ontology/entity facets that this spec does not define** (people, customers,
-  projects are faceted by `role-folders-and-containers` /
-  `recipe-organization-model`), so the whole vault-side content-type doc surface
-  is faceted there, together with the `core/files/CORE.md` rewrite (RFC-0009 §H
-  Vault-side). Deferred as one unit to keep each primitive's vault-side docs
-  internally consistent until then; same interim-staleness category as the
-  operation SKILLs above. No kit code validates page frontmatter, so vaults stay
-  functional in the interim.
+- **Content-type ingest SKILLs still reference `type:`** — each content-type
+  primitive ships an ingest `SKILL.md` (vault-side, copied into a user's vault).
+  The kind-folder `wiki/<area>/README.md` seeds and all stale *folder*
+  references in the ingest SKILLs were removed / re-pointed to the role folders
+  by `role-folders-and-containers` (its T3/T5), so this entry no longer covers
+  folders. What remains is the **frontmatter-value** re-key: the SKILLs (and the
+  page `_templates/*.md`) still stub entity pages with `type: person` /
+  `type: customer` and stamp `type: <content-type>` rather than
+  `genre:`/`subtype:`. Now tracked under `role-folders-and-containers` (which
+  touched these SKILLs); see that section below. No kit code validates page
+  frontmatter, so vaults stay functional in the interim.
 - **Starter seed pages still carry the fused `type:` frontmatter** — after
   `faceted-frontmatter-schema` lands, the committed starters' *rendered*
   artifacts (`frontmatter.schema.yaml`, `_templates/*.md`) are regenerated to
   the facet model, but the hand-authored `starters/_seed/**/*.md` pages (copied
   verbatim by `regenerate.py`) still declare `type:` rather than
-  `genre:`/`subtype:`. No kit code validates page frontmatter, so the starters
-  stay functional; the seed pages are faceted in the `recipe-organization-model`
-  spec (RFC-0009 follow-on), which owns recipe + starter regeneration.
+  `genre:`/`subtype:`. The recipe-rewrite + starter regeneration (rendered
+  artifacts *and* seed-page relocation into the role folders) moved from
+  `recipe-organization-model` to `role-folders-and-containers` (per that spec's
+  Assumptions) and are done there; only the seed-page value-faceting remains,
+  tracked under its section below. No kit code validates page frontmatter, so
+  the starters stay functional.
+
+## role-folders-and-containers
+
+The reshape to the four role folders (`people/`, `efforts/`, `library/`,
+`atlas/`) re-pointed every *folder* reference — content-type `requires:`,
+recipe `primitives:`, ingest-SKILL paths — and removed the collapsed
+ontologies and kind-folder seeds. These value-level / cross-spec re-keys are
+deliberately scoped out and tracked here (no user vaults exist pre-release; no
+kit code validates page frontmatter, so the vault stays functional in the
+interim):
+
+- **Content-type ingest SKILLs + page `_templates/*.md` still stamp `type:`**
+  — the folder paths are re-pointed (this spec's T5), but the
+  frontmatter-*value* faceting (`type: person` → `genre: profile` /
+  `subtype: person`; `type: meeting` → `genre: record` / `subtype: meeting`)
+  is unchanged. It changes field values, not paths, and rides with the
+  vault-side-doc faceting pass (RFC-0009 §H), alongside the
+  `faceted-frontmatter-schema` content-type-doc item above.
+- **Operation SKILLs + `wiki search` / `search.py` glob the old kind folders**
+  — six operation SKILLs (`status-synthesis`, `action-item-rollup`,
+  `medical-summary`, `renewal-reminders`, `onboarding-pack`,
+  `stakeholder-map-refresh`) and the search surface still glob the removed
+  entity-kind / content-type-kind folders (`customers/`, `meetings/`,
+  `decisions/`, …). Re-keyed to the role folders (and to `genre`/`subtype`
+  filters) by the `operations-and-search-rekey` spec (RFC-0009 follow-on).
+- **Hand-authored starter seed pages** (`starters/_seed/**/*.md`) still declare
+  the fused `type:` frontmatter value. Their *folders* were relocated into the
+  four-role layout by this spec's T6 (required by the "rendered tree matches the
+  four-role layout" AC), but the `type:`→`genre`/`subtype` value re-key rides
+  with the vault-side-doc faceting pass above — no kit code validates page
+  frontmatter, so the starters stay functional in the interim.
+- **`atlas/` synthesis-proposal gating** is owned by the
+  `capture-synthesis-gating` spec; this spec seeds `atlas/` as an empty,
+  human-gated role folder with its `_index.md` map only.
 
 <!-- Add one section per spec with open work, e.g.:
 

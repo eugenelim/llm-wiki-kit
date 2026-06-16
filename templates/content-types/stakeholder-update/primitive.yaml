@@ -9,6 +9,7 @@ description: >-
 requires:
   - people
   - projects
+  - library
 # No routing: block — manual-only. Stakeholder updates arrive as pasted
 # status notes, email drafts, or slide bullets with no reliable filename
 # or extension signal; reach this primitive via

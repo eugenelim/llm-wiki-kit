@@ -44,7 +44,12 @@ EXPECTED_PRIMITIVES = {
     # lists it directly, so the install closure picks it up.
     "decision-companion",
     "follow-up-tracker",
-    "food",
+    # RFC-0009 role folders: atlas/library/efforts listed explicitly; the
+    # food ontology is gone (a recipe is a genre:reference capture in
+    # library/).
+    "atlas",
+    "library",
+    "efforts",
     "identity",
     "meal-planning",
     "meeting",
@@ -105,17 +110,17 @@ def test_personal_init_excludes_household_and_work_os_primitives(tmp_path: Path)
     installed = set(state.installed_primitives)
 
     forbidden = {
-        # Household-shape (Task 13).
-        "medical",
+        # Household-shape content-types/operations + the `cases` registry
+        # they pull (the medical/vendors entity-kind ontologies no longer
+        # exist post RFC-0009).
         "medical-record",
         "medical-summary",
-        "vendors",
+        "cases",
         "receipt",
         "tax-document",
-        # Work-OS shape (Task 14).
-        "customers",
+        # Work-OS shape (Task 14). ``projects`` is now a container registry,
+        # still excluded from the personal closure.
         "customer-feedback",
-        "domains",
         "interview",
         "onboarding-pack",
         "projects",
@@ -163,16 +168,22 @@ def test_personal_init_seeds_identity_page(tmp_path: Path) -> None:
     assert (vault / "wiki" / "identity" / "README.md").is_file()
 
 
-def test_personal_init_seeds_every_ontology_folder(tmp_path: Path) -> None:
-    """Every ontology in the closure seeds a ``wiki/<name>/README.md``."""
+def test_personal_init_seeds_the_role_folders(tmp_path: Path) -> None:
+    """The personal vault renders the four role folders + its trips registry.
+
+    RFC-0009 §C/§D: the folder set is `people/`, `efforts/`, `library/`,
+    `atlas/`, with the `trips` container registry under `efforts/`. The
+    `identity` ontology still seeds its own `wiki/identity/` companion folder.
+    """
 
     vault = tmp_path / "v"
 
     assert main(["init", str(vault), "--recipe", RECIPE]) == 0
 
-    for ontology in ("people", "food", "trips", "identity"):
-        readme = vault / "wiki" / ontology / "README.md"
-        assert readme.is_file(), f"missing wiki/{ontology}/README.md"
+    for role in ("people", "efforts", "library", "atlas", "identity"):
+        readme = vault / "wiki" / role / "README.md"
+        assert readme.is_file(), f"missing wiki/{role}/README.md"
+    assert (vault / "wiki" / "efforts" / "trips" / "README.md").is_file()
 
 
 def test_personal_init_installs_operation_skills(tmp_path: Path) -> None:

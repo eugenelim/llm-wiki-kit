@@ -5,9 +5,9 @@ description: >-
   Recipe page type. Ships an ingester skill (capture a recipe from a URL,
   photo, or pasted text), a page template, and the schema contributions
   that make `genre: reference, subtype: recipe` valid with recipe-scoped fields. Pages land
-  under `wiki/food/`; the `meal-planning` operation reads the library.
+  under `wiki/library/`; the `meal-planning` operation reads them.
 requires:
-  - food
+  - library
 routing:
   url_domains:
     - allrecipes.com

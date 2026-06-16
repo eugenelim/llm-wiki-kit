@@ -5,10 +5,13 @@ description: >-
   Decision page type. Ships an ingester skill (paste a meeting decision,
   email thread, or written rationale and get a structured decision page),
   a page template, and the schema contributions that make `genre: decision, subtype: decision-record`
-  a valid value with decision-scoped fields. Decisions cross-cut projects,
-  domains, and customers; they are the durable record of "what we chose,
-  why, and what we considered."
-requires: []
+  a valid value with decision-scoped fields. The decision page homes in
+  `wiki/library/` (capture); it cross-cuts projects and people via wikilinks
+  and `parent:`. It is the durable record of "what we chose, why, and what we
+  considered." (Any `atlas/` decision-synthesis is owned by a later spec.)
+requires:
+  - people
+  - library
 # No routing: block — manual-only. Decisions arrive as pasted meeting
 # excerpts, email threads, or written rationale with no reliable filename
 # or extension signal; reach this primitive via `wiki ingest --as decision`.

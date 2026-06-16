@@ -5,9 +5,12 @@ description: >-
   Vendor-contract page type. Ships an ingester skill (paste contract terms,
   a renewal notice, or a procurement summary and get a structured contract
   page), a page template, and the schema contributions that make
-  `genre: contract, subtype: vendor` a valid value with contract-scoped fields. Feeds
-  `renewal-reminders`.
-requires: []
+  `genre: contract, subtype: vendor` a valid value with contract-scoped fields. The
+  contract page homes in `wiki/library/`; the counterparty is a node in
+  `wiki/people/`. Feeds `renewal-reminders`.
+requires:
+  - people
+  - library
 routing:
   filename_patterns:
     - "*contract*"

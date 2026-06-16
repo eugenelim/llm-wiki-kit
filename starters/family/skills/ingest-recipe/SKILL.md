@@ -1,6 +1,6 @@
 ---
 name: ingest-recipe
-description: "Ingest a recipe from a URL, photo, scan, or pasted text into a structured page under `wiki/food/`. Load from the `ingest` skill when content-type routing identifies the source as a recipe (food-blog or recipe-site URL, photo of a card, ingredient+instructions shape in pasted text). Output is one page using the `_templates/recipe.md` schema, cross-linked to `wiki/food/dietary-notes.md` for per-person allergen flags. Pairs with the `meal-planning` operation, which reads the library."
+description: "Ingest a recipe from a URL, photo, scan, or pasted text into a structured page under `wiki/library/`. Load from the `ingest` skill when content-type routing identifies the source as a recipe (food-blog or recipe-site URL, photo of a card, ingredient+instructions shape in pasted text). Output is one page using the `_templates/recipe.md` schema, cross-linked to `wiki/library/dietary-notes.md` for per-person allergen flags. Pairs with the `meal-planning` operation, which reads the library."
 license: MIT
 ---
 
@@ -8,7 +8,7 @@ license: MIT
 
 Capture a recipe and produce one clean, durable wiki page using the
 recipe schema. The user gives you a URL, a photo of a card, or pasted
-text; you produce one page under `wiki/food/` plus any allergen flags
+text; you produce one page under `wiki/library/` plus any allergen flags
 the household will need at meal-plan time.
 
 ## When you're loaded
@@ -46,13 +46,13 @@ For each, you need to extract:
 ## Page shape
 
 Render from `_templates/recipe.md`. Filename is the recipe's title in
-kebab-case: `sheet-pan-chicken-tacos.md`. Place under `wiki/food/` —
+kebab-case: `sheet-pan-chicken-tacos.md`. Place under `wiki/library/` —
 the household may group long-lived favourites under a `family-favorites/`
 subfolder; honour that convention if it's already in use.
 
 ## Allergen and dietary flags
 
-Read `wiki/food/dietary-notes.md` (if it exists) and check ingredients
+Read `wiki/library/dietary-notes.md` (if it exists) and check ingredients
 against each person's restrictions. Flag matches as callouts in the
 recipe's **Notes** section, e.g.:
 
@@ -67,7 +67,7 @@ a one-line TODO at the top of the page suggesting the user create it.
 
 ## Duplicate detection
 
-Search `wiki/food/` for an existing page with the same title or source
+Search `wiki/library/` for an existing page with the same title or source
 URL. If you find one, surface both pages and ask whether to overwrite,
 version, or merge — do not silently clobber. The kit's `safe_write`
 also catches drift, but a duplicate caught up-front is cleaner than a
@@ -83,7 +83,7 @@ hallucinated thick one.
 
 ## After writing
 
-- If `wiki/food/dietary-notes.md` exists, append a one-line entry under
+- If `wiki/library/dietary-notes.md` exists, append a one-line entry under
   the recipe's name listing any new dietary tags you detected.
 - Append a one-line summary to the wiki's running activity so
   `wiki-lint` picks it up on its next run.
