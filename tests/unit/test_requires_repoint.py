@@ -31,19 +31,6 @@ OPERATIONS_DIR = TEMPLATES_DIR / "operations"
 
 REMOVED_ONTOLOGIES = {"customers", "vendors", "food", "domains", "medical"}
 
-# The content-types that used to seed a kind-keyed `files/wiki/<kind>/` folder.
-KIND_FOLDER_CONTENT_TYPES = {
-    "action-item",
-    "customer-feedback",
-    "decision",
-    "interview",
-    "meeting",
-    "receipt",
-    "stakeholder-update",
-    "tax-document",
-    "vendor-contract",
-}
-
 # Expected new `requires:` (as sets) after re-pointing — plan §Design table.
 # A relocation keeps every surviving dep; only a removed ontology is swapped.
 EXPECTED_CONTENT_TYPE_REQUIRES: dict[str, set[str]] = {
