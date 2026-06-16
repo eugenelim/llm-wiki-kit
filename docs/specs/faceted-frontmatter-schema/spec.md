@@ -169,7 +169,9 @@ shape; no production logic mirrors the assertion.
 - [x] The vault-side content-type ingest `SKILL.md` and `wiki/` `README.md`
       `type:` references are registered as deferred — their full re-key
       depends on the ontology/entity facets defined by
-      `role-folders-and-containers` / `recipe-organization-model`
+      `role-folders-and-containers` (which owns the vault-side-doc value
+      re-key; the `wiki/` READMEs were removed and the SKILL *folder*
+      references re-pointed there)
       (deferred: backlog.md#faceted-frontmatter-schema).
 - [x] `ruff check llm_wiki_kit tests`, `ruff format --check llm_wiki_kit tests`,
       `mypy llm_wiki_kit tests`, and `pytest -m 'not slow'` pass.

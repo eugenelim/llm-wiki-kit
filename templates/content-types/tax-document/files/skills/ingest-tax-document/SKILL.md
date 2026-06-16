@@ -1,6 +1,6 @@
 ---
 name: ingest-tax-document
-description: "Ingest a tax form (W-2, 1099-DIV/INT/B/MISC/NEC, 1098, K-1, 5498, 1095-*, brokerage year-end statement, tax-prep summary) into a structured `tax-document` page under `wiki/tax/{year}/`. Load from the `ingest` skill when content-type routing identifies the source as a tax form (issuer letterhead, prominent form number). Critical: redacts SSNs before writing; the raw PDF stays in `raw/tax/`."
+description: "Ingest a tax form (W-2, 1099-DIV/INT/B/MISC/NEC, 1098, K-1, 5498, 1095-*, brokerage year-end statement, tax-prep summary) into a structured `tax-document` page under `wiki/library/{year}/`. Load from the `ingest` skill when content-type routing identifies the source as a tax form (issuer letterhead, prominent form number). Critical: redacts SSNs before writing; the raw PDF stays in `raw/tax/`."
 license: MIT
 ---
 
@@ -38,7 +38,7 @@ You need to extract:
   `brokerage-statement`.
 - **`tax_document_issuer`** — the employer, brokerage, bank, or
   partnership that issued the form. Cross-reference against
-  `wiki/vendors/`; stub a vendor page if new.
+  `wiki/people/`; stub a vendor page if new.
 - **`tax_document_recipient`** — the family member named on the form.
 - **`tax_document_amount`** — the headline figure for the form (W-2
   Box 1 wages, 1099-DIV Box 1a ordinary dividends, 1099-B total
@@ -47,8 +47,8 @@ You need to extract:
 ## Page shape
 
 Render from `_templates/tax-document.md`. Filename is
-`wiki/tax/{year}/{form-slug}-{issuer-slug}.md`. Example:
-`wiki/tax/2025/1099-div-vanguard.md`.
+`wiki/library/{year}/{form-slug}-{issuer-slug}.md`. Example:
+`wiki/library/2025/1099-div-vanguard.md`.
 
 The body captures the key figures from each box (form-specific) and a
 **Reconciliation** section for cross-references to brokerage holdings,
@@ -70,8 +70,8 @@ than write a half-redacted page.
 ## Side-effects
 
 - **Issuer as vendor.** If the issuer is new, stub a vendor page at
-  `wiki/vendors/{slug}.md`.
-- **Year index.** Append an entry to `wiki/tax/{year}/index.md` (stub
+  `wiki/people/{slug}.md`.
+- **Year index.** Append an entry to `wiki/library/{year}/index.md` (stub
   the index on first form of the year).
 - **Holdings cross-reference.** For 1099-B (sales) and 1099-DIV
   (dividends), append a note to the relevant page under

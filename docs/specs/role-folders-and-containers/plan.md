@@ -1,7 +1,7 @@
 # Plan: role-folders-and-containers
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -68,9 +68,18 @@ container (`efforts/trips/<trip>/`) groups its contents by its `_index.md`.
   (not a new typed model field), read only by the construction test and by the
   vault-side agent docs; the kit core does not branch on it. Traces to: AC
   "container_mode declared".
-- `_index.md` MOC pages are seed files with `genre: moc` frontmatter and a
-  Bases/Dataview body; the kit does not generate or update them. Traces to: AC
-  "role folder + container ship `_index.md`".
+- `_index.md` MOC pages are seed files with a Bases/Dataview body; the kit does
+  not generate or update them. Their frontmatter is pinned and uniform across
+  every role folder and container registry: `genre: moc`, `subtype: moc`
+  (a navigational page is not content-type-produced, so its subtype mirrors its
+  genre — the content-type-owned `subtype` managed region is *not* touched),
+  `status: active`, `provenance: synthesized`, and **literal** `created` /
+  `modified` dates (`2026-06-16`). Literal dates — not a templated
+  `{{date:…}}` token — because seed files are copied byte-for-byte (no date
+  substitution in `render.py`) and `regenerate.py --check` byte-compares; a
+  generated token would either flap the gate or leave a literal `{{…}}` in the
+  shipped page. Traces to: AC "role folder + container ship `_index.md`"; AC
+  "every `_index.md` carries all six required fields".
 - No content-type writes `atlas/` in this spec: `atlas/` is seeded as an empty
   role folder with its `genre: moc` `_index.md`, and synthesis pages arrive
   through the `capture-synthesis-gating` proposal flow (or by hand) later.
@@ -78,12 +87,18 @@ container (`efforts/trips/<trip>/`) groups its contents by its `_index.md`.
   reserves the gated peak for human-gated synthesis, so homing an ingested type
   there ungated would erode it. Traces to: spec Never-do (gating deferred);
   re-pointing table.
-- `library` is provided by two intentional paths — transitively via each
-  capture content-type's re-pointed `requires:`, and explicitly in every recipe
-  `primitives:` list — and neither is load-bearing alone (the recipe listing
-  guarantees the folder for a minimal recipe; the per-type `requires:` keeps a
-  content-type self-contained). A future reader should not collapse one path
-  assuming the other covers it. Traces to: AC "layout renders".
+- `library`, `atlas`, and `efforts` are each listed **explicitly** in every
+  recipe `primitives:` list as a defensive guarantee, not left to transitive
+  arrival. `atlas` is pulled by nothing (synthesis peak), so it *must* be
+  explicit. `library` and `efforts` *would* arrive transitively today
+  (`library` via each capture content-type's re-pointed `requires:`; `efforts`
+  via each `efforts/<type>/` registry's `requires: [efforts]`, itself pulled by
+  a content-type) — but each chain is single-threaded per recipe, so a future
+  edit that drops the one content-type anchoring the chain would silently lose
+  the role folder and its `_index.md`. Listing all three explicitly makes the
+  four-role floor independent of which content-types a recipe carries. A future
+  reader should not collapse the explicit listing assuming the transitive path
+  covers it. Traces to: AC "layout renders".
 
 ### Data & schema
 
@@ -116,18 +131,20 @@ container (`efforts/trips/<trip>/`) groups its contents by its `_index.md`.
   | `decision` (ct) | `[]` | `people`, `library` | `library/` (capture; `atlas/` synthesis is `capture-synthesis-gating`) |
   | `onboarding-pack` (op) | `customers`, `projects`, `decision`, `customer-feedback` | `people`, `projects`, `decision`, `customer-feedback` | — |
 
-  No other operation `requires:` names a removed ontology (`projects` survives,
-  re-homed). `decision` is homed in `library/`, **not** `atlas/`: it is an
+  The two rows whose **current** `requires:` is `[]` (`vendor-contract`,
+  `decision`) are pure additions — they had no prior dep to preserve, so the
+  "no silent drop" check is trivially satisfied for them. No other operation
+  `requires:` names a removed ontology (`projects` survives, re-homed).
+  `decision` is homed in `library/`, **not** `atlas/`: it is an
   extracted/ingested type, and §E reserves the gated `atlas/` peak for
   human-gated synthesis — so no content-type writes `atlas/` in this spec.
 
 - `recipes/{family,work-os,personal}.yaml`: each `primitives:` list drops the
-  five removed ontologies. `people`, `library`, and the `efforts/<type>/`
-  registries arrive transitively via the content-types' re-pointed `requires:`
-  (and `efforts` via each registry's own `requires: [efforts]`). `atlas` is
-  pulled by nothing, so each recipe that wants the synthesis peak **lists
-  `atlas` explicitly** — all three do. `library` is also listed explicitly as a
-  defensive guarantee that the capture folder exists even for a minimal recipe.
+  five removed ontologies and **lists `atlas`, `library`, and `efforts`
+  explicitly** (the defensive guarantee above). `people` and the surviving
+  `trips`/`projects` registries stay listed where a recipe already names them
+  (and also arrive transitively); `cases` arrives transitively via
+  `medical-record` (family only).
 
 ### Interfaces & contracts
 
@@ -184,10 +201,10 @@ role folders each carry a README and a `genre: moc` `_index.md`.
 **Done when:** `pytest tests/unit/test_container_primitives.py` green; the three
 `efforts/<type>/` registries exist with `container_mode` declared.
 
-### T3: Collapsed ontologies removed; content-type *and operation* `requires:` re-pointed
+### T3: Collapsed ontologies + content-type kind-folder seeds removed; content-type *and operation* `requires:` re-pointed
 
 **Depends on:** T1, T2
-**Touches:** templates/ontologies/{customers,vendors,food,domains,medical}/ (deleted), templates/content-types/*/primitive.yaml, templates/operations/onboarding-pack/primitive.yaml, tests/unit/test_requires_repoint.py
+**Touches:** templates/ontologies/{customers,vendors,food,domains,medical}/ (deleted), templates/content-types/{action-item,customer-feedback,decision,interview,meeting,receipt,stakeholder-update,tax-document,vendor-contract}/files/wiki/ (deleted kind-folder README seeds), templates/content-types/*/primitive.yaml, templates/operations/onboarding-pack/primitive.yaml, tests/unit/test_requires_repoint.py
 
 **Tests:**
 - Goal-based: `customers`, `vendors`, `food`, `domains`, `medical` ontology dirs
@@ -195,12 +212,24 @@ role folders each carry a README and a `genre: moc` `_index.md`.
   every named `requires:` resolves to an existing primitive; and for each row of
   the re-pointing table the *surviving* deps from the current manifest are still
   present (no silent capability drop) (AC: ontology set; no dangling requires).
+- Goal-based: no content-type primitive seeds a `files/wiki/<kind>/` folder
+  any longer — the nine kind-folder README seeds (`actions/`,
+  `customer-feedback/`, `decisions/`, `interviews/`, `meetings/`, `receipts/`,
+  `stakeholder-updates/`, `tax/`, `vendor-contracts/`) are gone; the only
+  `files/wiki/` seed trees a content-type ships are none (its pages home in the
+  role folders the ontologies seed) (AC: no kind-keyed folder; spec Assumption
+  on content-type folder seeds).
 - Integration: `primitives.resolve_dependencies` accepts the full catalog for
   every recipe — including `work-os`, whose `onboarding-pack` currently names the
   removed `customers` (AC: no dangling requires).
 
 **Approach:**
 - Delete the five ontology primitive dirs.
+- Delete the nine content-type `files/wiki/<kind>/` seed dirs (a content-type
+  no longer owns a folder — its pages home in `library/`, which the `library`
+  ontology seeds; per-kind guidance moves to the `library` README + each type's
+  ingest `SKILL.md`/`_template`). `medical-record`, `recipe`, `trip-doc` seed
+  no kind folder, so they are untouched here.
 - Re-point each content-type's `requires:` per the Design old→new table.
 - Re-point `onboarding-pack`'s operation `requires:` (`customers`→`people`,
   keeping `projects`/`decision`/`customer-feedback`); confirm no other operation
@@ -208,12 +237,13 @@ role folders each carry a README and a `genre: moc` `_index.md`.
 
 **Done when:** the goal-based + integration assertions pass; `grep -r` finds no
 `requires:` naming a deleted ontology across `templates/content-types` and
-`templates/operations`.
+`templates/operations`, and no `templates/content-types/*/files/wiki/`
+directory remains.
 
 ### T4: Recipes install the role-folder set
 
 **Depends on:** T3
-**Touches:** recipes/family.yaml, recipes/work-os.yaml, recipes/personal.yaml, tests/integration/test_recipe_role_layout.py
+**Touches:** recipes/family.yaml, recipes/work-os.yaml, recipes/personal.yaml, tests/integration/test_recipe_role_layout.py, and the existing layout/closure tests that bake in the old folder set — tests/integration/test_family_recipe.py, tests/integration/test_work_os_recipe.py, tests/integration/test_personal_recipe.py, tests/unit/test_recipes.py (and any unit test asserting the catalog's ontology set, e.g. tests/unit/test_models.py / tests/unit/test_starter_seed_coverage.py) updated to the four-role layout
 
 **Tests:**
 - Integration: `wiki init` over each recipe renders `wiki/{people,efforts,
@@ -223,41 +253,70 @@ role folders each carry a README and a `genre: moc` `_index.md`.
   set).
 
 **Approach:**
-- Update each recipe's `primitives:` list — drop the five removed ontologies.
-  `people`, the `efforts/<type>/` registries, and `efforts` arrive transitively
-  via the re-pointed content-type `requires:`; **add `atlas` and `library`
-  explicitly** to each of `family`, `work-os`, and `personal` (nothing pulls
-  `atlas`, and `library` is listed defensively so the capture folder exists
-  regardless of which content-types a recipe carries).
+- Update each recipe's `primitives:` list — drop the five removed ontologies and
+  **add `atlas`, `library`, and `efforts` explicitly** to each of `family`,
+  `work-os`, and `personal` (nothing pulls `atlas`; `library`/`efforts` are
+  listed defensively so the role folders exist regardless of which content-types
+  a recipe carries — see the §Design decision). `people` and the surviving
+  `trips`/`projects` registries stay where already listed. Refresh each recipe's
+  header comment/description prose that names a removed ontology.
 
 **Done when:** the integration test renders all three layouts cleanly and
 `resolve_dependencies` accepts each recipe.
 
-### T5: Vault-side entity-stub references re-pointed; deferrals registered
+### T5: Vault-side content-type folder references re-pointed; deferrals registered
 
 **Depends on:** T3
-**Touches:** templates/content-types/*/files/**/SKILL.md, templates/content-types/*/files/wiki/**/README.md, docs/backlog.md
+**Touches:** templates/content-types/*/files/skills/**/SKILL.md, docs/backlog.md
 
 **Tests:**
-- Goal-based: no vault-side content-type ingest `SKILL.md`/`README.md` stubs an
-  entity page into a removed folder (`customers/`, `vendors/`); person/org/vendor
-  /customer stubs reference `people/` (AC: entity-stub re-point).
+- Goal-based: no vault-side content-type ingest `SKILL.md` references a removed
+  ontology folder (`customers/`, `vendors/`, `food/`, `medical/`, `domains/`) or
+  a removed content-type kind folder (`meetings/`, `actions/`, `decisions/`,
+  `interviews/`, `customer-feedback/`, `receipts/`, `tax/`,
+  `stakeholder-updates/`, `vendor-contracts/`); person/org/vendor/customer
+  entity stubs reference `people/`; page-home references point at `library/`
+  (capture) or the re-homed `efforts/<type>/` registries (AC: entity-stub
+  re-point; no SKILL points at a deleted/re-homed folder).
 - Goal-based: `docs/backlog.md#role-folders-and-containers` exists and names the
-  residual `genre`/`subtype` value faceting, the six stale operation SKILLs, the
-  `wiki search`/`search.py` folder globs, and the starter seed-page deferral; and
-  the existing `faceted-frontmatter-schema` backlog entries that pointed the
-  vault-side doc re-key + starter seed-page faceting at this spec /
-  `recipe-organization-model` are reconciled to the spec that now owns each (AC:
-  deferral registered; CONVENTIONS § Spec-metadata invariant 4 — no dangling
-  deferral pointer).
+  residual `type:`→`genre`/`subtype` value faceting in the content-type docs and
+  `_templates`, the six stale operation SKILLs, the `wiki search`/`search.py`
+  folder globs, and the starter seed-page deferral; and the existing
+  `faceted-frontmatter-schema` backlog entries that pointed the vault-side doc
+  re-key + starter seed-page faceting at this spec / `recipe-organization-model`
+  are reconciled to the spec that now owns each (AC: deferral registered;
+  CONVENTIONS § Spec-metadata invariant 4 — no dangling deferral pointer).
 
 **Approach:**
-- Re-point the entity-stub folder references in the vault-side docs to the role
-  folders; register the out-of-scope re-keys under the new backlog anchor; update
-  the `faceted-frontmatter-schema` backlog entries so no pointer dangles.
+- Re-point **every folder reference** in the vault-side content-type ingest
+  `SKILL.md` docs so none points at a deleted or re-homed folder — shipping a
+  SKILL that tells an agent to write into a folder the reshape removed is a
+  day-one correctness defect for the produced vault (review Concern 5), not
+  cosmetic drift:
+  - **entity stubs** (person/org/vendor/customer node) → `people/` (the former
+    `customers/`/`vendors/` stub homes collapse here);
+  - **page-home** (where the ingested page itself lands) → `library/` for every
+    capture type (`meeting`, `interview`, `decision`, `action-item`,
+    `customer-feedback`, `receipt`, `tax-document`, `vendor-contract`,
+    `recipe`, `medical-record`), and `efforts/cases/` for the case dimension of
+    `medical-record`;
+  - **re-homed container** references (`wiki/trips/`→`wiki/efforts/trips/`,
+    `wiki/projects/`→`wiki/efforts/projects/`) in `trip-doc`/`stakeholder-update`.
+- This is folder-path re-pointing only. The orthogonal `type:`→`genre`/`subtype`
+  **frontmatter-value** faceting in these SKILLs and the `_templates` is *not*
+  touched here — it changes field values, not paths, and is the deferred
+  vault-side-doc re-key.
+- Register the out-of-scope re-keys under the new backlog anchor
+  `docs/backlog.md#role-folders-and-containers`: (a) the residual
+  `type:`→`genre`/`subtype` faceting in content-type docs and `_templates`;
+  (b) the six stale operation SKILLs; (c) the `wiki search`/`search.py` folder
+  globs; (d) the hand-authored starter seed-page `type:`/folder references
+  (seed pages stay verbatim — `regenerate.py --check` is their only gate).
+- Update the `faceted-frontmatter-schema` backlog entries so no pointer dangles.
 
-**Done when:** both goal-based tests pass; no vault-side doc stubs into a removed
-folder; no backlog deferral pointer names a spec that no longer owns the work.
+**Done when:** both goal-based tests pass; no vault-side doc stubs an *entity*
+into a removed ontology folder; the backlog anchor names every deferred re-key;
+no backlog deferral pointer names a spec that no longer owns the work.
 
 ### T6: End-to-end layout proven; starters regenerated; lenses unregressed
 
@@ -270,17 +329,37 @@ folder; no backlog deferral pointer names a spec that no longer owns the work.
   present, shipped `.base` files byte-unchanged (AC: layout renders; RFC-0008
   untouched).
 - Goal-based: no primitive seeds a kind/lifecycle/area folder or a container
-  genre/lifecycle subfolder — the forbidden set is `meetings/`, `records/`,
-  `decisions/`, `sources/`, `drafts/`, `archive/`, `someday/`, `upcoming/`,
-  `past/`, `areas/`, `domains/` (only `_assets/`/`_working/` permitted inside a
+  genre/lifecycle subfolder — the forbidden seed-folder set is the
+  ontology-kind `customers/`, `vendors/`, `food/`, `medical/`, `domains/`; the
+  content-type-kind `meetings/`, `actions/`, `decisions/`, `interviews/`,
+  `customer-feedback/`, `receipts/`, `tax/`, `stakeholder-updates/`,
+  `vendor-contracts/`; and the lifecycle/area/synthesis-subfolder
+  `records/`, `sources/`, `drafts/`, `archive/`, `someday/`, `upcoming/`,
+  `past/`, `areas/` (only `_assets/`/`_working/` permitted inside a
   container) (AC: no kind/lifecycle/area folder).
 - Goal-based: `python starters/regenerate.py --check` exits 0 (AC: starters
   regenerated).
 
 **Approach:**
-- Add the end-to-end test; run `python starters/regenerate.py --apply` to rebuild
-  the committed starters against the new layout (seed pages stay verbatim — their
-  faceting is the registered deferral).
+- Add the end-to-end test. **Relocate** the hand-authored `starters/_seed/**`
+  pages into the role folders (entity nodes → `people/`, captures → `library/`,
+  trips → `efforts/trips/`, projects → `efforts/projects/`, a medical record →
+  `efforts/cases/`, a former domain page → `atlas/`) and re-point their
+  cross-folder wikilinks, so no committed starter retains a removed
+  kind/ontology folder (AC "rendered tree matches the four-role layout"). The
+  `type:`→`genre`/`subtype` frontmatter-value faceting stays deferred. Teach
+  `starters/check_coverage.py` to resolve each ontology's seeded folder from its
+  source `files/wiki/` tree (so the `efforts/<type>/` registries map correctly),
+  author a minimal `atlas/` MOC + `efforts/cases/` seed where a recipe installs
+  the ontology but has no natural seed, then run
+  `python starters/regenerate.py --apply` to rebuild the committed starters.
+
+  *Scope note:* the spec originally framed seed-page relocation as deferred
+  ("seed pages stay verbatim"), but that contradicts the AC requiring the
+  committed tree to match the four-role layout — leaving seed pages in deleted
+  folders means the committed starter still shows `food/`, `customers/`, etc.
+  Resolved toward the AC: folders relocated here, value-faceting deferred. The
+  backlog entry is reconciled to match.
 
 **Done when:** the integration + goal-based tests are green,
 `starters/regenerate.py --check` exits 0, and `pytest -m 'not slow'`,
@@ -317,6 +396,34 @@ folder; no backlog deferral pointer names a spec that no longer owns the work.
 
 ## Changelog
 
+- 2026-06-16: pre-EXECUTE adversarial review response. (Blocker) Pinned the
+  full MOC `_index.md` frontmatter contract — `genre: moc`, `subtype: moc`,
+  `status: active`, `provenance: synthesized`, literal `created`/`modified`
+  dates — in the spec AC + Testing Strategy and plan §Design, with a goal-based
+  assertion on all six required fields; the content-type-owned `subtype` managed
+  region is left untouched (a navigational MOC mirrors its genre). (Blocker)
+  Specified literal dates so `regenerate.py --check` stays byte-stable.
+  (Concern) Recipes now list `efforts` explicitly alongside `atlas`/`library`
+  rather than relying on a single-threaded transitive chain. (Concern) Pulled
+  the content-type ingest-SKILL **page-home** folder re-key into T5 (a shipped
+  SKILL pointing at a deleted folder is a day-one defect); deferred only the
+  orthogonal `type:`→`genre`/`subtype` value faceting. (Nits) Annotated the
+  `[]`-baseline `requires:` rows as additions-only.
+- 2026-06-16: pre-EXECUTE reconciliation with the on-disk catalog. Found that
+  nine **content-type** primitives seed their own kind-keyed `files/wiki/<kind>/`
+  folder (the spec's mental model treated folders as ontology-only); these
+  violate the "exactly four role folders" Objective and the T6 grep gate (which
+  already forbids `meetings/`/`decisions/`), so T3 now deletes them too and the
+  spec gains an Assumption + a widened "no kind-keyed folder" AC. Widened the T6
+  forbidden-folder grep to the full ontology-kind + content-type-kind set.
+  Clarified T5: only **entity-stub** references into removed *ontology* folders
+  are re-pointed (gated); content-type ingest-SKILL **page-home** folder
+  references and the `type:`→`genre`/`subtype` faceting are deferred to the
+  backlog anchor alongside the operation SKILLs and search globs. Pulled the
+  existing layout/closure tests (`test_{family,work-os,personal}_recipe.py`,
+  `test_recipes.py`, catalog-set unit tests) into T4's scope — a layout change
+  drifts them by construction. Confirmed `_seed/` pages stay verbatim (their
+  relocation is the registered deferral; `regenerate.py --check` is the gate).
 - 2026-06-16: spec-mode adversarial review — rebuilt the `requires:` re-pointing
   table from the on-disk manifests as old→new (the draft table dropped surviving
   deps like `medical-record`'s `people` and `stakeholder-update`'s `projects`);

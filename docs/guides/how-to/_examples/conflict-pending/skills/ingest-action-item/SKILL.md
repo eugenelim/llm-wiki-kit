@@ -1,6 +1,6 @@
 ---
 name: ingest-action-item
-description: "Promote a follow-up — pasted by the user, extracted from a meeting transcript, or surfaced from a medical record — into a standalone `action-item` page under `wiki/actions/`. Load when the user says \"track this as an action\", \"make this its own task\", or wants to promote a one-line follow-up to a page that can accumulate updates. Most follow-ups stay inline on their source page; this skill is for the ones that don't."
+description: "Promote a follow-up — pasted by the user, extracted from a meeting transcript, or surfaced from a medical record — into a standalone `action-item` page under `wiki/library/`. Load when the user says \"track this as an action\", \"make this its own task\", or wants to promote a one-line follow-up to a page that can accumulate updates. Most follow-ups stay inline on their source page; this skill is for the ones that don't."
 license: MIT
 ---
 
@@ -43,7 +43,7 @@ You need to extract:
 ## Page shape
 
 Render from `_templates/action-item.md`. Filename is
-`wiki/actions/YYYY-MM-DD-<slug>.md` where the date is today's date and
+`wiki/library/YYYY-MM-DD-<slug>.md` where the date is today's date and
 the slug is a 2-4 word kebab-case summary.
 
 The body has four sections:

@@ -8,8 +8,8 @@ description: >-
   that make `genre: record, subtype: customer-feedback` a valid value with feedback-scoped
   fields. Feeds `status-synthesis` and `onboarding-pack`.
 requires:
-  - customers
   - people
+  - library
 # No routing: block — manual-only. Feedback arrives as pasted ticket text,
 # call notes, or survey responses with no reliable filename/extension
 # signal; reach this primitive via `wiki ingest --as customer-feedback`.

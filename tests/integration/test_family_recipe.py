@@ -46,35 +46,42 @@ def _expected_family_closure() -> list[str]:
     return [primitive.name for primitive in resolve_recipe_primitives(recipe, catalog)]
 
 
-def test_family_recipe_lists_every_task_13_primitive() -> None:
-    """Sanity-check: the recipe file references every primitive Task 13 ships."""
+def test_family_recipe_lists_every_household_primitive() -> None:
+    """Sanity-check: the recipe file references the household primitive set.
+
+    Post RFC-0009 the household pages live over the four role folders: the
+    entity-kind ontologies (`food`/`medical`/`vendors`) are gone and their
+    pages are `subtype`s in `library/`/`people/`; `atlas`/`library`/`efforts`
+    are listed explicitly so the four-role floor holds. The recipe loader
+    resolves `requires:` transitively, so listing each leaf is enough.
+    """
 
     recipe = load_recipe(REPO_ROOT / "recipes" / "family.yaml")
     listed = set(recipe.primitives)
 
-    # Task 13 names these explicitly; the recipe loader resolves
-    # transitively via ``requires:`` so listing each leaf is enough.
     expected_minimum = {
-        # Ontologies (Task 13).
-        "food",
-        "medical",
+        # Role folders + container registry (RFC-0009 §C/§D).
+        "people",
+        "library",
+        "atlas",
+        "efforts",
         "trips",
-        "vendors",
-        # Content-types (Task 13).
+        # Content-types.
         "recipe",
         "medical-record",
         "trip-doc",
         "receipt",
         "tax-document",
         "action-item",
-        # Operations (Task 13).
+        "meeting",
+        # Operations.
         "meal-planning",
         "trip-prep",
         "follow-up-tracker",
         "medical-summary",
     }
     missing = expected_minimum - listed
-    assert not missing, f"family recipe is missing Task 13 primitives: {sorted(missing)}"
+    assert not missing, f"family recipe is missing household primitives: {sorted(missing)}"
 
 
 def test_family_init_installs_full_closure(tmp_path: Path) -> None:
@@ -90,15 +97,23 @@ def test_family_init_installs_full_closure(tmp_path: Path) -> None:
     assert state.installed_primitives["core"] == "0.1.0"
 
 
-def test_family_init_creates_every_ontology_folder(tmp_path: Path) -> None:
-    """Each Task-13 ontology seeds `wiki/<thing>/README.md`."""
+def test_family_init_creates_the_four_role_folders(tmp_path: Path) -> None:
+    """The family vault renders the four role folders + its container registries.
+
+    RFC-0009 §C/§D: a household locates pages by role, not by kind. The
+    folder set is exactly `people/`, `efforts/`, `library/`, `atlas/`, with
+    `trips`/`cases` container registries nested under `efforts/`.
+    """
 
     vault = tmp_path / "household"
     assert main(["init", str(vault), "--recipe", "family"]) == 0
 
-    for ontology in ("people", "food", "medical", "trips", "vendors"):
-        readme = vault / "wiki" / ontology / "README.md"
-        assert readme.is_file(), f"missing wiki/{ontology}/README.md"
+    for role in ("people", "efforts", "library", "atlas"):
+        readme = vault / "wiki" / role / "README.md"
+        assert readme.is_file(), f"missing wiki/{role}/README.md"
+    for reg in ("trips", "cases"):
+        readme = vault / "wiki" / "efforts" / reg / "README.md"
+        assert readme.is_file(), f"missing wiki/efforts/{reg}/README.md"
 
 
 def test_family_init_aggregates_every_content_type_into_schema(tmp_path: Path) -> None:

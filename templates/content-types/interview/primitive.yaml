@@ -9,6 +9,7 @@ description: >-
   and hiring conversations.
 requires:
   - people
+  - library
 # No routing: block — manual-only. Interview transcripts arrive as pasted
 # prose with no reliable filename/extension signal; the user reaches this
 # primitive via `wiki ingest --as interview`.

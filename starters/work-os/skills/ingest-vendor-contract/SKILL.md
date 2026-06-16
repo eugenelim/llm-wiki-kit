@@ -1,6 +1,6 @@
 ---
 name: ingest-vendor-contract
-description: "Ingest a vendor-contract source (signed contract PDF text, renewal notice, procurement summary, or order form) into a structured vendor-contract page. Load from the `ingest` skill when content-type routing identifies the source as a vendor contract — typically a counterparty name, a term window, an amount, and signed/effective dates. Produces one page under `wiki/vendor-contracts/` and registers the contract for downstream operations (renewal-reminders)."
+description: "Ingest a vendor-contract source (signed contract PDF text, renewal notice, procurement summary, or order form) into a structured vendor-contract page. Load from the `ingest` skill when content-type routing identifies the source as a vendor contract — typically a counterparty name, a term window, an amount, and signed/effective dates. Produces one page under `wiki/library/` and registers the contract for downstream operations (renewal-reminders)."
 license: MIT
 ---
 
@@ -33,7 +33,7 @@ For each, extract:
 
 - **`contract_vendor`** — the legal name of the counterparty, as it
   appears on the contract. Plain string; vendors do not live in
-  `wiki/customers/` and the work-os recipe has no `vendors` ontology
+  `wiki/people/` and the work-os recipe has no `vendors` ontology
   in v0.1 (a future recipe may add one).
 - **`contract_start`** — the effective start date.
 - **`contract_end`** — the end date or `null` if the contract is
@@ -54,7 +54,7 @@ For each, extract:
 ## Page shape
 
 Render the page from `_templates/vendor-contract.md`. The filename
-convention is `wiki/vendor-contracts/<vendor>-<YYYY>.md`, where
+convention is `wiki/library/<vendor>-<YYYY>.md`, where
 `<vendor>` is the kebab-case vendor name and `<YYYY>` is the start
 year. For multi-year contracts, the start year is sufficient; a
 renewal gets a new page with the new start year.
@@ -67,7 +67,7 @@ The `contract_owner` field must resolve to a page under `wiki/people/`:
 2. If a match exists, use its wikilink.
 3. If no match, stub a new person page with `type: person`,
    `status: draft`, `provenance: synthesized`, and a one-line note
-   "First seen in `[[vendor-contracts/<this-contract>]]`." Wikilink to
+   "First seen in `[[library/<this-contract>]]`." Wikilink to
    the stub.
 
 ## Renewal dates are first-class

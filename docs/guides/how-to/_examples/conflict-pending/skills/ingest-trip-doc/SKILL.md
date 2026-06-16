@@ -1,6 +1,6 @@
 ---
 name: ingest-trip-doc
-description: "Ingest a trip booking confirmation (hotel, flight, rental car, activity reservation) into a structured `trip-doc` page under `wiki/trips/upcoming/`. Load from the `ingest` skill when content-type routing identifies the source as a booking (confirmation email, PDF, or web page). Aggregates: a single trip typically gets several runs — each new booking appends to the same trip page. Pairs with the `trip-prep` operation (which writes packing + pre-departure tasks back to the same page 2-3 weeks before departure)."
+description: "Ingest a trip booking confirmation (hotel, flight, rental car, activity reservation) into a structured `trip-doc` page under `wiki/efforts/trips/upcoming/`. Load from the `ingest` skill when content-type routing identifies the source as a booking (confirmation email, PDF, or web page). Aggregates: a single trip typically gets several runs — each new booking appends to the same trip page. Pairs with the `trip-prep` operation (which writes packing + pre-departure tasks back to the same page 2-3 weeks before departure)."
 license: MIT
 ---
 
@@ -19,14 +19,14 @@ The `ingest` skill routes here when:
 - A new booking for an existing trip is dropped (aggregation case).
 
 If the booking dates have already passed, assume the document belongs
-to a past trip and write to `wiki/trips/past/` instead of `upcoming/`.
+to a past trip and write to `wiki/efforts/trips/past/` instead of `upcoming/`.
 
 ## Inputs you'll see
 
 - A cleaned-up booking confirmation (the `ingest` skill runs source-type
   cleanup first — Docling for PDFs, defuddle for booking-site URLs, paste
   handling for forwarded emails).
-- Existing pages under `wiki/trips/upcoming/` — to detect whether this
+- Existing pages under `wiki/efforts/trips/upcoming/` — to detect whether this
   booking belongs to an existing trip.
 
 You need to extract:
@@ -46,7 +46,7 @@ You need to extract:
 
 Render from `_templates/trip-doc.md`. Filename is
 `YYYY-MM-DD-<destination-slug>.md` where the date is `trip_start_date`.
-Place under `wiki/trips/upcoming/` (or `past/` for retrospective entries).
+Place under `wiki/efforts/trips/upcoming/` (or `past/` for retrospective entries).
 
 If a trip page already exists for these dates and destination, **append
 the booking to the existing page** rather than creating a new one. The

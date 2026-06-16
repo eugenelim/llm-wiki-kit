@@ -1,12 +1,14 @@
 # Work-OS recipe — vault shape for a professional knowledge base.
 #
-# Task 14 (RFC-0001) expands this recipe with the work-os primitives:
-# `projects`, `domains`, `customers` ontologies; `stakeholder-update`,
-# `vendor-contract`, `customer-feedback`, `interview`, `decision`
-# content-types; `stakeholder-map-refresh`, `action-item-rollup`,
-# `renewal-reminders`, `onboarding-pack`, `status-synthesis` operations.
-# `people` and `meeting` are pulled in transitively via `requires:`
-# from the content-types and operations that need them.
+# Lays a single operator's work over the four role folders (RFC-0009 §C):
+# customer and stakeholder nodes in `people/`, project hubs under
+# `efforts/projects/`, capture (stakeholder updates, contracts, feedback,
+# interviews, decisions) in `library/`, and synthesis in `atlas/`. The
+# entity-kind ontologies `customers`/`domains` are gone — a customer is a
+# `subtype: customer` node in `people/`, an area is a `workspaces:` lens
+# with an optional `atlas/` map. `people`/`meeting`/`projects` arrive
+# transitively via the content-types; `atlas`, `library`, and `efforts`
+# are listed explicitly so the four-role floor holds regardless.
 #
 # Reading this in the future: the rule is "every primitive named here
 # must already exist in the catalog when this recipe lands on main."
@@ -24,12 +26,13 @@ description: >-
   top of them.
 primitives:
   - action-item-rollup
+  - atlas
   - customer-feedback
   - customer-listener
-  - customers
   - decision
-  - domains
+  - efforts
   - interview
+  - library
   - onboarding-pack
   - projects
   - renewal-reminders

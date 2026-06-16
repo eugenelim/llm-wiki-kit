@@ -1,0 +1,13 @@
+name: library
+kind: ontology
+version: 0.1.0
+description: >-
+  Capture & reference role folder (RFC-0009 §C). Seeds `wiki/library/` with a
+  README and a `genre: moc` `_index.md` map. Every ingested or reference page
+  that is not an entity node, an effort, or a synthesis lands here — meetings,
+  interviews, decisions, action items, receipts, tax documents, contracts,
+  customer feedback, recipes, and medical records included (the former `food/`
+  and per-record `medical/` material collapses here). Pages are distinguished by
+  the `genre`/`subtype` facets, never by a kind subfolder.
+requires: []
+contributes_to: []

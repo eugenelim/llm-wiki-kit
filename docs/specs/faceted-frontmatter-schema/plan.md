@@ -236,7 +236,8 @@ and the template test passes.
   is **not** slow-marked) drifts until the starters are rebuilt. Regeneration
   syncs the *generated* artifacts only — `build_vault` copies `_seed/` pages
   verbatim, so the starter seed pages keep their `type:` frontmatter (their
-  faceting is the deferred `recipe-organization-model` work, registered in the
+  value-faceting is deferred — owned by `role-folders-and-containers`, which
+  absorbed the recipe-rewrite + starter-regeneration scope; registered in the
   backlog).
 - **Update the catalog-pin test** `tests/unit/test_content_type_snippets.py`
   to the facet model: it currently reads each `.types` snippet and asserts the
@@ -298,9 +299,9 @@ exits 0, and `pytest -m 'not slow'`, `ruff check`, `ruff format --check`,
   regenerates them (`regenerate.py --apply`) to keep the non-slow
   `test_starters_regenerable` gate green, and re-points the existing
   `test_content_type_snippets.py` catalog pin at `.subtype`/`subtype ==`.
-  Starter *seed-page* faceting stays deferred to `recipe-organization-model`
-  (backlog). No structural surface added (no new module/dep/dir/abstraction),
-  so no structural-review re-fire.
+  Starter *seed-page* value-faceting stays deferred — owned by
+  `role-folders-and-containers` (backlog). No structural surface added (no new
+  module/dep/dir/abstraction), so no structural-review re-fire.
 - 2026-06-16: initial plan.
 - 2026-06-16: pre-EXECUTE adversarial review — resolved the `genre`
   contradiction: `genre` is a **fixed baseline enum (the nine, hand-written)**,

@@ -17,16 +17,21 @@
 # * `action-item`, `follow-up-tracker` (Task 13) — every audience
 #   needs follow-up tracking. The personal cadence is lighter than a
 #   household's, but the surface is the same.
-# * `food`, `recipe`, `meal-planning` (Task 13) — cooking is a
-#   first-class personal use case. `food` arrives transitively via
-#   `recipe`; listed for readability.
-# * `trips`, `trip-doc`, `trip-prep` (Task 13) — personal travel.
-#   Same reasoning: `trips` is transitive via `trip-doc`, listed for
-#   readability.
+# * `atlas`, `library`, `efforts` (RFC-0009 role folders) — listed
+#   explicitly so the four-role floor holds: synthesis in `atlas/`,
+#   capture in `library/`, bounded efforts under `efforts/`. `library`
+#   and `efforts` also arrive transitively (via `recipe`/`decision` and
+#   via `trips`), but the explicit listing is the guarantee.
+# * `recipe`, `meal-planning` (Task 13) — cooking is a first-class
+#   personal use case. Recipe pages home in `library/` (the `food`
+#   ontology is gone — a recipe is a `genre: reference` capture).
+# * `trips`, `trip-doc`, `trip-prep` (Task 13) — personal travel. A trip
+#   is a folder-mode container under `efforts/trips/`; `trips` is
+#   transitive via `trip-doc`, listed for readability.
 # * `decision` (Task 14) — durable record of "what I chose, why, and
-#   what I considered." Useful for personal decisions (job offers,
-#   moves, big purchases) as well as work-os ones, and ships without
-#   any work-OS-shaped dependencies (no `projects`/`customers`).
+#   what I considered," captured in `library/`. Useful for personal
+#   decisions (job offers, moves, big purchases) as well as work-os ones,
+#   and ships without any work-OS-shaped dependencies (no `projects`).
 # * `content-studio`, `planning` (RFC-0008 workspace lenses) — the two
 #   default lenses that turn the personal vault into a multi-area
 #   knowledge bank. `content-studio` is a *membership* lens (notes whose
@@ -42,20 +47,19 @@
 #
 # Deliberately excluded from the default closure:
 #
-# * `medical` / `medical-record` / `medical-summary` (Task 13) —
-#   medical data is sensitive enough that opt-in via `wiki add` is the
-#   safer default. A user who wants them runs
-#   `wiki add ontology:medical` (and the content-type / operation as
-#   needed); the personal recipe should not assume they want medical
-#   records in their default vault shape.
-# * `vendors` + `receipt` + `tax-document` (Task 13) — household-shape
-#   primitives. The personal audience is one individual; vendor /
-#   receipt / tax tracking is a household concern (joint expenses,
-#   shared service providers) that doesn't fit the one-person framing.
-# * `projects` / `domains` / `customers` ontologies + work-OS
-#   content-types (`stakeholder-update`, `vendor-contract`,
-#   `customer-feedback`, `interview`) + work-OS operations
-#   (`stakeholder-map-refresh`, `action-item-rollup`,
+# * `medical-record` / `medical-summary` + the `cases` registry
+#   (Task 13) — medical data is sensitive enough that opt-in via
+#   `wiki add` is the safer default. A user who wants them runs
+#   `wiki add content-type:medical-record` (which pulls the `cases`
+#   container) and the summary operation as needed; the personal recipe
+#   should not assume they want medical records in their default shape.
+# * `receipt` + `tax-document` (Task 13) — household-shape primitives.
+#   The personal audience is one individual; receipt / tax tracking is a
+#   household concern (joint expenses, shared service providers) that
+#   doesn't fit the one-person framing.
+# * `projects` registry + work-OS content-types (`stakeholder-update`,
+#   `vendor-contract`, `customer-feedback`, `interview`) + work-OS
+#   operations (`stakeholder-map-refresh`, `action-item-rollup`,
 #   `renewal-reminders`, `onboarding-pack`, `status-synthesis`) —
 #   work-OS shaped. The personal recipe is not a single-operator work
 #   vault; users who want both run two vaults.
@@ -71,12 +75,14 @@ description: >-
   follow-up tracker to keep them coordinated.
 primitives:
   - action-item
+  - atlas
   - content-studio
   - decision
   - decision-companion
+  - efforts
   - follow-up-tracker
-  - food
   - identity
+  - library
   - meal-planning
   - meeting
   - people

@@ -5,10 +5,12 @@ description: >-
   Receipt page type. Ships an ingester skill (capture a receipt photo,
   PDF, statement entry, or emailed receipt), a page template, and the
   schema contributions that make `genre: record, subtype: receipt` valid with receipt-
-  scoped fields. Vendor pages are stubbed on first reference under
-  `wiki/vendors/`; warranty and tax-relevant items surface as flags.
+  scoped fields. Vendor nodes are stubbed on first reference under
+  `wiki/people/` (`subtype: vendor`); warranty and tax-relevant items surface
+  as flags. The receipt page itself homes in `wiki/library/`.
 requires:
-  - vendors
+  - people
+  - library
 routing:
   filename_patterns:
     - "*receipt*"

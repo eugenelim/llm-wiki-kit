@@ -1,6 +1,6 @@
 # Spec: role-folders-and-containers
 
-- **Status:** Approved <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0009, RFC-0008, RFC-0004, ADR-0011, ADR-0006
@@ -117,7 +117,11 @@ no production logic mirrors the assertion.
   `medical` — are absent): **goal-based** — enumerate `templates/ontologies/*/`.
 - **Every role folder and folder-mode container ships a README + a `genre: moc`
   `_index.md`**: **goal-based** — parse the seeded `files/wiki/**/_index.md`
-  frontmatter.
+  frontmatter and assert it carries all six `required:` fields with
+  schema-valid values: `genre: moc`, `subtype: moc`, `status: active`,
+  `provenance: synthesized`, and literal `YYYY-MM-DD` `created`/`modified`
+  dates (literal — never a generated/templated token — so starter
+  regeneration stays byte-stable).
 - **`container_mode` declared and well-formed** (each container primitive's
   `config.container_mode` is `folder` or `hub`; `trips`/`cases` are `folder`,
   `projects` is `hub`): **goal-based** — parse the three container
@@ -140,25 +144,31 @@ no production logic mirrors the assertion.
 
 ## Acceptance Criteria
 
-- [ ] `templates/ontologies/` contains exactly `people`, `efforts`, `library`,
+- [x] `templates/ontologies/` contains exactly `people`, `efforts`, `library`,
       `atlas`, `trips`, `cases`, `projects`, and the unchanged `identity`; the
       collapsed `customers`, `vendors`, `food`, `domains`, and `medical`
       ontology primitives are removed.
-- [ ] The `people` ontology seeds `wiki/people/` and its README documents that
+- [x] The `people` ontology seeds `wiki/people/` and its README documents that
       people, organizations, vendors, and customers are all node `subtype`s in
       one folder (the former `customers`/`vendors` homes collapse here).
-- [ ] The `library` ontology seeds `wiki/library/` (capture & reference,
+- [x] The `library` ontology seeds `wiki/library/` (capture & reference,
       absorbing the former `food` and per-record `medical` material); the
       `atlas` ontology seeds `wiki/atlas/` (synthesis); each ships a README and
       a `genre: moc` `_index.md`.
-- [ ] The `efforts` ontology seeds `wiki/efforts/` with a README and a
+- [x] Every seeded `_index.md` carries all six `required:` schema fields with
+      schema-valid values — `genre: moc`, `subtype: moc`, `status: active`,
+      `provenance: synthesized`, and literal `created`/`modified` dates (a
+      `moc`-genre page is navigational and not content-type-produced, so its
+      `subtype` mirrors its `genre`; the content-type-owned `subtype` managed
+      region is untouched).
+- [x] The `efforts` ontology seeds `wiki/efforts/` with a README and a
       `genre: moc` `_index.md`; the `trips`, `cases`, and `projects` container
       registries each seed `wiki/efforts/<type>/` with a README and a
       `genre: moc` `_index.md`.
-- [ ] Each container primitive declares `config.container_mode` ∈
+- [x] Each container primitive declares `config.container_mode` ∈
       {`folder`, `hub`}: `trips` and `cases` are `folder`, `projects` is `hub`;
       a goal-based test parses each container manifest and asserts the value.
-- [ ] No content-type *or operation* `primitive.yaml` `requires:` names a removed
+- [x] No content-type *or operation* `primitive.yaml` `requires:` names a removed
       ontology, and no re-point silently drops a dependency that is not itself
       removed (a relocation preserves every surviving dep; a removal is listed):
       the plan's old→new re-pointing table is the reference, every named target
@@ -170,34 +180,45 @@ no production logic mirrors the assertion.
       `recipe`/`receipt`/`tax-document` (`food`/`vendors`→`library`, adding
       `people` where a vendor node is stubbed), and `decision`→`library`
       (capture; any `atlas/` decision-synthesis is `capture-synthesis-gating`).
-- [ ] `wiki init` over `family`, `work-os`, and `personal` renders
+- [x] `wiki init` over `family`, `work-os`, and `personal` renders
       `wiki/{people,efforts,library,atlas}/` and the recipe's per-type
       `efforts/<type>/` registries; `resolve_dependencies` accepts each recipe
       and `wiki doctor` reports no orphan/missing files.
-- [ ] No produced-vault folder is kind-keyed, lifecycle-keyed, or area-keyed,
+- [x] No produced-vault folder is kind-keyed, lifecycle-keyed, or area-keyed,
       and no folder-mode container carries a genre/lifecycle subfolder: a grep
-      asserts no `meetings/`, `records/`, `decisions/`, `sources/`, `drafts/`,
-      `archive/`, `someday/`, `upcoming/`, `past/`, `areas/`, or `domains/`
-      folder is seeded by any primitive (only `_assets/`/`_working/` bulk sinks
-      are permitted inside a container).
-- [ ] The shipped `templates/workspaces/*/files/*.base` files are
+      asserts no kind folder is seeded by any primitive — both the
+      ontology-seeded `customers/`, `vendors/`, `food/`, `medical/`,
+      `domains/` and the content-type-seeded `meetings/`, `actions/`,
+      `decisions/`, `interviews/`, `customer-feedback/`, `receipts/`, `tax/`,
+      `stakeholder-updates/`, `vendor-contracts/`, plus the
+      lifecycle/area/synthesis-subfolder set `records/`, `sources/`,
+      `drafts/`, `archive/`, `someday/`, `upcoming/`, `past/`, `areas/` (only
+      `_assets/`/`_working/` bulk sinks are permitted inside a container).
+- [x] The shipped `templates/workspaces/*/files/*.base` files are
       byte-unchanged and the rendered schema still carries `workspaces`.
-- [ ] The committed starters (`starters/{family,work-os}/`, the
+- [x] The committed starters (`starters/{family,work-os}/`, the
       `conflict-pending` example vault) are regenerated so their rendered tree
-      matches the four-role layout; `python starters/regenerate.py --check`
-      exits 0.
-- [ ] The vault-side content-type ingest `SKILL.md`/`wiki/` `README.md` entity
-      -stub folder references are re-pointed to the role folders (`type: person`
-      stubs now home in `people/`); their residual `genre`/`subtype` value
-      faceting, the six stale operation SKILLs, the `wiki search`/`search.py`
-      folder globs, and the hand-authored starter seed-page `type:`/folder
-      references are registered as deferred
+      matches the four-role layout — the hand-authored `starters/_seed/**`
+      pages are **relocated** into the role folders (so no committed starter
+      retains a removed kind/ontology folder) and their cross-folder wikilinks
+      re-pointed; their `type:`→`genre`/`subtype` frontmatter-value faceting
+      stays deferred. `python starters/regenerate.py --check` exits 0 and
+      `python starters/check_coverage.py` exits 0.
+- [x] Every folder reference in the vault-side content-type ingest `SKILL.md`
+      docs is re-pointed so none names a deleted or re-homed folder: entity-stub
+      references (person/org/vendor/customer node) home in `people/`, page-home
+      references home in `library/` (capture) or the re-homed `efforts/<type>/`
+      registries, so no shipped SKILL instructs an agent to write into a removed
+      kind/ontology folder. The orthogonal `type:`→`genre`/`subtype` value
+      faceting in those SKILLs and the `_templates`, the six stale operation
+      SKILLs, the `wiki search`/`search.py` folder globs, and the hand-authored
+      starter seed-page `type:`/folder references are registered as deferred
       (deferred: backlog.md#role-folders-and-containers). The existing
       `faceted-frontmatter-schema` backlog entries that route the vault-side
       content-type doc re-key and the starter seed-page faceting to this spec /
       `recipe-organization-model` are reconciled to point at the spec that now
       owns each (this spec absorbs the recipe-rewrite + starter-regen).
-- [ ] `ruff check llm_wiki_kit tests`, `ruff format --check llm_wiki_kit tests`,
+- [x] `ruff check llm_wiki_kit tests`, `ruff format --check llm_wiki_kit tests`,
       `mypy llm_wiki_kit tests`, and `pytest -m 'not slow'` pass.
 
 ## Assumptions
@@ -212,6 +233,18 @@ no production logic mirrors the assertion.
   ripples into content-type `requires:` and the three recipe `primitives:` lists
   (source: `recipes/family.yaml` header; 10 content-type `requires:` blocks;
   `primitives.resolve_dependencies`).
+- Technical: nine content-type primitives *also* seed a kind-keyed
+  `files/wiki/<kind>/README.md` of their own (`action-item`→`actions/`,
+  `customer-feedback`→`customer-feedback/`, `decision`→`decisions/`,
+  `interview`→`interviews/`, `meeting`→`meetings/`, `receipt`→`receipts/`,
+  `stakeholder-update`→`stakeholder-updates/`, `tax-document`→`tax/`,
+  `vendor-contract`→`vendor-contracts/`) — folders are *not* ontology-only.
+  Because the produced vault holds exactly four role folders and every capture
+  page homes in `library/`, these nine seed folders are removed alongside the
+  five collapsed ontologies; their per-kind guidance now lives in the `library`
+  README plus each type's ingest `SKILL.md`/`_template`. (`medical-record`,
+  `recipe`, `trip-doc` seed no kind folder.) Source: starter trees
+  `starters/{family,work-os}/wiki/`; `templates/content-types/*/files/wiki/`.
 - Technical: no `_index.md`/MOC mechanism exists today, so the MOC pages are
   newly introduced as seed files; their bodies are vault-runtime Bases/Dataview,
   not kit-rendered (source: grep for `_index.md`/MOC across `templates`/`core`/

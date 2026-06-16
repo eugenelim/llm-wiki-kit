@@ -1,6 +1,6 @@
 ---
 name: ingest-interview
-description: "Ingest an interview source (recording transcript, written notes, recorded-call summary) into a structured interview page. Load from the `ingest` skill when content-type routing identifies the source as a scheduled, structured conversation with a defined research goal — user research, customer-discovery, hiring, win-loss. Produces one page under `wiki/interviews/`, links the subject to `wiki/people/`, and registers the interview for downstream operations (status-synthesis, action-item-rollup)."
+description: "Ingest an interview source (recording transcript, written notes, recorded-call summary) into a structured interview page. Load from the `ingest` skill when content-type routing identifies the source as a scheduled, structured conversation with a defined research goal — user research, customer-discovery, hiring, win-loss. Produces one page under `wiki/library/`, links the subject to `wiki/people/`, and registers the interview for downstream operations (status-synthesis, action-item-rollup)."
 license: MIT
 ---
 
@@ -62,7 +62,7 @@ For each, extract:
 ## Page shape
 
 Render the page from `_templates/interview.md`. The filename
-convention is `wiki/interviews/YYYY-MM-DD-<subject>-<purpose>.md`,
+convention is `wiki/library/YYYY-MM-DD-<subject>-<purpose>.md`,
 where `<subject>` is the kebab-case subject name and `<purpose>` is a
 one-word purpose tag (`research`, `hiring`, `winloss`, `discovery`).
 
@@ -74,7 +74,7 @@ The `interview_subject` field must resolve to a page under
 1. Search `wiki/people/`. Tolerate full vs. shortened names.
 2. Match → wikilink. No match → stub a new person page with
    `type: person`, `status: draft`, `provenance: synthesized`, and a
-   one-line note "First seen in `[[interviews/<this-interview>]]`."
+   one-line note "First seen in `[[library/<this-interview>]]`."
 
 ## Findings vs. transcript
 

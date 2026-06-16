@@ -1,6 +1,6 @@
 ---
 name: ingest-receipt
-description: "Ingest a receipt (photo, PDF, statement entry, emailed receipt) into a structured `receipt` page and route the contents to the right domain — vehicle service history, appliance warranty tracking, vendor service log, tax-relevant expense list. Load from the `ingest` skill when content-type routing identifies the source as a receipt. Stubs vendor pages under `wiki/vendors/` on first reference."
+description: "Ingest a receipt (photo, PDF, statement entry, emailed receipt) into a structured `receipt` page and route the contents to the right domain — vehicle service history, appliance warranty tracking, vendor service log, tax-relevant expense list. Load from the `ingest` skill when content-type routing identifies the source as a receipt. Stubs vendor pages under `wiki/people/` on first reference."
 license: MIT
 ---
 
@@ -22,12 +22,12 @@ The `ingest` skill routes here when:
 
 - A cleaned-up receipt (the `ingest` skill runs source-type cleanup —
   Docling with OCR for photos, defuddle for forwarded emails).
-- `wiki/vendors/` — to identify recurring vendors and stub new ones.
+- `wiki/people/` — to identify recurring vendors and stub new ones.
 
 You need to extract:
 
 - **`receipt_vendor`** — the merchant or service provider as it should
-  appear in `wiki/vendors/`. If new, stub a vendor page.
+  appear in `wiki/people/`. If new, stub a vendor page.
 - **`receipt_date`** — the transaction date (not today).
 - **`receipt_amount`** — the total as a string ("$89.50"). String, not
   number, because some receipts carry currency suffixes and partial
@@ -39,7 +39,7 @@ You need to extract:
 ## Page shape
 
 Render from `_templates/receipt.md`. Filename is
-`wiki/receipts/YYYY-MM-DD-{vendor-slug}.md`. The page itself is the
+`wiki/library/YYYY-MM-DD-{vendor-slug}.md`. The page itself is the
 durable record; cross-reference it from the relevant domain page.
 
 ## Routing the contents
@@ -63,7 +63,7 @@ belongs somewhere else:
 
 ## Side-effects
 
-- **Vendor pages.** Stub new vendors at `wiki/vendors/{slug}.md` with
+- **Vendor pages.** Stub new vendors at `wiki/people/{slug}.md` with
   `status: active` and `provenance: synthesized`; cross-reference from
   the receipt.
 - **Companion page.** If the original was a PDF or image worth keeping

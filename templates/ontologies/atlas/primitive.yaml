@@ -1,0 +1,12 @@
+name: atlas
+kind: ontology
+version: 0.1.0
+description: >-
+  Synthesis role folder (RFC-0009 §C/§E). Seeds `wiki/atlas/` with a README and
+  a `genre: moc` `_index.md` map. Holds the durable, human-gated maps and
+  syntheses that sit above raw capture — area MOCs, cross-cutting overviews, the
+  "what we know about X" pages. Ships empty but for its map; pages arrive through
+  the gated synthesis-proposal flow (`capture-synthesis-gating`, a sibling spec)
+  or by hand, never as an ungated ingest target.
+requires: []
+contributes_to: []

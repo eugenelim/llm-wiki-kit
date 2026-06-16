@@ -2,9 +2,14 @@ name: projects
 kind: ontology
 version: 0.1.0
 description: >-
-  Folder shape for projects in the vault. Seeds `wiki/projects/` with a README
-  explaining the conventions content-type ingesters (stakeholder-update,
-  decision, interview, etc.) and operations (status-synthesis,
-  action-item-rollup) follow when creating or linking project pages.
-requires: []
+  Project container registry (RFC-0009 §D). Seeds `wiki/efforts/projects/` with a
+  README and a `genre: moc` `_index.md` map. A project is a hub-mode container:
+  each project is a single page `efforts/projects/<project>.md`, and member pages
+  (decisions, updates) live in their own role folder and join by the `parent:`
+  relation. Content-type ingesters (stakeholder-update, decision, interview) and
+  operations (status-synthesis, action-item-rollup) cooperate over it.
+requires:
+  - efforts
 contributes_to: []
+config:
+  container_mode: hub

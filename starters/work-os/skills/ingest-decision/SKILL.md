@@ -1,6 +1,6 @@
 ---
 name: ingest-decision
-description: "Ingest a decision source (meeting decision callout, email thread that landed on a choice, written rationale or short ADR-style doc) into a structured decision page. Load from the `ingest` skill when content-type routing identifies the source as a durable choice with context, alternatives, and consequences — distinct from a meeting (which captures *what happened*) or a stakeholder-update (which captures *what to communicate*). Produces one page under `wiki/decisions/`, links the owner to `wiki/people/`, and is read by downstream operations (status-synthesis, onboarding-pack)."
+description: "Ingest a decision source (meeting decision callout, email thread that landed on a choice, written rationale or short ADR-style doc) into a structured decision page. Load from the `ingest` skill when content-type routing identifies the source as a durable choice with context, alternatives, and consequences — distinct from a meeting (which captures *what happened*) or a stakeholder-update (which captures *what to communicate*). Produces one page under `wiki/library/`, links the owner to `wiki/people/`, and is read by downstream operations (status-synthesis, onboarding-pack)."
 license: MIT
 ---
 
@@ -63,7 +63,7 @@ For each, extract:
 ## Page shape
 
 Render the page from `_templates/decision.md`. The filename
-convention is `wiki/decisions/YYYY-MM-DD-<slug>.md` where the slug is
+convention is `wiki/library/YYYY-MM-DD-<slug>.md` where the slug is
 a two-to-four-word summary of the decision itself
 (`2026-05-16-default-region-us-east.md`). Multiple decisions on the
 same day get `-2`, `-3` suffixes.
@@ -76,7 +76,7 @@ The `decision_owner` field must resolve to a page under
 1. Search `wiki/people/`. Tolerate common variants.
 2. Match → wikilink. No match → stub a person page with
    `type: person`, `status: draft`, `provenance: synthesized`, and a
-   one-line note "First seen in `[[decisions/<this-decision>]]`."
+   one-line note "First seen in `[[library/<this-decision>]]`."
 
 ## Decisions are first-class for synthesis
 
@@ -94,7 +94,7 @@ When this decision supersedes a prior one:
 1. Set `decision_supersedes` to the prior page's wikilink.
 2. Ask the user before editing the prior page; if approved, change
    its `decision_status` to `superseded` and add a line at the top
-   of its body: "Superseded by `[[decisions/<this-decision>]]` on
+   of its body: "Superseded by `[[library/<this-decision>]]` on
    YYYY-MM-DD."
 
 Never silently mutate a prior decision page — the audit trail is the

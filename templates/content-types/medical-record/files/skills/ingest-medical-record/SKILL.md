@@ -1,6 +1,6 @@
 ---
 name: ingest-medical-record
-description: "Ingest a medical document (visit summary, EOB, lab result, prescription note) into a structured `medical-record` page, append a dated entry to the per-person medical page, and update medications and providers. Load from the `ingest` skill when content-type routing identifies the source as medical (clinic or insurer letterhead, EOB layout, lab-result format). Pairs with the `medical-summary` operation (visit prep) and `follow-up-tracker` (recheck reminders)."
+description: "Ingest a medical document (visit summary, EOB, lab result, prescription note) into a `medical-record` capture page in `wiki/library/`, append a dated entry to the patient's case overview under `wiki/efforts/cases/`, and update the patient's medications page and providers. Load from the `ingest` skill when content-type routing identifies the source as medical (clinic or insurer letterhead, EOB layout, lab-result format). Pairs with the `medical-summary` operation (visit prep) and `follow-up-tracker` (recheck reminders)."
 license: MIT
 ---
 
@@ -35,30 +35,36 @@ You need to extract:
 - **`medical_record_date`** — the date of service (not today). EOBs
   sometimes span multiple visits; if so, ask the user to pick one.
 - **`medical_record_provider`** — the provider name and (where known)
-  the practice. Add the provider to `wiki/medical/providers.md` if new.
+  the practice. Stub the provider as a vendor node (`type: vendor`) in
+  `wiki/people/` if new.
 - **`medical_record_kind`** — short label: `visit-summary`, `eob`,
   `lab-result`, `prescription`, `vaccination`, etc.
 
 ## Page shape
 
-Render from `_templates/medical-record.md`. Filename is
-`wiki/medical/records/YYYY-MM-DD-{person-slug}-{kind}.md` (e.g.
-`2026-04-15-jake-doe-visit-summary.md`). Then **also append a dated
-entry to the per-person medical page** at
-`wiki/medical/{person-slug}-medical.md` (reverse-chronological — newest
-at the top) so the summary skill has one place to read from.
+Render from `_templates/medical-record.md`. The record is a capture page
+in `wiki/library/`, filename
+`wiki/library/YYYY-MM-DD-{person-slug}-{kind}.md` (e.g.
+`2026-04-15-jake-doe-visit-summary.md`), with `parent:` pointing at the
+patient's case folder under `wiki/efforts/cases/` (a bounded medical
+episode — stub the case folder + overview on first reference). Then
+**also append a dated entry to the case overview page** (reverse-
+chronological — newest at the top) so the summary skill has one place to
+read from.
 
 ## Side-effects
 
 - **Medications.** If the document mentions a new prescription, a dose
-  change, or a discontinuation, update `wiki/medical/medications.md`.
+  change, or a discontinuation, update the patient's medications
+  reference page in `wiki/library/` (`{person-slug}-medications.md`).
   Surface the change before writing; do not silently overwrite an
   existing medication entry that conflicts. Use a `> [!danger]
   Contradiction` callout on a conflict.
-- **Providers.** Add new providers to `wiki/medical/providers.md` with
-  their name, practice, phone, and the date you first saw them.
+- **Providers.** Stub new providers as vendor nodes (`type: vendor`) in
+  `wiki/people/` with their name, practice, phone, and the date you first
+  saw them.
 - **Follow-ups.** Every recheck or next-visit note becomes a callout on
-  the per-person medical page:
+  the case overview page:
   ```markdown
   > [!important] Follow-up due by 2026-10-15
   > Allergy panel recheck (Dr. Chen, Riverdale Pediatrics).

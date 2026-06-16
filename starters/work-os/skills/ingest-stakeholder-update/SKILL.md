@@ -1,6 +1,6 @@
 ---
 name: ingest-stakeholder-update
-description: "Ingest a stakeholder-update source (status email, slide bullets, paste from a doc) into a structured stakeholder-update page. Load from the `ingest` skill when content-type routing identifies the source as a project status update — typically a short narrative addressed to a named audience with highlights/risks/asks structure. Produces one page under `wiki/stakeholder-updates/`, links the project to `wiki/projects/`, audience members to `wiki/people/`, and registers the page for downstream operations (status-synthesis, action-item-rollup)."
+description: "Ingest a stakeholder-update source (status email, slide bullets, paste from a doc) into a structured stakeholder-update page. Load from the `ingest` skill when content-type routing identifies the source as a project status update — typically a short narrative addressed to a named audience with highlights/risks/asks structure. Produces one page under `wiki/library/`, links the project to `wiki/efforts/projects/`, audience members to `wiki/people/`, and registers the page for downstream operations (status-synthesis, action-item-rollup)."
 license: MIT
 ---
 
@@ -32,7 +32,7 @@ For each, extract:
 - **`update_date`** — the date the update was *sent*, not today's date.
   If the source doesn't name a date, ask before falling back to today.
 - **`update_project`** — the project this update is about. Wikilink to
-  `wiki/projects/`. If the project page doesn't exist, stub it.
+  `wiki/efforts/projects/`. If the project page doesn't exist, stub it.
 - **`update_audience`** — the named recipients or audience group
   ("leadership", "@channel", explicit names). Wikilink individuals to
   `wiki/people/`; leave group labels as plain strings.
@@ -50,7 +50,7 @@ For each, extract:
 ## Page shape
 
 Render the page from `_templates/stakeholder-update.md`. The filename
-convention is `wiki/stakeholder-updates/YYYY-MM-DD-<project>-<slug>.md`
+convention is `wiki/library/YYYY-MM-DD-<project>-<slug>.md`
 where `<project>` is the kebab-case project name and `<slug>` is a
 two-to-three-word descriptor. Multiple updates on the same project on
 the same day get `-2`, `-3` suffixes.
@@ -58,14 +58,14 @@ the same day get `-2`, `-3` suffixes.
 ## Project linking
 
 The `update_project` field must resolve to a page under
-`wiki/projects/`:
+`wiki/efforts/projects/`:
 
-1. Search `wiki/projects/` for an existing page that matches the project
+1. Search `wiki/efforts/projects/` for an existing page that matches the project
    name (tolerate codename vs. public-name variants).
 2. If a match exists, use its wikilink (`[[apollo-revamp]]`).
 3. If no match, stub a new project page with `type: project`,
    `status: draft`, `provenance: synthesized`, and a one-line note
-   "First seen in `[[stakeholder-updates/<this-update>]]`." Wikilink to
+   "First seen in `[[library/<this-update>]]`." Wikilink to
    the stub.
 
 ## Person linking

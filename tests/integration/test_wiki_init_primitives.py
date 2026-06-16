@@ -51,6 +51,9 @@ def _install_kit(tmp_path: Path) -> Path:
     (kit / "templates").mkdir()
     for relative in (
         "ontologies/people",
+        # meeting now re-points its `requires:` to `library` (RFC-0009 role
+        # folders); its pages home in library/ rather than a meetings/ folder.
+        "ontologies/library",
         "content-types/meeting",
         "operations/weekly-digest",
     ):
@@ -89,9 +92,12 @@ def test_init_renders_three_primitives_into_vault(tmp_path: Path, kit_root: Path
 
     assert cli.main(["init", str(vault), "--recipe", "full"], kit_root=kit_root) == 0
 
-    # Each primitive's ``files/`` tree lands in the expected place.
+    # Each primitive's ``files/`` tree lands in the expected place. The
+    # meeting content-type no longer seeds a kind folder (RFC-0009); its
+    # pages home in library/, which the library ontology seeds.
     assert (vault / "wiki" / "people" / "README.md").is_file()
-    assert (vault / "wiki" / "meetings" / "README.md").is_file()
+    assert (vault / "wiki" / "library" / "README.md").is_file()
+    assert not (vault / "wiki" / "meetings").exists()
     assert (vault / "_templates" / "meeting.md").is_file()
     assert (vault / "skills" / "ingest-meeting" / "SKILL.md").is_file()
     assert (vault / "skills" / "weekly-digest" / "SKILL.md").is_file()
@@ -134,12 +140,13 @@ def test_init_journal_order_with_three_primitives(tmp_path: Path, kit_root: Path
 
     # (2) PrimitiveInstall events for every primitive in topological
     # order. ``core`` is always first (always-include-core policy).
-    # ``people`` has no requires, ``meeting`` requires people,
-    # ``weekly-digest`` requires meeting — so the topo order is:
-    # core, people, meeting, weekly-digest.
+    # ``meeting`` requires ``people`` and ``library`` (RFC-0009 role
+    # folders), ``weekly-digest`` requires ``meeting`` — so the topo order
+    # is: core, library, people, meeting, weekly-digest.
     install_events = [e for e in events if isinstance(e, PrimitiveInstallEvent)]
     assert [e.primitive for e in install_events] == [
         "core",
+        "library",
         "people",
         "meeting",
         "weekly-digest",
@@ -180,7 +187,13 @@ def test_init_journal_order_with_three_primitives(tmp_path: Path, kit_root: Path
 
     # (5) Replayed state lists all four primitives.
     state = replay_state(events)
-    assert set(state.installed_primitives) == {"core", "people", "meeting", "weekly-digest"}
+    assert set(state.installed_primitives) == {
+        "core",
+        "library",
+        "people",
+        "meeting",
+        "weekly-digest",
+    }
 
 
 def test_init_fails_loudly_on_missing_snippet(

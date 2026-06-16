@@ -1,11 +1,14 @@
 # Family recipe — vault shape for a household.
 #
-# Task 13 expanded the listing from the Task-10 baseline (just `core`)
-# to the four ontology / six content-type / four operation primitives
-# that the family audience needs out of the box. The recipe loader
-# resolves `requires:` transitively, so listing each leaf primitive is
-# enough — `people` arrives via `meeting`/`medical-record`, `food` via
-# `recipe`, etc.
+# Lays the household's pages over the four role folders (RFC-0009 §C):
+# entity nodes in `people/`, bounded efforts (trips, cases) under
+# `efforts/`, capture (meetings, recipes, receipts, tax, medical records)
+# in `library/`, and synthesis in `atlas/`. The recipe loader resolves
+# `requires:` transitively, so the content-types pull their role folders
+# in — but `atlas`, `library`, and `efforts` are listed explicitly so the
+# four-role floor holds regardless of which content-types ship (the
+# entity-kind ontologies `food`/`medical`/`vendors` are gone; their pages
+# are `subtype`s within the role folders).
 #
 # Conventions: alphabetical, one primitive per line, no `core`
 # (always installed). Adding a primitive here is a recipe-level change;
@@ -13,17 +16,18 @@
 name: family
 version: 0.2.0
 description: >-
-  Home knowledge base for a household: people, food, medical, trips,
-  vendors, and the operations that keep them coordinated (meal planning,
-  trip prep, follow-up tracking, medical summaries, weekly digest).
+  Home knowledge base for a household: people, recipes, medical records,
+  trips, receipts, and the operations that keep them coordinated (meal
+  planning, trip prep, follow-up tracking, medical summaries, weekly digest).
 primitives:
   - action-item
+  - atlas
   - care-coordinator
+  - efforts
   - follow-up-tracker
-  - food
   - household-manager
+  - library
   - meal-planning
-  - medical
   - medical-record
   - medical-summary
   - meeting
@@ -35,7 +39,6 @@ primitives:
   - trip-planner
   - trip-prep
   - trips
-  - vendors
   - weekly-digest
 variables:
   recipe_name: family

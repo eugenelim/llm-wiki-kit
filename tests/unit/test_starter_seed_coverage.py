@@ -683,3 +683,29 @@ def test_check_is_read_only_against_fixture(tmp_path: Path, cc: types.ModuleType
     cc.main([], kit_root=kit_root)
     after = _fingerprint(kit_root)
     assert before == after, "check_coverage / main wrote to the kit tree"
+
+
+# ---------------------------------------------------------------------------
+# Ontology seeded-folder resolution (RFC-0009 efforts/<type> nesting)
+# ---------------------------------------------------------------------------
+
+
+def test_ontology_seeded_wiki_dirs_resolves_container_nesting(cc: types.ModuleType) -> None:
+    """A container registry seeds ``efforts/<type>/``, not ``wiki/<name>/``.
+
+    Directed coverage for the RFC-0009 reshape: ``check_coverage`` must look
+    where the ontology *actually* seeds (read from its ``files/wiki/`` tree),
+    not assume name == folder. Exercised against the live catalog so a future
+    re-home is caught here, not as an opaque live-tree coverage failure.
+    """
+    assert cc._ontology_seeded_wiki_dirs(REPO_ROOT, "trips") == ["efforts/trips"]
+    assert cc._ontology_seeded_wiki_dirs(REPO_ROOT, "cases") == ["efforts/cases"]
+    assert cc._ontology_seeded_wiki_dirs(REPO_ROOT, "projects") == ["efforts/projects"]
+    # A plain role ontology still resolves to its own folder.
+    assert cc._ontology_seeded_wiki_dirs(REPO_ROOT, "people") == ["people"]
+    assert cc._ontology_seeded_wiki_dirs(REPO_ROOT, "efforts") == ["efforts"]
+
+
+def test_ontology_seeded_wiki_dirs_falls_back_for_unknown_name(cc: types.ModuleType) -> None:
+    """No source tree → fall back to ``[name]`` (no crash)."""
+    assert cc._ontology_seeded_wiki_dirs(REPO_ROOT, "does-not-exist") == ["does-not-exist"]

@@ -1,0 +1,13 @@
+name: efforts
+kind: ontology
+version: 0.1.0
+description: >-
+  Bounded-container role folder (RFC-0009 §C/§D). Seeds `wiki/efforts/` with a
+  README and a `genre: moc` `_index.md` map. `efforts/` is the home for bounded
+  instances that have their own identity and a start and an end — trips, cases,
+  projects — each nested under a per-type registry (`efforts/<type>/`) supplied
+  by a container primitive (`trips`, `cases`, `projects`). This base ontology
+  ships the `efforts/` folder and its map; the registries ship the per-type
+  subfolders and declare `container_mode`.
+requires: []
+contributes_to: []

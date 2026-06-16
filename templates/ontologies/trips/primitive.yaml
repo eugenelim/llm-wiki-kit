@@ -2,9 +2,13 @@ name: trips
 kind: ontology
 version: 0.1.0
 description: >-
-  Folder shape for travel: one page per trip, upcoming and past. Seeds
-  `wiki/trips/` with a README describing how the `trip-doc` content-type
-  and the `trip-prep` operation cooperate. Does not declare schema
-  fields itself.
-requires: []
+  Trip container registry (RFC-0009 §D). Seeds `wiki/efforts/trips/` with a
+  README and a `genre: moc` `_index.md` map. A trip is a folder-mode container:
+  each trip is a folder `efforts/trips/<trip>/` holding its pages flat. The
+  `trip-doc` content-type and the `trip-prep` operation cooperate over it. Does
+  not declare schema fields itself.
+requires:
+  - efforts
 contributes_to: []
+config:
+  container_mode: folder
