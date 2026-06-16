@@ -2138,7 +2138,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
     # frontmatter field is missing or empty" — almost certainly not what
     # the caller meant; reject rather than ship the surprise.
     for flag, value in (
-        ("--type", args.search_type),
+        ("--genre", args.genre),
+        ("--subtype", args.subtype),
         ("--tag", args.tag),
         ("--status", args.status),
     ):
@@ -2146,7 +2147,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
             raise WikiError(f"{flag} must not be empty")
 
     filters = SearchFilters(
-        type=args.search_type,
+        genre=args.genre,
+        subtype=args.subtype,
         tag=args.tag,
         status=args.status,
     )
@@ -2845,15 +2847,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search the vault (ripgrep tier; FTS5 tier is future work).",
     )
     search.add_argument("query", help="Literal substring to search for in the vault.")
-    # ``--type`` lands on the namespace as ``search_type`` so it doesn't
-    # collide with Python's built-in ``type``; user-facing flag stays
-    # ``--type`` per the SKILL.md.
+    # ``genre`` and ``subtype`` are the two orthogonal page-kind facets
+    # (RFC-0009) that replaced the fused ``type`` field; each is an
+    # independent AND filter.
     search.add_argument(
-        "--type",
-        dest="search_type",
+        "--genre",
         default=None,
         metavar="<name>",
-        help="Restrict to pages whose frontmatter type equals this value.",
+        help="Restrict to pages whose frontmatter genre equals this value.",
+    )
+    search.add_argument(
+        "--subtype",
+        default=None,
+        metavar="<name>",
+        help="Restrict to pages whose frontmatter subtype equals this value.",
     )
     search.add_argument(
         "--tag",

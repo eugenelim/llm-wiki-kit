@@ -102,7 +102,8 @@ def test_wiki_search_top_zero_exits_2(vault: Path, capsys: pytest.CaptureFixture
 @pytest.mark.parametrize(
     "flag,expected_err",
     [
-        ("--type", "--type must not be empty"),
+        ("--genre", "--genre must not be empty"),
+        ("--subtype", "--subtype must not be empty"),
         ("--tag", "--tag must not be empty"),
         ("--status", "--status must not be empty"),
     ],
@@ -140,8 +141,15 @@ def test_wiki_search_empty_wiki_prints_no_matches(
 def test_wiki_search_ranks_and_renders_results(
     vault: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _write_page(vault, "a.md", "type: meeting\nstatus: active", "# Alpha\nstakeholder")
-    _write_page(vault, "b.md", "type: meeting\ntags: [urgent]", "# Beta\nstakeholder stakeholder")
+    _write_page(
+        vault, "a.md", "genre: record\nsubtype: meeting\nstatus: active", "# Alpha\nstakeholder"
+    )
+    _write_page(
+        vault,
+        "b.md",
+        "genre: record\nsubtype: meeting\ntags: [urgent]",
+        "# Beta\nstakeholder stakeholder",
+    )
 
     assert cli.main(["search", "stakeholder"]) == 0
 
@@ -150,22 +158,51 @@ def test_wiki_search_ranks_and_renders_results(
     assert "## Beta — wiki/b.md" in out
     assert "## Alpha — wiki/a.md" in out
     assert out.index("Beta") < out.index("Alpha")
-    assert "- type: meeting" in out
+    assert "- genre: record" in out
+    assert "- subtype: meeting" in out
     assert "- matches: 2" in out
     assert "- matches: 1" in out
 
 
-def test_wiki_search_type_filter_excludes_other_types(
+def test_wiki_search_subtype_filter_excludes_other_subtypes(
     vault: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _write_page(vault, "m.md", "type: meeting", "# M\nstakeholder")
-    _write_page(vault, "i.md", "type: interview", "# I\nstakeholder")
+    _write_page(vault, "m.md", "genre: record\nsubtype: meeting", "# M\nstakeholder")
+    _write_page(vault, "i.md", "genre: record\nsubtype: interview", "# I\nstakeholder")
 
-    assert cli.main(["search", "stakeholder", "--type", "meeting"]) == 0
+    assert cli.main(["search", "stakeholder", "--subtype", "meeting"]) == 0
 
     out = capsys.readouterr().out
     assert "wiki/m.md" in out
     assert "wiki/i.md" not in out
+
+
+def test_wiki_search_genre_filter_excludes_other_genres(
+    vault: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_page(vault, "r.md", "genre: record\nsubtype: meeting", "# R\nstakeholder")
+    _write_page(vault, "n.md", "genre: note\nsubtype: action-item", "# N\nstakeholder")
+
+    assert cli.main(["search", "stakeholder", "--genre", "record"]) == 0
+
+    out = capsys.readouterr().out
+    assert "wiki/r.md" in out
+    assert "wiki/n.md" not in out
+
+
+def test_wiki_search_genre_and_subtype_filters_combine_as_and(
+    vault: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_page(vault, "hit.md", "genre: record\nsubtype: meeting", "# Hit\nstakeholder")
+    _write_page(vault, "wrong-sub.md", "genre: record\nsubtype: interview", "# WS\nstakeholder")
+    _write_page(vault, "wrong-gen.md", "genre: note\nsubtype: meeting", "# WG\nstakeholder")
+
+    assert cli.main(["search", "stakeholder", "--genre", "record", "--subtype", "meeting"]) == 0
+
+    out = capsys.readouterr().out
+    assert "wiki/hit.md" in out
+    assert "wiki/wrong-sub.md" not in out
+    assert "wiki/wrong-gen.md" not in out
 
 
 def test_wiki_search_is_read_only_journal_unchanged(vault: Path) -> None:
@@ -196,7 +233,8 @@ def test_wiki_search_boundary_errors_leave_journal_untouched(vault: Path) -> Non
 
     assert cli.main(["search", ""]) == cli.WIKI_ERROR_EXIT
     assert cli.main(["search", "q", "--top", "0"]) == cli.WIKI_ERROR_EXIT
-    assert cli.main(["search", "q", "--type", ""]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["search", "q", "--genre", ""]) == cli.WIKI_ERROR_EXIT
+    assert cli.main(["search", "q", "--subtype", ""]) == cli.WIKI_ERROR_EXIT
     assert cli.main(["search", "q", "--tag", ""]) == cli.WIKI_ERROR_EXIT
     assert cli.main(["search", "q", "--status", ""]) == cli.WIKI_ERROR_EXIT
 
