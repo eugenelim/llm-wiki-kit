@@ -15,3 +15,4 @@ a spec (`docs/specs/`).
 | [0006](0006-promote-examples-to-starters.md) | Promote `examples/` to first-class starter distributions | Accepted |
 | [0007](0007-primitive-contribution-model.md) | Primitive contribution model — upstream PR plus sideload extension | Accepted |
 | [0008](0008-workspace-as-lens.md) | Workspace-as-lens — one knowledge bank, many filtered workspaces | Accepted |
+| [0009](0009-faceted-ontology-and-lyt-philosophy.md) | Faceted ontology and the LYT organizing philosophy — page-kind facets, capture/synthesis split, emergent structure | Accepted |
