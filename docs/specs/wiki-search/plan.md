@@ -78,10 +78,10 @@ list, then the integration tests, then the doc sweep.
      guard); empty-query and `--top` validation; build
      `SearchFilters`; call `search.run_search`; `print(
      search.format_results(hits))`; return 0.
-   - Extend `build_parser`'s `search` subparser with `--type`,
-     `--tag`, `--status`, `--top` flags. Help strings stay terse
-     (≤ 80 chars).
-   - **Verify:** `wiki search --help` lists the four flags; CLI
+   - Extend `build_parser`'s `search` subparser with `--genre`,
+     `--subtype`, `--tag`, `--status`, `--top` flags. Help strings stay
+     terse (≤ 80 chars).
+   - **Verify:** `wiki search --help` lists the flags; CLI
      stub-list in `tests/unit/test_cli.py` no longer carries
      `["search", "stakeholder"]`.
 4. **Stub-list test updates.**
@@ -96,7 +96,7 @@ list, then the integration tests, then the doc sweep.
      `kit_root` / `fresh_vault` fixture pattern from
      `tests/integration/test_wiki_research.py`. Three scenarios:
      happy path (two pages match, ordered as expected), filter
-     (`--type meeting` excludes a non-meeting hit), no-vault
+     (`--subtype meeting` excludes a non-meeting hit), no-vault
      boundary (`not a wiki vault` on stderr). The `rg` binary is
      assumed to exist on CI; a module-level
      `pytest.mark.skipif(not shutil.which("rg"), …)` skips the

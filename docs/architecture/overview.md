@@ -128,7 +128,7 @@ inside `safe_write()`.
 |`upgrade.py`        |`wiki upgrade [--primitive <name>]` pipeline. `plan_upgrade` (pure) names the version-changed primitives + the catalog-filtered installed set; `upgrade_primitives` emits one `PrimitiveUpgradeEvent` per upgraded primitive, re-renders its `files/` tree via `safe_write`, then re-runs the region aggregator over the full installed set.|
 |`research/`         |Dispatch + per-provider HTTP for `wiki research <query>`. `research/dispatch.py` orchestrates config-load → provider-pick → markdown-render; `research/http.py` is a stdlib retry helper; `research/providers/perplexity.py` is the first provider. Module-private registry; Task 19 adds Gemini + Semantic Scholar by editing `dispatch.py`.                                                          |
 |`cli.py`            |Argparse-based entry point. Thin wrappers around `init`, `add`, `upgrade`, `doctor`, `ingest`, `run`, `research`, `search`, `journal`, `outcomes`, `agents`, `schedule`. All subcommands are live in v2.0.0.dev.                              |
-|`search.py`         |Read-only vault search shelling out to ripgrep (`rg --json --fixed-strings`) over `<vault_root>/wiki/`. Frontmatter filters (`--type`, `--tag`, `--status`) and a ranked markdown result-list. No journal interaction. FTS5 tier is future work.                  |
+|`search.py`         |Read-only vault search shelling out to ripgrep (`rg --json --fixed-strings`) over `<vault_root>/wiki/`. Frontmatter filters (`--genre`, `--subtype`, `--tag`, `--status`) and a ranked markdown result-list. No journal interaction. FTS5 tier is future work.                  |
 
 ## The template catalog
 
