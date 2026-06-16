@@ -4,7 +4,7 @@ version: 0.1.0
 description: >-
   Decision page type. Ships an ingester skill (paste a meeting decision,
   email thread, or written rationale and get a structured decision page),
-  a page template, and the schema contributions that make `type: decision`
+  a page template, and the schema contributions that make `genre: decision, subtype: decision-record`
   a valid value with decision-scoped fields. Decisions cross-cut projects,
   domains, and customers; they are the durable record of "what we chose,
   why, and what we considered."
@@ -14,6 +14,6 @@ requires: []
 # or extension signal; reach this primitive via `wiki ingest --as decision`.
 contributes_to:
   - file: frontmatter.schema.yaml
-    region: types
+    region: subtype
   - file: frontmatter.schema.yaml
     region: fields

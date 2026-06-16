@@ -1,5 +1,6 @@
 ---
-type: decision
+genre: decision
+subtype: decision-record
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

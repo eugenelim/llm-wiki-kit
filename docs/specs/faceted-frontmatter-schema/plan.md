@@ -1,7 +1,7 @@
 # Plan: faceted-frontmatter-schema
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Drafting <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -13,8 +13,12 @@
 Removing the fused `type` is a coordinated edit across the schema baseline and
 all twelve content-type primitives — and within each primitive it touches four
 surfaces, not one: the `primitive.yaml` `contributes_to` manifest, the `.types`
-snippet, the `when: type == …` guards inside the `.fields` snippet, and the
-page template (plus the `description` text). The schema is a
+snippet (which becomes a `.subtype` snippet), the `when: type == …` guards
+inside the `.fields` snippet, and the page template (plus the `description`
+text). `genre` is a fixed nine-value baseline enum hand-written into the schema
+(not a managed region, since the aggregator concatenates without deduplicating
+and several content-types share a genre — see Risks); `subtype` is the single
+managed region content-types contribute to (replacing `types`). The schema is a
 managed-region-assembled document, and `install._plan`/`validate_contributions`
 derive region ids **from each manifest's `contributes_to`** — so the migration
 is manifest + snippet edits, with no aggregator code change. The crosswalk is
@@ -50,10 +54,15 @@ Properties autocomplete offers genre/subtype and the workspace lenses render.
 
 ### Design decisions
 
-- The single `types` managed region becomes **two** regions, `genre` and
-  `subtype`; each content-type's manifest declares both. Reuses the ADR-0003
-  mechanism. Traces to: AC "managed regions are genre/subtype/fields", AC
-  "manifests declare genre+subtype" · no `contracts/`.
+- The single `types` managed region becomes the **`subtype`** managed region;
+  each content-type's manifest declares `region: subtype` (+ `region: fields`).
+  `genre` is **not** a managed region — it is a fixed baseline enum (see next
+  decision and Risks): the aggregator concatenates snippets without
+  deduplicating, and several content-types map to the same genre (`meeting` and
+  `medical-record` both → `record`), so a contributed `genre` region would emit
+  duplicate enum values. Reuses the ADR-0003 mechanism for `subtype`. Traces
+  to: AC "managed regions are subtype/fields", AC "manifests declare
+  region: subtype" · no `contracts/`.
 - Type-specific lifecycle (`decision_status` proposed→accepted→superseded,
   `update_status`, `trip_status`) survives as **subtype-scoped `fields`**, not
   parallel `status` values, because `status-synthesis`/`onboarding-pack` read
@@ -67,16 +76,17 @@ Properties autocomplete offers genre/subtype and the workspace lenses render.
 ### Data & schema
 
 - `core/files/frontmatter.schema.yaml`: `required: [genre, subtype, status,
-  provenance, created, modified]`; baseline `genre` enum (9); `subtype`
-  (region-populated); `statuses:` gains `someday`; `parent` (list, optional);
-  `workspaces` (unchanged); managed regions `genre`, `subtype`, `fields`.
+  provenance, created, modified]`; fixed baseline `genre` enum (the nine,
+  hand-written, no managed region); `subtype` (region-populated); `statuses:`
+  gains `someday`; `parent` (`type: list`, `items: string`, `optional: true`);
+  `workspaces` (unchanged); managed regions `subtype`, `fields` only.
 - 12 × `templates/content-types/<ct>/primitive.yaml`: `contributes_to` →
-  `region: genre`, `region: subtype`, `region: fields`; `description` rewritten
-  off `type:`.
-- 12 × `regions/frontmatter.schema.yaml.{genre,subtype}` (replacing `.types`);
+  `region: subtype`, `region: fields`; `description` rewritten off `type:`.
+- 12 × `regions/frontmatter.schema.yaml.subtype` (replacing `.types`);
   `.fields` guards re-keyed to `subtype`.
 - `docs/specs/faceted-frontmatter-schema/crosswalk.yaml`: 12 rows, each
-  `legacy-type: {genre, subtype, lifecycle_field?}`.
+  `legacy-type: {genre, subtype, lifecycle_field?}`; `subtype` values pairwise
+  distinct.
 
 ### Interfaces & contracts
 
@@ -91,12 +101,17 @@ contract, assembled by the managed-region aggregator. No REST/event/RPC.
 **Touches:** docs/specs/faceted-frontmatter-schema/crosswalk.yaml, tests/unit/test_facet_crosswalk.py
 
 **Tests:**
-- TDD: a unit test asserts the crosswalk's key set equals the twelve legacy
-  fused types discovered from `templates/content-types/*/` (AC: crosswalk total).
+- TDD: a unit test asserts the crosswalk's key set equals the twelve
+  content-type **directory names** discovered from `templates/content-types/*/`
+  (the legacy fused-`type` string is the directory name; the `.types` snippet
+  that also carried it is deleted by T3, so the directory name is the stable
+  discovery source) (AC: crosswalk total).
 - Each row's `genre` is one of the fixed nine; each names a `subtype` that
   **differs from its `genre`** (the `decision` row is `genre: decision,
-  subtype: decision-record`); rows whose content-type carries a read lifecycle
-  field record it (AC: genre enum; subtype≠genre; lifecycle retained).
+  subtype: decision-record`); the twelve `subtype` values are **pairwise
+  distinct** (so the assembled `subtype` region has no duplicate lines); rows
+  whose content-type carries a read lifecycle field record it (AC: genre enum;
+  subtype≠genre; subtype pairwise-distinct; lifecycle retained).
 
 **Approach:**
 - Author `crosswalk.yaml` mapping `meeting, decision, interview, recipe,
@@ -114,45 +129,51 @@ covers all twelve.
 **Touches:** core/files/frontmatter.schema.yaml, tests/unit/test_frontmatter_schema_shape.py
 
 **Tests:**
-- Goal-based: parse the schema; assert `genre` enum is exactly the nine;
-  `subtype`/`parent` present; `statuses:` is exactly
+- Goal-based: parse the schema; assert `genre` is a fixed baseline enum equal
+  to exactly the nine (and is **not** wrapped in a managed region);
+  `subtype` present; `parent` present with shape `type: list` / `items:
+  string` / `optional: true`; `statuses:` is exactly
   `active/draft/archived/someday`; `type` absent; `workspaces` present;
   `required:` is exactly `[genre, subtype, status, provenance, created,
-  modified]`; regions are `genre`/`subtype`/`fields`, no `types` region (AC:
-  schema declares facets; required set; regions; someday added).
+  modified]`; managed regions are `subtype`/`fields` only — no `types` region
+  and no `genre` region (AC: schema declares facets; required set; regions;
+  someday added; parent shape).
 
 **Approach:**
 - Edit `core/files/frontmatter.schema.yaml`: replace the `type` baseline +
-  `# BEGIN MANAGED: types` with the `genre` baseline enum + `# BEGIN MANAGED:
-  genre` and `# BEGIN MANAGED: subtype`; add `parent`; add `someday` to the
-  existing `statuses:` block; update `required:`; update the file-header
-  comment enumerating managed sections (`types` → `genre`, `subtype`); keep
-  `workspaces` and the `fields` region and their comments verbatim.
+  `# BEGIN MANAGED: types` with a fixed `genre:` enum listing the nine
+  (hand-written, no managed region) and a `subtype:` block carrying
+  `# BEGIN MANAGED: subtype`; add `parent` (`type: list`, `items: string`,
+  `optional: true`); add `someday` to the existing `statuses:` block; update
+  `required:`; update the file-header comment enumerating managed sections
+  (`types` → `subtype`; note `genre` is fixed/baseline); keep `workspaces` and
+  the `fields` region and their comments verbatim.
 
 **Done when:** the schema-shape test passes.
 
-### T3: Manifests + genre/subtype snippets migrated
+### T3: Manifests + subtype snippets migrated
 
 **Depends on:** T1, T2
 **Touches:** templates/content-types/*/primitive.yaml, templates/content-types/*/regions/frontmatter.schema.yaml.*
 
 **Tests:**
-- Goal-based: every `primitive.yaml` `contributes_to` declares `region: genre`
-  + `region: subtype` (+ `region: fields`), none declares `region: types`;
-  each `.genre`/`.subtype` snippet matches the crosswalk; no `.types` snippet
-  remains (AC: manifests declare genre+subtype; snippets match crosswalk).
+- Goal-based: every `primitive.yaml` `contributes_to` declares `region:
+  subtype` (+ `region: fields`), none declares `region: types` or
+  `region: genre`; each `.subtype` snippet matches the crosswalk; no `.types`
+  or `.genre` snippet remains (AC: manifests declare region: subtype; snippets
+  match crosswalk).
 - Integration: `wiki init` passes `install.validate_contributions` (no orphan/
   missing snippet) (AC: assembly).
 
 **Approach:**
 - For each of the twelve `primitive.yaml`: rewrite `contributes_to` (`region:
-  types` → two entries `region: genre`, `region: subtype`); rewrite the
-  `description` off `type:`.
+  types` → `region: subtype`); rewrite the `description` off `type:`.
 - For each `regions/`: replace `frontmatter.schema.yaml.types` with
-  `.genre` + `.subtype` per the crosswalk.
+  `frontmatter.schema.yaml.subtype` (the crosswalk's `subtype` value).
 
 **Done when:** the goal-based manifest/snippet test and the `validate_contributions`
-integration assertion pass; no `region: types`, no `.types` snippet remain.
+integration assertion pass; no `region: types`/`region: genre`, no
+`.types`/`.genre` snippet remain.
 
 ### T3b: `.fields` guards re-keyed; lifecycle fields retained
 
@@ -176,7 +197,7 @@ templates/content-types` is empty.
 
 ### T4: Page templates stamp facets, not `type`
 
-**Depends on:** T1
+**Depends on:** T1, T2
 **Touches:** templates/content-types/*/files/_templates/*.md
 
 **Tests:**
@@ -195,25 +216,47 @@ and the template test passes.
 **Touches:** tests/integration/test_faceted_schema_assembly.py, docs/backlog.md
 
 **Tests:**
-- Integration: `wiki init` a temp vault; assert assembled `genre`/`subtype`
-  enums == union of installed contributions, `type` absent, `workspaces`
-  present (AC: assembly).
+- Integration: `wiki init` a temp vault; assert the assembled `subtype` enum
+  == union of installed content-types' `subtype` contributions with **no
+  duplicate lines**, the assembled `genre` enum == the fixed nine (independent
+  of installed content-types), `type` absent, `workspaces` present (AC:
+  assembly).
 - Goal-based: shipped `.base` files byte-unchanged (AC: lenses unchanged);
-  the `docs/backlog.md#faceted-frontmatter-schema` deferral entry exists (AC:
-  operation-SKILL deferral registered).
+  the `docs/backlog.md#faceted-frontmatter-schema` deferral entry exists and
+  names the six stale operation SKILLs (AC: operation-SKILL deferral
+  registered).
 
 **Approach:**
 - Add `tests/integration/test_faceted_schema_assembly.py` driving `wiki init`
   against `tmp_path`.
+- **Regenerate the committed starters** (`python starters/regenerate.py
+  --apply`). The committed `starters/{family,work-os}/` embed the *rendered*
+  schema and copies of the content-type `_templates/*.md`; T2/T3/T3b/T4 change
+  both, so `regenerate.py --check` (run by `test_starters_regenerable`, which
+  is **not** slow-marked) drifts until the starters are rebuilt. Regeneration
+  syncs the *generated* artifacts only — `build_vault` copies `_seed/` pages
+  verbatim, so the starter seed pages keep their `type:` frontmatter (their
+  faceting is the deferred `recipe-organization-model` work, registered in the
+  backlog).
+- **Update the catalog-pin test** `tests/unit/test_content_type_snippets.py`
+  to the facet model: it currently reads each `.types` snippet and asserts the
+  `.fields` `when:` clauses are `type == <name>`; re-point it at `.subtype`
+  and `subtype == <subtype>` (this is the same catalog-consistency concern,
+  now facet-keyed).
 
-**Done when:** the integration test is green and `pytest -m 'not slow'`,
-`ruff check`, `ruff format --check`, `mypy llm_wiki_kit tests` all pass.
+**Done when:** the integration test is green, `starters/regenerate.py --check`
+exits 0, and `pytest -m 'not slow'`, `ruff check`, `ruff format --check`,
+`mypy llm_wiki_kit tests` all pass.
 
 ## Rollout
 
-- **Delivery:** atomic within the kit — T2/T3/T3b/T4 land together (a schema
-  without matching manifests/snippets/templates renders an inconsistent vault
-  and can fail `validate_contributions`). No user vaults exist (pre-release);
+- **Delivery:** atomic within the kit — T2/T3/T3b/T4 land **as one PR** (a
+  schema without matching manifests/snippets/templates renders an inconsistent
+  vault and can fail `validate_contributions`; the intermediate state is
+  un-shippable). This is a deliberate, named exception to the one-task-per-PR
+  convention (`docs/CONVENTIONS.md` "One task per PR") — the atomicity
+  requirement overrides bundling avoidance here; T1 (crosswalk + tests) may
+  land first since it is self-contained. No user vaults exist (pre-release);
   no migration; reversible by revert.
 - **Infrastructure:** none.
 - **External-system integration:** none.
@@ -241,7 +284,34 @@ and the template test passes.
 
 ## Changelog
 
+- 2026-06-16: mid-EXECUTE discovery (gates) — renaming the managed region
+  `types` → `subtype` rippled into existing tests that hardcoded the old
+  region id / `type: meeting` value: `test_wiki_init_primitives`,
+  `test_work_os_recipe`, `test_wiki_add`, `test_wiki_upgrade`,
+  `test_wiki_upgrade_force_render`, `test_wiki_init_adopt`, `test_upgrade`
+  (the aggregation/adopt/upgrade mechanism is unchanged — only the region id
+  and the contributed value moved, so these were a mechanical rename, not a
+  behavior change). The existing `test_content_type_snippets` catalog pin was
+  re-pointed at `.subtype`/`subtype ==`.
+- 2026-06-16: mid-EXECUTE discovery (T5) — changing the rendered schema and
+  content-type `_templates/*.md` drifts the committed starters, so T5 now
+  regenerates them (`regenerate.py --apply`) to keep the non-slow
+  `test_starters_regenerable` gate green, and re-points the existing
+  `test_content_type_snippets.py` catalog pin at `.subtype`/`subtype ==`.
+  Starter *seed-page* faceting stays deferred to `recipe-organization-model`
+  (backlog). No structural surface added (no new module/dep/dir/abstraction),
+  so no structural-review re-fire.
 - 2026-06-16: initial plan.
+- 2026-06-16: pre-EXECUTE adversarial review — resolved the `genre`
+  contradiction: `genre` is a **fixed baseline enum (the nine, hand-written)**,
+  **not** a managed region, because the region aggregator concatenates without
+  deduplicating and several content-types share a genre. Manifests now declare
+  only `region: subtype` (+ `region: fields`); snippets are `.subtype` (no
+  `.genre`); the assembly assertion splits into `subtype == union of
+  contributions (no dups)` and `genre == fixed nine`. Added a crosswalk
+  pairwise-distinct-`subtype` invariant; pinned `parent`'s field shape in T2;
+  made T4 depend on T2; reworded T1 discovery to directory names; named the
+  one-task-per-PR atomicity exception in Rollout.
 - 2026-06-16: post spec-mode review — added the `primitive.yaml`
   `contributes_to` manifest edits (T3), the `.fields` `when: type ==` guard
   re-key + lifecycle-field retention (T3b), `description` rewrites, and the

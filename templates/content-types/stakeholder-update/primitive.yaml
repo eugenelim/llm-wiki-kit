@@ -4,7 +4,7 @@ version: 0.1.0
 description: >-
   Stakeholder-update page type. Ships an ingester skill (paste a status note,
   email draft, or slide bullets and get a structured update page), a page
-  template, and the schema contributions that make `type: stakeholder-update`
+  template, and the schema contributions that make `genre: update, subtype: stakeholder`
   a valid value with update-scoped fields. Feeds `status-synthesis`.
 requires:
   - people
@@ -15,6 +15,6 @@ requires:
 # `wiki ingest --as stakeholder-update`.
 contributes_to:
   - file: frontmatter.schema.yaml
-    region: types
+    region: subtype
   - file: frontmatter.schema.yaml
     region: fields

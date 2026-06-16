@@ -1,5 +1,6 @@
 ---
-type: action-item
+genre: note
+subtype: action-item
 status: active
 provenance: synthesized
 created: {{date:YYYY-MM-DD}}

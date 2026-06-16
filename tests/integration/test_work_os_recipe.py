@@ -60,13 +60,17 @@ EXPECTED_PRIMITIVES = {
     "vendor-contract",
 }
 
-EXPECTED_TYPES_IN_SCHEMA = {
+# The crosswalk ``subtype`` value each installed content-type contributes to
+# the managed ``subtype`` region (genre is a fixed baseline enum, not
+# contributed). decision -> decision-record, stakeholder-update -> stakeholder,
+# vendor-contract -> vendor; the rest map name-for-name.
+EXPECTED_SUBTYPES_IN_SCHEMA = {
     "customer-feedback",
-    "decision",
+    "decision-record",
     "interview",
     "meeting",
-    "stakeholder-update",
-    "vendor-contract",
+    "stakeholder",
+    "vendor",
 }
 
 
@@ -139,15 +143,15 @@ def test_work_os_init_schema_regions_include_every_content_type(tmp_path: Path) 
 
     schema = (vault / "frontmatter.schema.yaml").read_text(encoding="utf-8")
 
-    types_block = schema.split("# BEGIN MANAGED: types\n", 1)[1].split("  # END MANAGED: types", 1)[
-        0
-    ]
-    for type_name in EXPECTED_TYPES_IN_SCHEMA:
-        assert f"- {type_name}\n" in types_block, (
-            f"type '{type_name}' missing from managed types region"
+    subtype_block = schema.split("# BEGIN MANAGED: subtype\n", 1)[1].split(
+        "  # END MANAGED: subtype", 1
+    )[0]
+    for subtype_name in EXPECTED_SUBTYPES_IN_SCHEMA:
+        assert f"- {subtype_name}\n" in subtype_block, (
+            f"subtype '{subtype_name}' missing from managed subtype region"
         )
     # The seed body is fully replaced by the composed contributions.
-    assert "Populated by content-type primitives" not in types_block
+    assert "Populated by content-type primitives" not in subtype_block
 
     fields_block = schema.split("# BEGIN MANAGED: fields\n", 1)[1].split(
         "  # END MANAGED: fields", 1
@@ -181,12 +185,12 @@ def test_work_os_init_journal_state_matches_closure(tmp_path: Path) -> None:
     assert installed == EXPECTED_PRIMITIVES
 
     # Two region writes per ADR-0006 bucket order (alphabetical by
-    # ``(file, region)``): ``fields`` then ``types`` on
+    # ``(file, region)``): ``fields`` then ``subtype`` on
     # ``frontmatter.schema.yaml``.
     region_events = [e for e in events if isinstance(e, ManagedRegionWriteEvent)]
     assert [(e.file, e.region) for e in region_events] == [
         ("frontmatter.schema.yaml", "fields"),
-        ("frontmatter.schema.yaml", "types"),
+        ("frontmatter.schema.yaml", "subtype"),
     ]
 
     state = replay_state(events)

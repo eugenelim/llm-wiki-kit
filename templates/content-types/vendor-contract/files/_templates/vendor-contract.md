@@ -1,5 +1,6 @@
 ---
-type: vendor-contract
+genre: contract
+subtype: vendor
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

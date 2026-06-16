@@ -5,7 +5,7 @@ description: >-
   Vendor-contract page type. Ships an ingester skill (paste contract terms,
   a renewal notice, or a procurement summary and get a structured contract
   page), a page template, and the schema contributions that make
-  `type: vendor-contract` a valid value with contract-scoped fields. Feeds
+  `genre: contract, subtype: vendor` a valid value with contract-scoped fields. Feeds
   `renewal-reminders`.
 requires: []
 routing:
@@ -17,6 +17,6 @@ routing:
     - "*renewal-notice*"
 contributes_to:
   - file: frontmatter.schema.yaml
-    region: types
+    region: subtype
   - file: frontmatter.schema.yaml
     region: fields

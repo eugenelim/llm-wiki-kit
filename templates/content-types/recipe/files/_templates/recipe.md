@@ -1,5 +1,6 @@
 ---
-type: recipe
+genre: reference
+subtype: recipe
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}

@@ -336,10 +336,10 @@ def test_init_adopt_resumes_with_partial_region_prefix_re_emits_complete_interle
     vault = tmp_path / "vault"
     vault.mkdir()
     host_body = (
-        "types:\n"
-        "  # BEGIN MANAGED: types\n"
-        "  - user-type\n"
-        "  # END MANAGED: types\n"
+        "subtypes:\n"
+        "  # BEGIN MANAGED: subtype\n"
+        "  - user-subtype\n"
+        "  # END MANAGED: subtype\n"
         "fields:\n"
         "  # BEGIN MANAGED: fields\n"
         "  user_field:\n"
@@ -372,7 +372,7 @@ def test_init_adopt_resumes_with_partial_region_prefix_re_emits_complete_interle
             timestamp=now,
             by="wiki-init-adopt",
             file="frontmatter.schema.yaml",
-            region="types",
+            region="subtype",
             content_hash="stale-from-prior-run",
         ),
     )
@@ -403,7 +403,7 @@ def test_init_adopt_resumes_with_partial_region_prefix_re_emits_complete_interle
         if isinstance(e, ManagedRegionAdoptedEvent) and e.file == "frontmatter.schema.yaml"
     ]
     region_ids = sorted(e.region for e in fresh_region_events)
-    assert "types" in region_ids
+    assert "subtype" in region_ids
     assert "fields" in region_ids
 
     # Replay must supersede the seeded stale ``content_hash`` with the
@@ -414,9 +414,9 @@ def test_init_adopt_resumes_with_partial_region_prefix_re_emits_complete_interle
     from llm_wiki_kit.journal import replay_state
 
     state = replay_state(read_events(journal_path))
-    types_key = ("frontmatter.schema.yaml", "types")
-    assert types_key in state.adopted_regions
-    assert state.adopted_regions[types_key].content_hash != "stale-from-prior-run"
+    subtype_key = ("frontmatter.schema.yaml", "subtype")
+    assert subtype_key in state.adopted_regions
+    assert state.adopted_regions[subtype_key].content_hash != "stale-from-prior-run"
 
 
 def test_init_adopt_resumes_when_journal_has_only_init_and_adopt_events(
@@ -618,11 +618,11 @@ def test_init_adopt_emits_managed_region_adopted_and_pages_interleaved(
     vault.mkdir()
 
     host_body = (
-        "types:\n"
-        "  # BEGIN MANAGED: types\n"
-        "  - user-type-a\n"
-        "  - user-type-b\n"
-        "  # END MANAGED: types\n"
+        "subtypes:\n"
+        "  # BEGIN MANAGED: subtype\n"
+        "  - user-subtype-a\n"
+        "  - user-subtype-b\n"
+        "  # END MANAGED: subtype\n"
         "fields:\n"
         "  # BEGIN MANAGED: fields\n"
         "  user_field:\n"

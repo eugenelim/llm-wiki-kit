@@ -1,5 +1,6 @@
 ---
-type: customer-feedback
+genre: record
+subtype: customer-feedback
 status: active
 provenance: extracted
 created: {{date:YYYY-MM-DD}}
