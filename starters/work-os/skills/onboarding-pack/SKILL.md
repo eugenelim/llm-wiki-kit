@@ -36,22 +36,23 @@ follow links back into the vault rather than re-reading everything.
 From the operation contract:
 
 - **`scope`** — `customer:<name>` or `project:<name>`. Required.
-  `<name>` is the kebab-case page name under
-  `wiki/customers/` or `wiki/projects/`.
+  `<name>` is the kebab-case page name: a customer node in `people/`
+  (`--subtype customer`) or a project hub in `efforts/projects/`.
 - **`lookback_days`** — how far back to include decisions and
   feedback. Default 180. Older items are still wikilinked from the
   scope page but not summarized in the pack.
 
 ## Procedure
 
-1. **Resolve the scope page.** Verify
-   `wiki/<kind>/<name>.md` exists. If it doesn't, refuse: a pack for
-   a non-existent customer / project is a typo or a missing page.
+1. **Resolve the scope page.** Verify the scope page exists —
+   `people/<name>.md` for a customer node, `efforts/projects/<name>.md`
+   for a project hub. If it doesn't, refuse: a pack for a non-existent
+   customer / project is a typo or a missing page.
 2. **Read the scope page.** Extract the DRI / account team, the
    one-line description, the active engagements, and any open risks
    the page records.
-3. **Walk decisions.** For
-   `wiki/decisions/*.md` whose body links to the scope page or whose
+3. **Walk decisions.** Search `library/` (`--subtype decision-record`)
+   for decision pages whose body links to the scope page or whose
    `tags` include the scope name. Filter to those with
    `decision_date` inside the look-back window. Include the
    `decision_status` so the newcomer knows what's still proposed.
@@ -87,7 +88,8 @@ From the operation contract:
 ## Frontmatter for the pack page
 
 ```yaml
-type: onboarding-pack
+genre: update
+subtype: onboarding-pack
 status: active
 provenance: synthesized
 created: <today>
@@ -96,10 +98,6 @@ tags: [onboarding, <scope_kind>:<scope_name>]
 pack_scope: <scope_kind>:<scope_name>
 pack_lookback_days: <lookback>
 ```
-
-The `onboarding-pack` type may not yet exist in
-`frontmatter.schema.yaml`'s managed `types` region — that's fine for
-v0.1.
 
 ## What not to include
 

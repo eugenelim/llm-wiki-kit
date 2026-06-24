@@ -75,8 +75,8 @@ The `feedback_customer` field must resolve to a page under
 1. Search `wiki/people/` for an existing page (tolerate legal-name
    vs. common-name variants).
 2. If a match exists, use its wikilink.
-3. If no match, stub a new customer page with `type: customer`,
-   `status: draft`, `provenance: synthesized`, and a one-line note
+3. If no match, stub a new customer page with `genre: profile`,
+   `subtype: customer`, `status: draft`, `provenance: synthesized`, and a one-line note
    "First seen in `[[library/<this-feedback>]]`."
 
 ## Contact linking

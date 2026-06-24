@@ -75,7 +75,7 @@ The `decision_owner` field must resolve to a page under
 
 1. Search `wiki/people/`. Tolerate common variants.
 2. Match → wikilink. No match → stub a person page with
-   `type: person`, `status: draft`, `provenance: synthesized`, and a
+   `genre: profile`, `subtype: person`, `status: draft`, `provenance: synthesized`, and a
    one-line note "First seen in `[[library/<this-decision>]]`."
 
 ## Decisions are first-class for synthesis

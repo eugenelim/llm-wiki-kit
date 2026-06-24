@@ -49,9 +49,11 @@ From the operation contract:
 
 ## Procedure
 
-1. **Find the input pages.** For each content-type, filter by the
-   type's date field (`update_date`, `decision_date`,
-   `feedback_date`) inside the window. Use the `wiki-search` skill.
+1. **Find the input pages.** For each content-type in `sources`, search
+   `library/` with the `wiki-search` skill filtered by the type's
+   `--subtype` (`--subtype stakeholder`, `--subtype decision-record`,
+   `--subtype customer-feedback`), then filter by the type's date field
+   (`update_date`, `decision_date`, `feedback_date`) inside the window.
 2. **Group stakeholder-updates by project.** For each project that
    has an in-window update, record:
    - `update_status` (colour) — did it change vs. the previous
@@ -91,7 +93,8 @@ From the operation contract:
 ## Frontmatter for the synthesis page
 
 ```yaml
-type: status-synthesis
+genre: update
+subtype: status-synthesis
 status: active
 provenance: synthesized
 created: <today>
@@ -99,10 +102,6 @@ modified: <today>
 tags: [status-synthesis, <window>]
 synthesis_window: <window>
 ```
-
-The `status-synthesis` type may not yet exist in
-`frontmatter.schema.yaml`'s managed `types` region — that's fine for
-v0.1.
 
 ## Detecting trend vs. previous
 

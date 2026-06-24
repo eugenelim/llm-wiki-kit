@@ -38,7 +38,7 @@ document — the per-person pages are easier to update independently.
 
 From the operation contract:
 
-- **`person`** — canonical name as it appears in `wiki/people/`. Match
+- **`person`** — canonical name as it appears in `people/`. Match
   is case-sensitive; ask the user if ambiguous.
 - **`context`** — tailoring hint: `annual-physical`, `new-specialist`,
   `school-form`, `er-intake`, `dental-visit`, …
@@ -46,13 +46,13 @@ From the operation contract:
 
 You also read:
 
-- `wiki/people/<person>.md` — basics: DOB, blood type, primary care.
-- `wiki/medical/<person>-medical.md` — chronological visit history.
-- `wiki/medical/medications.md` — filtered to this person.
-- `wiki/medical/providers.md` — for follow-up coordination.
-- `wiki/medical/insurance.md` — plan name, member ID, key contacts.
-- Recent `medical-record` pages under `wiki/medical/records/` whose
-  `medical_record_person` matches.
+- `people/<person>.md` — basics: DOB, blood type, primary care.
+- `efforts/cases/<person>-medical.md` — chronological visit/case history.
+- `library/` (medication reference page, filtered to this person).
+- `people/` (provider vendor nodes, for follow-up coordination).
+- `library/` (insurance reference page — plan name, member ID, key contacts).
+- Recent `medical-record` pages in `library/` filtered by
+  `--subtype medical` whose `medical_record_person` matches.
 
 ## Procedure
 
@@ -80,7 +80,8 @@ to see what changed between visits.
 Frontmatter:
 
 ```yaml
-type: medical-summary
+genre: update
+subtype: medical-summary
 status: active
 provenance: synthesized
 created: <today>
@@ -104,10 +105,6 @@ Sections (reorder per context):
 - **Emergency contacts** — primary care, specialists, insurance member
   services.
 - **Notes for this visit** — context-specific items.
-
-The `medical-summary` type may not yet be in
-`frontmatter.schema.yaml`'s managed types region; `wiki-lint` flags it
-as a gap.
 
 ## Sensitive data
 

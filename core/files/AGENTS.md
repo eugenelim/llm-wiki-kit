@@ -53,7 +53,7 @@ and follow it — don't reinvent the workflow. Each lives under
   any onboarding-shaped phrase; short-circuits to a brief no-op
   message if the vault is already bootstrapped.
 - **`wiki-search`** — search the vault by content and frontmatter
-  (`--type`, `--tag`, `--status`). Prefer this over generic Grep for
+  (`--genre`, `--subtype`, `--tag`, `--status`). Prefer this over generic Grep for
   questions about *vault content* — it returns ranked pages with
   synopses, not just raw matches.
 - **`wiki-lock`** — coordinate concurrent writes. Acquire the lock before
@@ -163,7 +163,7 @@ the right invocation in chat.
   under retro-review concern C7 (issue #23).*
 - `wiki search <query>` — search the vault (or load the `wiki-search`
   skill directly to compose richer filters). Tier 1 (ripgrep, literal
-  substring with `--type` / `--tag` / `--status` / `--top` flags)
+  substring with `--genre` / `--subtype` / `--tag` / `--status` / `--top` flags)
   ships in v2.0.0; the FTS5 auto-upgrade tier remains future work.
 - `wiki research <query>` — dispatch to a configured research provider
   if one is installed. Load the `wiki-research` skill for picker

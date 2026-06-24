@@ -4,9 +4,10 @@ Tier 1 of the two-tier search the vault-side `wiki-search` SKILL.md
 describes. The kit invokes ``rg --json --fixed-strings`` over
 ``<vault_root>/wiki/``, parses the per-file ``type: "end"`` records for
 ``(path, match_count)``, reads each match's YAML frontmatter so the
-``--type`` / ``--tag`` / ``--status`` filters can drop pages that don't
-qualify, and renders the survivors as a markdown ranked list. No
-journal interaction, no writes. See ``docs/specs/wiki-search/spec.md``.
+``--genre`` / ``--subtype`` / ``--tag`` / ``--status`` filters can drop
+pages that don't qualify, and renders the survivors as a markdown ranked
+list. No journal interaction, no writes. See
+``docs/specs/wiki-search/spec.md``.
 """
 
 from __future__ import annotations
@@ -36,9 +37,15 @@ _RG_TIMEOUT_SECONDS = 60
 
 @dataclass(frozen=True)
 class SearchFilters:
-    """Optional frontmatter filters applied after ripgrep returns paths."""
+    """Optional frontmatter filters applied after ripgrep returns paths.
 
-    type: str | None = None
+    ``genre`` and ``subtype`` are the two orthogonal page-kind facets
+    (RFC-0009) that replaced the fused ``type`` field; each is an
+    independent AND filter, like ``tag`` and ``status``.
+    """
+
+    genre: str | None = None
+    subtype: str | None = None
     tag: str | None = None
     status: str | None = None
 
@@ -54,7 +61,8 @@ class SearchHit:
 
     path: str
     title: str
-    type: str
+    genre: str
+    subtype: str
     status: str
     tags: list[str] = field(default_factory=list)
     match_count: int = 0
@@ -133,7 +141,8 @@ def run_search(
             SearchHit(
                 path=rel_path,
                 title=title or abs_path.stem,
-                type=str(fm.get("type", "") or ""),
+                genre=str(fm.get("genre", "") or ""),
+                subtype=str(fm.get("subtype", "") or ""),
                 status=str(fm.get("status", "") or ""),
                 tags=_coerce_tags(fm.get("tags")),
                 match_count=match_count,
@@ -159,7 +168,8 @@ def format_results(hits: list[SearchHit]) -> str:
     for hit in hits:
         block = (
             f"## {hit.title} — {hit.path}\n"
-            f"- type: {hit.type}\n"
+            f"- genre: {hit.genre}\n"
+            f"- subtype: {hit.subtype}\n"
             f"- status: {hit.status}\n"
             f"- tags: {', '.join(hit.tags)}\n"
             f"- matches: {hit.match_count}\n"
@@ -265,7 +275,9 @@ def _coerce_tags(raw: object) -> list[str]:
 def _filters_match(fm: dict[str, object], filters: SearchFilters) -> bool:
     """True iff every active filter is satisfied by the frontmatter."""
 
-    if filters.type is not None and str(fm.get("type", "") or "") != filters.type:
+    if filters.genre is not None and str(fm.get("genre", "") or "") != filters.genre:
+        return False
+    if filters.subtype is not None and str(fm.get("subtype", "") or "") != filters.subtype:
         return False
     if filters.status is not None and str(fm.get("status", "") or "") != filters.status:
         return False

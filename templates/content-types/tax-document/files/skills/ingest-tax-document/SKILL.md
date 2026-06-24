@@ -74,8 +74,8 @@ than write a half-redacted page.
 - **Year index.** Append an entry to `wiki/library/{year}/index.md` (stub
   the index on first form of the year).
 - **Holdings cross-reference.** For 1099-B (sales) and 1099-DIV
-  (dividends), append a note to the relevant page under
-  `wiki/finances/holdings/` if one exists. Surface a contradiction
+  (dividends), append a note to the relevant holdings reference page in
+  `library/` if one exists. Surface a contradiction
   callout if the reported figures don't match the user's holdings page.
 - **Duplicate / corrected forms.** If a same-issuer same-form already
   exists for the year, surface as either a corrected form (W-2c, 1099

@@ -64,9 +64,9 @@ def test_run_search_empty_vault_returns_no_hits(tmp_path: Path) -> None:
 
 @rg_required
 def test_run_search_ranks_by_match_count_desc_then_path(tmp_path: Path) -> None:
-    _write_page(tmp_path, "a.md", "type: meeting", "# A\nkafka here")
-    _write_page(tmp_path, "b.md", "type: meeting", "# B\nkafka kafka")
-    _write_page(tmp_path, "c.md", "type: meeting", "# C\nno match here")
+    _write_page(tmp_path, "a.md", "genre: record\nsubtype: meeting", "# A\nkafka here")
+    _write_page(tmp_path, "b.md", "genre: record\nsubtype: meeting", "# B\nkafka kafka")
+    _write_page(tmp_path, "c.md", "genre: record\nsubtype: meeting", "# C\nno match here")
 
     hits = run_search(tmp_path, "kafka", SearchFilters(), top=10)
 
@@ -111,13 +111,23 @@ def test_run_search_lexical_only_no_stemming(tmp_path: Path) -> None:
 
 
 @rg_required
-def test_run_search_filter_by_type_drops_non_matches(tmp_path: Path) -> None:
-    _write_page(tmp_path, "m.md", "type: meeting", "# M\nstakeholder")
-    _write_page(tmp_path, "i.md", "type: interview", "# I\nstakeholder")
+def test_run_search_filter_by_subtype_drops_non_matches(tmp_path: Path) -> None:
+    _write_page(tmp_path, "m.md", "genre: record\nsubtype: meeting", "# M\nstakeholder")
+    _write_page(tmp_path, "i.md", "genre: record\nsubtype: interview", "# I\nstakeholder")
 
-    hits = run_search(tmp_path, "stakeholder", SearchFilters(type="meeting"), top=10)
+    hits = run_search(tmp_path, "stakeholder", SearchFilters(subtype="meeting"), top=10)
 
     assert [h.path for h in hits] == ["wiki/m.md"]
+
+
+@rg_required
+def test_run_search_filter_by_genre_drops_non_matches(tmp_path: Path) -> None:
+    _write_page(tmp_path, "r.md", "genre: record\nsubtype: meeting", "# R\nstakeholder")
+    _write_page(tmp_path, "n.md", "genre: note\nsubtype: action-item", "# N\nstakeholder")
+
+    hits = run_search(tmp_path, "stakeholder", SearchFilters(genre="record"), top=10)
+
+    assert [h.path for h in hits] == ["wiki/r.md"]
 
 
 @rg_required
@@ -166,7 +176,8 @@ def test_run_search_malformed_frontmatter_still_returns_hit(tmp_path: Path) -> N
 
     assert len(hits) == 1
     assert hits[0].path == "wiki/broken.md"
-    assert hits[0].type == ""
+    assert hits[0].genre == ""
+    assert hits[0].subtype == ""
     assert hits[0].status == ""
     assert hits[0].tags == []
 
@@ -246,12 +257,13 @@ def test_run_search_non_utf8_file_still_appears_in_results(
     assert len(hits) == 1
     assert hits[0].path == "wiki/latin1.md"
     assert hits[0].title == "latin1"
-    assert hits[0].type == ""
+    assert hits[0].genre == ""
+    assert hits[0].subtype == ""
     assert hits[0].status == ""
     assert hits[0].tags == []
 
 
-def test_run_search_non_utf8_dropped_by_type_filter(
+def test_run_search_non_utf8_dropped_by_subtype_filter(
     tmp_path: Path,
 ) -> None:
     """A non-UTF-8 file's empty frontmatter fails any active filter."""
@@ -263,7 +275,7 @@ def test_run_search_non_utf8_dropped_by_type_filter(
     wiki.mkdir()
     (wiki / "latin1.md").write_bytes(b"caf\xe9 stakeholder s\xfar\n")
 
-    hits = run_search(tmp_path, "stakeholder", SearchFilters(type="meeting"), top=10)
+    hits = run_search(tmp_path, "stakeholder", SearchFilters(subtype="meeting"), top=10)
 
     assert hits == []
 
@@ -282,7 +294,8 @@ def test_format_results_renders_block_per_hit() -> None:
         SearchHit(
             path="wiki/a.md",
             title="A",
-            type="meeting",
+            genre="record",
+            subtype="meeting",
             status="active",
             tags=["urgent", "q4"],
             match_count=3,
@@ -290,7 +303,8 @@ def test_format_results_renders_block_per_hit() -> None:
         SearchHit(
             path="wiki/b.md",
             title="B",
-            type="meeting",
+            genre="record",
+            subtype="meeting",
             status="",
             tags=[],
             match_count=1,
@@ -298,13 +312,15 @@ def test_format_results_renders_block_per_hit() -> None:
     ]
     expected = (
         "## A — wiki/a.md\n"
-        "- type: meeting\n"
+        "- genre: record\n"
+        "- subtype: meeting\n"
         "- status: active\n"
         "- tags: urgent, q4\n"
         "- matches: 3\n"
         "\n"
         "## B — wiki/b.md\n"
-        "- type: meeting\n"
+        "- genre: record\n"
+        "- subtype: meeting\n"
         "- status: \n"
         "- tags: \n"
         "- matches: 1\n"
@@ -345,14 +361,20 @@ def test_parse_match_counts_skips_malformed_json() -> None:
 def test_read_page_metadata_returns_title_and_frontmatter(tmp_path: Path) -> None:
     page = tmp_path / "p.md"
     page.write_text(
-        "---\ntype: meeting\nstatus: active\ntags: [a, b]\n---\n# The Title\nbody\n",
+        "---\ngenre: record\nsubtype: meeting\nstatus: active\ntags: [a, b]\n---\n"
+        "# The Title\nbody\n",
         encoding="utf-8",
     )
 
     title, fm = _read_page_metadata(page)
 
     assert title == "The Title"
-    assert fm == {"type": "meeting", "status": "active", "tags": ["a", "b"]}
+    assert fm == {
+        "genre": "record",
+        "subtype": "meeting",
+        "status": "active",
+        "tags": ["a", "b"],
+    }
 
 
 def test_read_page_metadata_no_frontmatter(tmp_path: Path) -> None:
@@ -433,14 +455,27 @@ def test_coerce_tags_handles_string_list_and_other() -> None:
 
 
 def test_filters_match_returns_true_when_all_filters_pass() -> None:
-    fm: dict[str, object] = {"type": "meeting", "status": "active", "tags": ["urgent"]}
-    assert _filters_match(fm, SearchFilters(type="meeting", status="active", tag="urgent"))
+    fm: dict[str, object] = {
+        "genre": "record",
+        "subtype": "meeting",
+        "status": "active",
+        "tags": ["urgent"],
+    }
+    assert _filters_match(
+        fm, SearchFilters(genre="record", subtype="meeting", status="active", tag="urgent")
+    )
 
 
 def test_filters_match_returns_false_when_any_filter_fails() -> None:
-    fm: dict[str, object] = {"type": "meeting", "status": "active", "tags": ["q4"]}
+    fm: dict[str, object] = {
+        "genre": "record",
+        "subtype": "meeting",
+        "status": "active",
+        "tags": ["q4"],
+    }
     assert not _filters_match(fm, SearchFilters(tag="urgent"))
-    assert not _filters_match(fm, SearchFilters(type="interview"))
+    assert not _filters_match(fm, SearchFilters(genre="note"))
+    assert not _filters_match(fm, SearchFilters(subtype="interview"))
     assert not _filters_match(fm, SearchFilters(status="archived"))
 
 

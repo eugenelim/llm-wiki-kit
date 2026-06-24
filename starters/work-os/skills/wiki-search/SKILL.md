@@ -1,14 +1,14 @@
 ---
 name: wiki-search
-description: "Search the vault by content and frontmatter (--type, --tag, --status, --top). Returns ranked pages with title, type, status, tags, and per-file match count — ready to read. Today's backend is ripgrep (literal substring, zero install); the SKILL was designed against a future SQLite FTS5 auto-upgrade tier (BM25, stemming, phrase/prefix) that has not yet shipped. Use for any *vault content* question; reserve the IDE's built-in Grep for regex, code search, or inspecting a known path."
+description: "Search the vault by content and frontmatter (--genre, --subtype, --tag, --status, --top). Returns ranked pages with title, genre, subtype, status, tags, and per-file match count — ready to read. Today's backend is ripgrep (literal substring, zero install); the SKILL was designed against a future SQLite FTS5 auto-upgrade tier (BM25, stemming, phrase/prefix) that has not yet shipped. Use for any *vault content* question; reserve the IDE's built-in Grep for regex, code search, or inspecting a known path."
 license: MIT
 ---
 
 # wiki-search
 
 > **Tier 1 (ripgrep) ships in v2.0.0; tier 2 (FTS5 auto-upgrade) is
-> future work.** `wiki search "<query>" [--type …] [--tag …]
-> [--status …] [--top N]` is live: literal substring over `wiki/` with
+> future work.** `wiki search "<query>" [--genre …] [--subtype …]
+> [--tag …] [--status …] [--top N]` is live: literal substring over `wiki/` with
 > frontmatter filters, ranked by per-file match count. The FTS5 tier
 > described below (stemming, phrase, prefix, snippet highlighting)
 > remains a future spec — see `docs/specs/wiki-search/spec.md`
@@ -37,8 +37,8 @@ decide which page to actually read. Specifically:
 - Plain content queries ("find pages about *X*"). Tier 1 (today)
   is **literal substring** — `kafka` matches `kafka` exactly; word
   boundaries and case sensitivity are honored.
-- Frontmatter filters (`--type meeting`, `--tag urgent`,
-  `--status active`).
+- Frontmatter filters (`--genre record`, `--subtype meeting`,
+  `--tag urgent`, `--status active`).
 - *(FTS5 — future)* Stemming-aware queries (`running` matches
   `runs`).
 - *(FTS5 — future)* Phrase, prefix, or NEAR queries (FTS5 syntax:
@@ -60,22 +60,22 @@ Both tools are unrestricted; routing is your call. When the question is
 wiki search "event driven architecture"
 
 # With frontmatter filters
-wiki search "compliance" --tag urgent --type meeting
+wiki search "compliance" --tag urgent --subtype meeting
 
 # Limit results
 wiki search "kafka" --top 20
 ```
 
 Output is markdown the agent reads directly: a ranked list of pages,
-each block with title, vault-relative path, frontmatter (type, status,
-tags), and a per-file match count. *(Synopsis and highlighted snippets
-ship with FTS5 in a future spec.)*
+each block with title, vault-relative path, frontmatter (genre, subtype,
+status, tags), and a per-file match count. *(Synopsis and highlighted
+snippets ship with FTS5 in a future spec.)*
 
 ## Composing a good query
 
 - **Start narrow.** Two or three words specific to the topic. Add
   filters before broadening the query.
-- **Filter by frontmatter when you can.** `--type recipe` cuts the
+- **Filter by frontmatter when you can.** `--subtype recipe` cuts the
   result set by an order of magnitude in food-heavy vaults.
 - **Iterate.** If the first query returns nothing useful, broaden one
   word at a time. Don't dump the user's whole question as the query —
@@ -87,7 +87,7 @@ The skill returns the top N pages, each with:
 
 - **Title** — the page's `# H1` or filename stem.
 - **Path** — relative to the vault root.
-- **Frontmatter** — type, status, tags.
+- **Frontmatter** — genre, subtype, status, tags.
 - **Match count** — ripgrep's per-file match count; ordering key.
   *(FTS5 substitutes a BM25 score when the future tier ships.)*
 - *(FTS5 — future)* **Synopsis** — the page's `## Synopsis` section

@@ -30,16 +30,21 @@ documents.
 
 ## Inputs
 
-CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
-[--status <name>] [--top <N>]`.
+CLI invocation: `wiki search <query> [--genre <name>] [--subtype <name>]
+[--tag <name>] [--status <name>] [--top <N>]`.
 
 - `<query>` — a single positional string. Treated as a **literal
   substring** by `rg --fixed-strings`; regex metacharacters do not
   apply. May contain spaces (the user quotes at the shell).
-- `--type <name>` — optional. Restrict results to pages whose
-  frontmatter `type` field equals this value (string compare,
-  case-sensitive). Repeating the flag is not supported in tier 1;
-  argparse would silently keep the last value if it were.
+- `--genre <name>` — optional. Restrict results to pages whose
+  frontmatter `genre` field equals this value (string compare,
+  case-sensitive). `genre` is the generic page-kind facet (RFC-0009).
+  Repeating the flag is not supported in tier 1; argparse would
+  silently keep the last value if it were.
+- `--subtype <name>` — optional. Restrict results to pages whose
+  frontmatter `subtype` field equals this value (string compare,
+  case-sensitive). `subtype` is the specific page-kind facet. Combined
+  with `--genre` it ANDs (a page must match both).
 - `--tag <name>` — optional. Restrict results to pages whose
   frontmatter `tags` list contains this value (string compare,
   case-sensitive). Pages whose `tags` field is absent, empty, or not a
@@ -63,7 +68,8 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
 
   ```
   ## <title> — <relative-path>
-  - type: <type-or-empty>
+  - genre: <genre-or-empty>
+  - subtype: <subtype-or-empty>
   - status: <status-or-empty>
   - tags: <comma-joined-or-empty>
   - matches: <count>
@@ -73,7 +79,7 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
   ignoring any `# ` line that appears inside a fenced code block —
   or the filename stem (`Path.stem`) if no H1 is present.
   `<relative-path>` is the page's path relative to the vault root,
-  POSIX-separated. The four metadata lines are always printed (empty
+  POSIX-separated. The five metadata lines are always printed (empty
   string after the colon is fine — the SKILL.md says the consumer
   reads these as decision inputs). `<count>` is ripgrep's
   `data.stats.matches` — the number of match instances in the file,
@@ -123,8 +129,8 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
       contains a closing `---\n` line. Malformed YAML degrades to
       empty frontmatter (`{}`) — the path still appears in results
       with all metadata fields blank.
-   3. Apply `--type` / `--tag` / `--status` filters. A page that
-      fails any active filter is dropped from the result set.
+   3. Apply `--genre` / `--subtype` / `--tag` / `--status` filters. A
+      page that fails any active filter is dropped from the result set.
 6. Rank the surviving candidates: primary key `match_count` descending,
    secondary key `relative_path` ascending (POSIX form). Take the
    first `--top` entries (default 10).
@@ -163,11 +169,12 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
   needs, not a blank-metadata hit.
 - **`--top 0` or negative.** argparse `type=int` accepts these; the
   CLI rejects `< 1` with `WikiError("--top must be ≥ 1")`.
-- **`--type ""` / `--tag ""` / `--status ""` (empty filter value).**
-  Rejected at the CLI boundary with `WikiError("--<flag> must not be
-  empty")`. Accepting them would degenerate to "match only pages whose
-  frontmatter field is missing or empty" — almost certainly not the
-  caller's intent, and unreachable from any reasonable invocation.
+- **`--genre ""` / `--subtype ""` / `--tag ""` / `--status ""` (empty
+  filter value).** Rejected at the CLI boundary with
+  `WikiError("--<flag> must not be empty")`. Accepting them would
+  degenerate to "match only pages whose frontmatter field is missing or
+  empty" — almost certainly not the caller's intent, and unreachable
+  from any reasonable invocation.
 - **Path with embedded newlines.** Not produced by file systems we
   support; not handled.
 - **Symlinks inside `wiki/`.** ripgrep does not follow symlinks by
@@ -183,8 +190,8 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
 - `ripgrep (rg) not found on PATH. …` — exit 2.
 - `search query must not be empty` — exit 2.
 - `--top must be ≥ 1` — exit 2.
-- `--<flag> must not be empty` (for `--type` / `--tag` / `--status`)
-  — exit 2.
+- `--<flag> must not be empty` (for `--genre` / `--subtype` / `--tag` /
+  `--status`) — exit 2.
 - `ripgrep failed (exit <N>): …` (anything `rg` writes to stderr when
   its exit status is ≥ 2; the exit code is included in the message so
   a maintainer can distinguish e.g. `137` (OOM kill) from `134`
@@ -220,9 +227,9 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
   delegates to `llm_wiki_kit.search.run_search(vault_root, query,
   filters, top)`. The CLI is the only module with stdout side effects.
 - **`llm_wiki_kit.search`** — new module. Public surface:
-  - `SearchFilters(type: str | None, tag: str | None, status: str | None)`
+  - `SearchFilters(genre: str | None, subtype: str | None, tag: str | None, status: str | None)`
     — small frozen dataclass.
-  - `SearchHit(path: str, title: str, type: str, status: str, tags: list[str], match_count: int)`
+  - `SearchHit(path: str, title: str, genre: str, subtype: str, status: str, tags: list[str], match_count: int)`
     — frozen dataclass; ordering keys live here.
   - `run_search(vault_root: Path, query: str, filters: SearchFilters, top: int) -> list[SearchHit]`
     — orchestrates ripgrep + frontmatter parsing + ranking. Raises
@@ -241,9 +248,10 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
 - [ ] **AC2 — `wiki search "stakeholder"` over a fixture vault with
   two pages containing the word returns both, ranked by match count
   descending, with title / type / status / tags / matches lines.**
-- [ ] **AC3 — `--type meeting` drops pages whose frontmatter type is
-  not `meeting`.** A page with type `interview` containing the query
-  is excluded.
+- [ ] **AC3 — `--subtype meeting` drops pages whose frontmatter subtype
+  is not `meeting`.** A page with subtype `interview` containing the
+  query is excluded. `--genre record` likewise drops a `genre: note`
+  page; `--genre` and `--subtype` together AND.
 - [ ] **AC4 — `--tag urgent` drops pages whose `tags` list does not
   include `urgent`.** A page tagged `[urgent, q4]` is included; a
   page tagged `[q4]` is excluded.
@@ -266,8 +274,8 @@ CLI invocation: `wiki search <query> [--type <name>] [--tag <name>]
   paths.**
 - [ ] **AC12 — Output is byte-identical across two consecutive
   invocations against the same vault state (determinism).**
-- [ ] **AC13 — `--type ""` / `--tag ""` / `--status ""` exits 2 with
-  `--<flag> must not be empty`.** Pins the empty-filter-value
+- [ ] **AC13 — `--genre ""` / `--subtype ""` / `--tag ""` / `--status ""`
+  exits 2 with `--<flag> must not be empty`.** Pins the empty-filter-value
   guardrail so a future flag rewiring can't silently re-introduce the
   surprising "only pages missing this field" semantics.
 - [ ] **AC14 — A page whose first H1-shaped line lives inside a

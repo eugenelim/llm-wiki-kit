@@ -65,8 +65,8 @@ The `contract_owner` field must resolve to a page under `wiki/people/`:
 
 1. Search `wiki/people/` for an existing page.
 2. If a match exists, use its wikilink.
-3. If no match, stub a new person page with `type: person`,
-   `status: draft`, `provenance: synthesized`, and a one-line note
+3. If no match, stub a new person page with `genre: profile`,
+   `subtype: person`, `status: draft`, `provenance: synthesized`, and a one-line note
    "First seen in `[[library/<this-contract>]]`." Wikilink to
    the stub.
 
