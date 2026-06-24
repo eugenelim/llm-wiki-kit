@@ -59,6 +59,14 @@ before proceeding; *Never do* is a hard rule, even under time pressure.
 - Re-key the `wiki search` flag listing in the architecture overview
   (`docs/architecture/overview.md`, the `search.py` row's `--type` → `--genre`/
   `--subtype`) so the kit's own map of the search surface stays current.
+- Re-point the removed-folder references that survive in the two core vault-side
+  skills the guard's `core/files/skills/` scan covers — the `ingest` SKILL's
+  routing-table diagram (`wiki/food/`, `wiki/meetings/`, `wiki/health/`,
+  `wiki/finances/` → `library/`; `wiki/people/` stays) and the `wiki-lint`
+  SKILL's example (`wiki/projects/`→`efforts/projects/`, `wiki/customers/`→
+  `people/`). These are `role-folders-and-containers`' missed re-points, fixed
+  here as a same-class bundled ride-along so the guard's no-removed-folder
+  invariant holds across all vault-side skills.
 - Re-point every folder reference in the ten operation SKILLs (and their
   `primitive.yaml` / `contract.yaml` descriptions and `path_pattern`s) to the
   role folder its input pages live in, per the §Crosswalk re-pointing table —
@@ -210,10 +218,13 @@ shape; no production logic mirrors the assertion.
       comment, and the `wiki-research-skill` spec line that states `--type` does
       not exist on that CLI. Scan set:
       `templates/operations/`, `templates/content-types/*/files/skills/`,
-      `core/files/skills/wiki-search/`, `core/files/AGENTS.md`,
-      `docs/architecture/overview.md`, and the regenerated
-      `docs/guides/how-to/_examples/conflict-pending/`. Frozen `docs/rfc/` is
-      out of scope.
+      `core/files/skills/`, `core/files/AGENTS.md`, and
+      `docs/architecture/overview.md`. The regenerated
+      `docs/guides/how-to/_examples/conflict-pending/` is *not* scanned by the
+      guard — it is covered by `python starters/regenerate.py --check` (it is
+      rebuilt from the scanned sources, and its hand-authored seed pages carry
+      the `type:` frontmatter whose value-faceting `role-folders-and-containers`
+      deferred to a separate backlog item). Frozen `docs/rfc/` is out of scope.
 - [ ] `docs/specs/wiki-search/spec.md` and `plan.md` describe `--genre`/
       `--subtype` (not `--type`), the re-keyed `genre:`/`subtype:` output block,
       and re-keyed ACs; the spec's status line and ACs reflect the shipped

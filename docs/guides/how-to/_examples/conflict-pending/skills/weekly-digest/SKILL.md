@@ -44,10 +44,10 @@ From the operation contract:
 ## Procedure
 
 1. **Find the input pages.** For each content-type in `sources`,
-   walk its directory under `wiki/` and select pages whose
-   type-specific date field falls inside the window. For meetings
-   that's `meeting_date`. Use the `wiki-search` skill with
-   `--type` and `--frontmatter` filters; do not hand-grep.
+   search `library/` with the `wiki-search` skill filtered by the
+   type's `--subtype` (for meetings, `--subtype meeting`), and select
+   pages whose type-specific date field falls inside the window. For
+   meetings that's `meeting_date`. Do not hand-grep.
 2. **Extract the signal, not the prose.** For each input page,
    pull:
    - Title and date.
@@ -71,7 +71,8 @@ From the operation contract:
 ## Frontmatter for the digest page
 
 ```yaml
-type: digest
+genre: update
+subtype: digest
 status: active
 provenance: synthesized
 created: <today>
@@ -79,12 +80,6 @@ modified: <today>
 tags: [weekly-digest, <window>]
 digest_window: <window>
 ```
-
-The `digest` type may not yet exist in `frontmatter.schema.yaml`'s
-managed `types` region — that's fine for v0.1. A later task ships a
-content-type primitive for digests that registers the type properly;
-until then, the operation writes pages with a type the schema doesn't
-yet validate, and `wiki-lint` flags it as a known gap.
 
 ## When you can't produce a meaningful digest
 

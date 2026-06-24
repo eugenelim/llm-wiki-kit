@@ -91,7 +91,8 @@ From the operation contract:
 ## Frontmatter for the synthesis page
 
 ```yaml
-type: status-synthesis
+genre: update
+subtype: status-synthesis
 status: active
 provenance: synthesized
 created: <today>
@@ -99,10 +100,6 @@ modified: <today>
 tags: [status-synthesis, <window>]
 synthesis_window: <window>
 ```
-
-The `status-synthesis` type may not yet exist in
-`frontmatter.schema.yaml`'s managed `types` region — that's fine for
-v0.1.
 
 ## Detecting trend vs. previous
 

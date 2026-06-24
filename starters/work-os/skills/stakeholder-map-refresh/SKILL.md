@@ -41,10 +41,9 @@ From the operation contract:
 
 ## Procedure
 
-1. **Find the input pages.** Walk `wiki/stakeholder-updates/`. Filter
-   by `update_date` inside the window. Use the `wiki-search` skill
-   with `--type stakeholder-update` and `--frontmatter` filters; do
-   not hand-grep.
+1. **Find the input pages.** Search `library/` with the `wiki-search`
+   skill using `--genre update --subtype stakeholder`, then filter by
+   `update_date` inside the window; do not hand-grep.
 2. **Group by project.** For each in-window update, read
    `update_project` and bucket the update there.
 3. **Build the audience table.** For each project, walk its updates
@@ -55,9 +54,9 @@ From the operation contract:
    - The most-recent update date they appeared in.
 4. **Compose the map page.** One page at
    `outputs/stakeholder-maps/<project>.md` with sections:
-   - **Project** — wikilink back to `wiki/projects/<project>`.
-   - **DRI** — pulled from the project page if available; otherwise
-     "Not set on `[[projects/<project>]]`".
+   - **Project** — wikilink back to `efforts/projects/<project>`.
+   - **DRI** — pulled from the project hub page if available; otherwise
+     "Not set on `[[efforts/projects/<project>]]`".
    - **Active recipients** — table of audience members who appeared
      in ≥2 of the last N updates, ordered by recency.
    - **Occasional recipients** — those who appeared once.
@@ -71,7 +70,8 @@ From the operation contract:
 ## Frontmatter for the map page
 
 ```yaml
-type: stakeholder-map
+genre: update
+subtype: stakeholder-map
 status: active
 provenance: synthesized
 created: <today>
@@ -80,11 +80,6 @@ tags: [stakeholder-map, <project>]
 map_project: <project>
 map_window_days: <window>
 ```
-
-The `stakeholder-map` type may not yet exist in
-`frontmatter.schema.yaml`'s managed `types` region — that's fine for
-v0.1. A later task may ship a content-type primitive that registers
-the type properly; until then, `wiki-lint` flags it as a known gap.
 
 ## When a project has no in-window updates
 

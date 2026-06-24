@@ -40,9 +40,11 @@ From the operation contract:
 ## Procedure
 
 1. **Find the input pages.** For each content-type in `sources`,
-   walk its directory and filter by the type's date field
-   (`meeting_date`, `update_date`, `feedback_date`, `interview_date`)
-   inside the window. Use the `wiki-search` skill.
+   search `library/` filtered by the content-type's `--subtype`
+   (`--subtype meeting`, `--subtype stakeholder`, `--subtype
+   customer-feedback`, `--subtype interview`) and filter by the
+   type's date field (`meeting_date`, `update_date`, `feedback_date`,
+   `interview_date`) inside the window. Use the `wiki-search` skill.
 2. **Extract follow-up-like fields.** Per source type:
    - `meeting` → `meeting_follow_ups`.
    - `stakeholder-update` → `update_asks`.
@@ -69,7 +71,8 @@ From the operation contract:
 ## Frontmatter for the rollup page
 
 ```yaml
-type: action-rollup
+genre: update
+subtype: action-rollup
 status: active
 provenance: synthesized
 created: <today>
@@ -78,10 +81,6 @@ tags: [action-items, <window_end>]
 rollup_window_days: <window>
 rollup_window_end: <window_end>
 ```
-
-The `action-rollup` type may not yet exist in
-`frontmatter.schema.yaml`'s managed `types` region — that's fine for
-v0.1.
 
 ## Owner normalization
 

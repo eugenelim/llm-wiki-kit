@@ -34,7 +34,8 @@ operation.
 
 From the operation contract:
 
-- **`trip`** — the trip page (`wiki/trips/upcoming/<slug>.md`).
+- **`trip`** — the trip page in the trip's container folder
+  (`efforts/trips/<slug>/`).
 - **`theme`** — optional hint: "light packing", "extra-cold weather",
   "kid-friendly only", "Sarah away".
 
@@ -42,12 +43,12 @@ You also read:
 
 - The trip page itself — destination, dates, accommodations, planned
   activities, travelers.
-- Each traveler's person page (`wiki/people/<name>.md`) — sizes,
+- Each traveler's person page (`people/<name>.md`) — sizes,
   allergies, preferences if recorded.
-- The person's medical page (`wiki/medical/<name>-medical.md`) if it
-  exists — medications, EpiPens, special needs.
-- Past trip pages under `wiki/trips/past/` — for "what we wish we'd
-  brought" notes.
+- The person's medical case page (`efforts/cases/<name>-medical.md`) if
+  it exists — medications, EpiPens, special needs.
+- Past trip folders in `efforts/trips/` with `status: archived` — for
+  "what we wish we'd brought" notes.
 - Reference pages — passport / ID expiration dates, immunization
   records (these may live on the person page).
 
@@ -68,7 +69,7 @@ You also read:
 
 ## Output
 
-Augment the existing trip page (`wiki/trips/upcoming/<slug>.md`) — do
+Augment the existing trip page in `efforts/trips/<slug>/` — do
 not create a separate page. Add or update these sections:
 
 - **`## Packing list`** — sub-sections per traveler plus "Shared

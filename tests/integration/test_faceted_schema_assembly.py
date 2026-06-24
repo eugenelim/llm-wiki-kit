@@ -99,17 +99,15 @@ def test_workspace_base_lenses_render_byte_unchanged(tmp_path: Path) -> None:
         )
 
 
-def test_operation_skill_deferral_registered() -> None:
-    """The known-stale operation SKILLs are registered in the backlog under the
-    spec's anchor, naming the six SKILLs (operations-and-search-rekey)."""
+def test_operation_skill_deferral_resolved() -> None:
+    """The operation-SKILL `type`/`types`-region deferral this spec registered
+    was CLOSED by the operations-and-search-rekey spec, so the
+    faceted-frontmatter-schema backlog section no longer carries it. The
+    still-open starter-seed-page deferral remains under the section."""
     backlog = (REPO_ROOT / "docs" / "backlog.md").read_text(encoding="utf-8")
     assert "## faceted-frontmatter-schema" in backlog
-    for skill in (
-        "status-synthesis",
-        "action-item-rollup",
-        "medical-summary",
-        "renewal-reminders",
-        "onboarding-pack",
-        "stakeholder-map-refresh",
-    ):
-        assert skill in backlog, f"backlog deferral does not name {skill}"
+    # The operation-SKILL deferral bullet (and its `types`-region language) is gone.
+    assert "Operation SKILLs reference the removed" not in backlog
+    assert "managed `types` region" not in backlog
+    # The still-open deferral under the section survives.
+    assert "Starter seed pages still carry the fused `type:`" in backlog

@@ -66,11 +66,11 @@ Source arrives (paste, URL, file, photo)
   ┌────────────────────────┐
   │ Content-type ingester  │   "Apply schema, route."
   │                        │
-  │  recipe                │   wiki/food/{slug}.md
-  │  meeting               │   wiki/meetings/{date}-{slug}.md
-  │  medical-record        │   wiki/health/...
-  │  receipt               │   wiki/finances/...
-  │  person                │   wiki/people/{name}.md
+  │  recipe                │   library/{slug}.md
+  │  meeting               │   library/{date}-{slug}.md
+  │  medical-record        │   library/{date}-{slug}.md
+  │  receipt               │   library/{slug}.md
+  │  person                │   people/{name}.md
   │  ... (recipe-specific) │
   └─────────┬──────────────┘
             ▼

@@ -78,11 +78,14 @@ def test_ingest_skill_homes_pages_in_a_role_folder(skill: Path) -> None:
 def test_backlog_registers_role_folders_deferrals() -> None:
     text = BACKLOG.read_text(encoding="utf-8")
     assert "## role-folders-and-containers" in text, "backlog missing the spec section"
-    # The deferral set named by the spec AC.
+    # Still-open role-folders deferrals. The operation-SKILL/search folder-glob
+    # and the ingest-SKILL/`_templates` value-faceting deferrals were CLOSED by
+    # the operations-and-search-rekey spec and removed from the backlog.
     for needle in (
-        "_templates",  # content-type doc/template value faceting
-        "operations-and-search-rekey",  # operation SKILLs + search globs
-        "starter",  # hand-authored seed pages
-        "capture-synthesis-gating",  # atlas/ gating owner
+        "starter",  # hand-authored seed pages — still deferred
+        "capture-synthesis-gating",  # atlas/ gating owner — still deferred
     ):
         assert needle in text, f"backlog role-folders section does not name {needle!r}"
+    # The closed deferrals are no longer registered as open work.
+    assert "Operation SKILLs + `wiki search`" not in text
+    assert "still stamp `type:`" not in text

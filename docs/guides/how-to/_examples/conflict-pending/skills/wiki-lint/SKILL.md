@@ -107,8 +107,8 @@ The report is a markdown file the user reads. Summarize it in chat:
 > - 3 pages missing `provenance` — fixable, with confirm.
 > - 7 broken wikilinks — need user review (mostly typos in target
 >   names).
-> - 12 orphan pages — most look intentional, but `wiki/projects/x.md`
->   should probably link to `wiki/customers/x.md`.
+> - 12 orphan pages — most look intentional, but `efforts/projects/x.md`
+>   should probably link to `people/x.md`.
 > - 2 stale pages (> 90 days) flagged as `active` — confirm they
 >   really are.
 > - 0 contradictions (not run; ask if you want me to).

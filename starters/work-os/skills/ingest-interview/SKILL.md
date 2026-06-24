@@ -73,7 +73,7 @@ The `interview_subject` field must resolve to a page under
 
 1. Search `wiki/people/`. Tolerate full vs. shortened names.
 2. Match → wikilink. No match → stub a new person page with
-   `type: person`, `status: draft`, `provenance: synthesized`, and a
+   `genre: profile`, `subtype: person`, `status: draft`, `provenance: synthesized`, and a
    one-line note "First seen in `[[library/<this-interview>]]`."
 
 ## Findings vs. transcript

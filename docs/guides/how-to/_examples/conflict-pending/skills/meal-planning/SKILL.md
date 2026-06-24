@@ -1,6 +1,6 @@
 ---
 name: meal-planning
-description: "Produce a weekly family meal plan with shopping list, reading the recipe library under `wiki/food/`, dietary notes, last week's plan, and family calendar context if available. Load when the user asks for a weekly plan or to plan-meals, when `wiki run meal-planning` invokes you, when `/plan-meals` fires from Claude Code's slash palette, or on a scheduled Sunday sweep. Writes one page to `outputs/meal-plans/<window>.md`; idempotent for a given window. For ad-hoc \"what's for dinner tonight?\" use a recipe recommendation skill instead — this operation is the weekly cadence."
+description: "Produce a weekly family meal plan with shopping list, reading the recipe pages in `library/` (`--subtype recipe`), the dietary-notes reference page, last week's plan, and family calendar context if available. Load when the user asks for a weekly plan or to plan-meals, when `wiki run meal-planning` invokes you, when `/plan-meals` fires from Claude Code's slash palette, or on a scheduled Sunday sweep. Writes one page to `outputs/meal-plans/<window>.md`; idempotent for a given window. For ad-hoc \"what's for dinner tonight?\" use a recipe recommendation skill instead — this operation is the weekly cadence."
 license: MIT
 ---
 
@@ -43,14 +43,15 @@ From the operation contract:
 - **`theme`** — optional hint: "easy week — kids' sports", "trying a
   new cuisine", "Sarah away Mon-Wed". Bias the plan accordingly.
 - **`household`** — optional subset (e.g. just the parents for a week
-  the kids are at camp). Defaults to everyone listed in
-  `wiki/food/dietary-notes.md`.
+  the kids are at camp). Defaults to everyone listed in the
+  dietary-notes reference page in `library/`.
 
 You also read:
 
-- All recipe pages under `wiki/food/` — typically `wiki/food/` itself
-  plus any subfolders (`family-favorites/`, `weeknight/`).
-- `wiki/food/dietary-notes.md` — per-person allergens and preferences.
+- All recipe pages in `library/` — search with `--genre reference
+  --subtype recipe`.
+- The dietary-notes reference page in `library/` — per-person allergens
+  and preferences.
 - The most recent plan under `outputs/meal-plans/` — for repetition
   avoidance and leftover continuity.
 - A pantry inventory page if the household keeps one.
@@ -80,7 +81,8 @@ window overwrites or sidecars per the kit's `safe_write` flow.
 Frontmatter:
 
 ```yaml
-type: meal-plan
+genre: update
+subtype: meal-plan
 status: active
 provenance: synthesized
 created: <today>
@@ -99,10 +101,6 @@ Sections:
   subtracted.
 - **Notes for next week's planner** — what to capture (new recipes
   tried, family reactions, recipes that didn't fit).
-
-The `meal-plan` type may not yet exist in `frontmatter.schema.yaml`'s
-managed `types` region. That's fine for v0.1; `wiki-lint` flags it as a
-known gap. A later content-type primitive can register the type.
 
 ## When you can't produce a meaningful plan
 

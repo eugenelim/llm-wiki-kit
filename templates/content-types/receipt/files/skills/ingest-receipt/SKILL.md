@@ -47,13 +47,14 @@ durable record; cross-reference it from the relevant domain page.
 The receipt page is the source of truth, but the *useful* signal often
 belongs somewhere else:
 
-- **Vehicle service.** Append a dated entry to
-  `wiki/vehicles/{vehicle}-service-history.md` (or stub it if missing)
+- **Vehicle service.** Append a dated entry to the vehicle's
+  service-history reference page in `library/`
+  (`library/{vehicle}-service-history.md`, or stub it if missing)
   with mileage, items, and next-service window. Surface as a
   `> [!important] Follow-up due by …` callout for the `follow-up-tracker`.
-- **Appliance purchase.** Update `wiki/home/appliances.md` (or create
-  it) with warranty period, purchase date, and a wikilink to the
-  receipt page.
+- **Appliance purchase.** Update the appliances reference page in
+  `library/` (`library/appliances.md`, or create it) with warranty
+  period, purchase date, and a wikilink to the receipt page.
 - **Tax-relevant.** Tag charitable donations, medical expenses,
   business expenses, and similar. The `tax-document` content-type owns
   year-end aggregation; here you just flag the receipt.

@@ -56,7 +56,7 @@ For each name in `meeting_attendees`:
    variants (full vs. shortened names, initials).
 2. If a match exists, use its wikilink (`[[jane-doe]]`).
 3. If no match, stub a new person page under `wiki/people/` with
-   `type: person`, `status: draft`, `provenance: synthesized`, and a
+   `genre: profile`, `subtype: person`, `status: draft`, `provenance: synthesized`, and a
    one-line note "First seen in `[[library/<this-meeting>]]`."
    Wikilink to the stub.
 

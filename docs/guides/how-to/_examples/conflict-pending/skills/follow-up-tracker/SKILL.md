@@ -46,11 +46,12 @@ You also read:
 - Every page under `wiki/` for inline `> [!important] Follow-up due by
   YYYY-MM-DD` callouts (use `wiki-search` with `--callout` or grep —
   do not hand-walk the tree).
-- Every page under `wiki/actions/` for standalone `action-item` pages
-  with `action_item_state` in `{open, in-progress, blocked}`.
-- `wiki/medical/medications.md` for refill due dates.
-- `wiki/vendors/` and any vehicle / appliance pages for service
-  intervals.
+- `library/` filtered by `--subtype action-item` for standalone
+  `action-item` pages with `action_item_state` in
+  `{open, in-progress, blocked}`.
+- Medication reference pages in `library/` for refill due dates.
+- Vendor/service nodes in `people/` and any vehicle / appliance pages
+  for service intervals.
 
 ## Procedure
 
@@ -81,7 +82,8 @@ closed.
 Frontmatter:
 
 ```yaml
-type: follow-up-report
+genre: update
+subtype: follow-up-report
 status: active
 provenance: synthesized
 created: <today>
@@ -102,9 +104,6 @@ Sections:
 - **Open without a date** — items that may need a due date attached.
 - **By person / domain** — cross-grouped view for the household to
   scan by owner.
-
-The `follow-up-report` type may not yet exist in
-`frontmatter.schema.yaml`. That's fine; `wiki-lint` flags it as a gap.
 
 ## When the scan finds nothing
 

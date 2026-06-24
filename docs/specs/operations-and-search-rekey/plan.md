@@ -213,9 +213,10 @@ assertions pass.
   excluding `asset_type`, `*_status`, the `BEGIN MANAGED: content-types`
   comment, and the `wiki-research-skill` "does not exist" line). Scan set:
   `templates/operations/`, `templates/content-types/*/files/skills/`,
-  `core/files/skills/wiki-search/`, `core/files/AGENTS.md`,
-  `docs/architecture/overview.md`, and `docs/guides/how-to/_examples/conflict-pending/`
-  (regenerated). Verifies AC8.
+  `core/files/skills/`, `core/files/AGENTS.md`, and
+  `docs/architecture/overview.md`. The regenerated example vault is covered by
+  `regenerate.py --check`, not the guard (its seed pages carry deferred
+  `type:`). Verifies AC8.
 - Existing `wiki init` over `family`/`work-os`/`personal` + `resolve_dependencies`
   integration tests stay green. Verifies the no-manifest-change AC.
 - `python starters/regenerate.py --check` exits 0 (the committed starters and
