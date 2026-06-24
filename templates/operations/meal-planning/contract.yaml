@@ -1,8 +1,8 @@
 name: meal-planning
 description: >-
   Produce a weekly family meal plan with shopping list. v0.1 reads
-  recipe pages under `wiki/food/`, the dietary-notes page, and the most
-  recent meal plan for repetition avoidance.
+  recipe pages in `library/` (`--subtype recipe`), the dietary-notes
+  reference page, and the most recent meal plan for repetition avoidance.
 period: weekly
 skill: meal-planning
 outcomes:
@@ -19,7 +19,7 @@ inputs:
     type: list
     items: string
     optional: true
-    description: Subset of household to plan for. Defaults to everyone in `wiki/food/dietary-notes.md`.
+    description: Subset of household to plan for. Defaults to everyone in the dietary-notes reference page in `library/`.
 outputs:
   meal_plan_page:
     type: page

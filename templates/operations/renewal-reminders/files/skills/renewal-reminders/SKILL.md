@@ -15,11 +15,11 @@ license: MIT
 > *design spec*, not an executable playbook. Tracked under
 > retro-review concern C7 (issue #23).
 
-Walk `wiki/vendor-contracts/`, find contracts whose
-`contract_renewal_date` is inside the look-ahead window, and write
-one durable page listing them. The point of this operation is one
-specific failure mode: a vendor contract auto-renews because nobody
-noticed the notice deadline.
+Search `library/` for vendor-contract pages (`--genre contract
+--subtype vendor`), find contracts whose `contract_renewal_date` is
+inside the look-ahead window, and write one durable page listing them.
+The point of this operation is one specific failure mode: a vendor
+contract auto-renews because nobody noticed the notice deadline.
 
 ## When to load
 
@@ -42,9 +42,8 @@ From the operation contract:
 
 ## Procedure
 
-1. **Find every vendor-contract page.** Walk
-   `wiki/vendor-contracts/`. Use the `wiki-search` skill with
-   `--type vendor-contract`.
+1. **Find every vendor-contract page.** Search `library/` with the
+   `wiki-search` skill using `--genre contract --subtype vendor`.
 2. **Bucket each contract:**
    - **Overdue** — `contract_renewal_date` is in the past *and*
      `status: active`. These should have been handled; surface
@@ -77,7 +76,8 @@ From the operation contract:
 ## Frontmatter for the reminders page
 
 ```yaml
-type: renewal-reminders
+genre: update
+subtype: renewal-reminders
 status: active
 provenance: synthesized
 created: <today>
@@ -85,10 +85,6 @@ modified: <today>
 tags: [renewals, <run_date>]
 lookahead_days: <window>
 ```
-
-The `renewal-reminders` type may not yet exist in
-`frontmatter.schema.yaml`'s managed `types` region — that's fine for
-v0.1.
 
 ## Parsing amounts
 

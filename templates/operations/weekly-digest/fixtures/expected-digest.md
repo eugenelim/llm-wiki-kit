@@ -1,5 +1,6 @@
 ---
-type: digest
+genre: update
+subtype: digest
 status: active
 provenance: synthesized
 created: 2026-05-18
@@ -12,18 +13,18 @@ digest_window: 2026-W20
 
 ## Decisions this week
 
-- Ship v2.0.0 by end of Q3. — [[meetings/2026-05-12-q2-planning-kickoff]]
-- Hold the medical-record primitive until ADR-0007. — [[meetings/2026-05-12-q2-planning-kickoff]]
+- Ship v2.0.0 by end of Q3. — [[library/2026-05-12-q2-planning-kickoff]]
+- Hold the medical-record primitive until ADR-0007. — [[library/2026-05-12-q2-planning-kickoff]]
 
 ## Follow-ups by owner
 
 ### @alex-park
 
-- [ ] Draft ADR-0007 by 2026-05-23. — [[meetings/2026-05-12-q2-planning-kickoff]]
+- [ ] Draft ADR-0007 by 2026-05-23. — [[library/2026-05-12-q2-planning-kickoff]]
 
 ### @jane-doe
 
-- [ ] Update the ROADMAP by 2026-05-19. — [[meetings/2026-05-12-q2-planning-kickoff]]
+- [ ] Update the ROADMAP by 2026-05-19. — [[library/2026-05-12-q2-planning-kickoff]]
 
 ## Loose ends
 
