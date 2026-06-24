@@ -63,8 +63,8 @@ The `update_project` field must resolve to a page under
 1. Search `wiki/efforts/projects/` for an existing page that matches the project
    name (tolerate codename vs. public-name variants).
 2. If a match exists, use its wikilink (`[[apollo-revamp]]`).
-3. If no match, stub a new project page with `type: project`,
-   `status: draft`, `provenance: synthesized`, and a one-line note
+3. If no match, stub a new project page with `genre: profile`,
+   `subtype: project`, `status: draft`, `provenance: synthesized`, and a one-line note
    "First seen in `[[library/<this-update>]]`." Wikilink to
    the stub.
 

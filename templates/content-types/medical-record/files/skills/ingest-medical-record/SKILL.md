@@ -35,7 +35,7 @@ You need to extract:
 - **`medical_record_date`** — the date of service (not today). EOBs
   sometimes span multiple visits; if so, ask the user to pick one.
 - **`medical_record_provider`** — the provider name and (where known)
-  the practice. Stub the provider as a vendor node (`type: vendor`) in
+  the practice. Stub the provider as a vendor node (`genre: profile`, `subtype: vendor`) in
   `wiki/people/` if new.
 - **`medical_record_kind`** — short label: `visit-summary`, `eob`,
   `lab-result`, `prescription`, `vaccination`, etc.
@@ -60,7 +60,7 @@ read from.
   Surface the change before writing; do not silently overwrite an
   existing medication entry that conflicts. Use a `> [!danger]
   Contradiction` callout on a conflict.
-- **Providers.** Stub new providers as vendor nodes (`type: vendor`) in
+- **Providers.** Stub new providers as vendor nodes (`genre: profile`, `subtype: vendor`) in
   `wiki/people/` with their name, practice, phone, and the date you first
   saw them.
 - **Follow-ups.** Every recheck or next-visit note becomes a callout on
