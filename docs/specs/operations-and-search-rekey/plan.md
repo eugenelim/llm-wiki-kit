@@ -1,7 +1,7 @@
 # Plan: operations-and-search-rekey
 
 - **Spec:** [`spec.md`](spec.md)
-- **Status:** Executing <!-- Drafting | Executing | Done -->
+- **Status:** Done <!-- Drafting | Executing | Done -->
 
 > **Plan contract:** this is the implementation strategy. Unlike the spec, this
 > document is allowed to change as you learn. When it changes substantially
@@ -261,3 +261,14 @@ no vaults in the field); there is no deprecation shim. Reversible by revert.
 ## Changelog
 
 - 2026-06-16: initial plan.
+- 2026-06-24: executed T1–T5. Mid-EXECUTE the AC8 guard (T5) surfaced
+  removed-folder references `role-folders-and-containers` had missed — the
+  core `ingest`/`wiki-lint` skills and the `trip-doc`/`tax-document`/`receipt`
+  content-type ingest SKILLs — folded in as same-class bundled re-points and
+  the guard scan-set broadened to all of `core/files/skills/` (the example
+  vault dropped from the guard, covered by `regenerate.py --check`).
+  Adversarial review added the `status-synthesis` input re-point (its original
+  step carried no removed-folder token, so the guard couldn't surface the
+  missing crosswalk re-key) and the `customer-feedback/` guard-regex entry;
+  quality review added the `--type`-rejection integration test and tightened
+  the scan-set coverage check.

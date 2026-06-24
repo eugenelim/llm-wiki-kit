@@ -1,6 +1,6 @@
 # Spec: operations-and-search-rekey
 
-- **Status:** Implementing <!-- Draft | Approved | Implementing | Shipped | Archived -->
+- **Status:** Shipped <!-- Draft | Approved | Implementing | Shipped | Archived -->
 - **Owner:** eugenelim
 - **Plan:** [`plan.md`](plan.md)
 - **Constrained by:** RFC-0009, RFC-0008, ADR-0011, `docs/specs/faceted-frontmatter-schema/spec.md`, `docs/specs/role-folders-and-containers/spec.md`, `docs/specs/wiki-search/spec.md`
@@ -164,19 +164,19 @@ shape; no production logic mirrors the assertion.
 
 ## Acceptance Criteria
 
-- [ ] `wiki search` exposes `--genre <value>` and `--subtype <value>` as
+- [x] `wiki search` exposes `--genre <value>` and `--subtype <value>` as
       independent optional AND filters and no longer exposes `--type`; `--tag`,
       `--status`, and `--top` are byte-unchanged in behavior. `search.py`'s
       `SearchFilters` carries `genre`/`subtype` (not `type`) and `_filters_match`
       gates on the `genre`/`subtype` frontmatter fields.
-- [ ] `SearchHit` carries `genre` and `subtype` (not `type`) and
+- [x] `SearchHit` carries `genre` and `subtype` (not `type`) and
       `format_results` renders a `- genre:` and a `- subtype:` line per hit in
       place of the former `- type:` line; `- status:`/`- tags:`/`- matches:`
       lines are unchanged.
-- [ ] `cli.py`'s `search` subparser defines `--genre` and `--subtype` (no
+- [x] `cli.py`'s `search` subparser defines `--genre` and `--subtype` (no
       `--type`), the empty-filter guard rejects `--genre ""` and `--subtype ""`
       with `--<flag> must not be empty`, and `journal grep --type` is untouched.
-- [ ] No operation SKILL, `primitive.yaml`, or `contract.yaml` references a
+- [x] No operation SKILL, `primitive.yaml`, or `contract.yaml` references a
       removed folder (`customers/`, `vendors/`, `food/`, `domains/`, `medical/`,
       `meetings/`, `actions/`, `decisions/`, `interviews/`, `customer-feedback/`,
       `receipts/`, `tax/`, `stakeholder-updates/`, `vendor-contracts/`,
@@ -184,24 +184,24 @@ shape; no production logic mirrors the assertion.
       every input-page reference resolves to `people/`, `library/`, or an
       `efforts/<type>/` registry per the §Crosswalk table, and trip
       upcoming/past selection uses `status: active`/`archived`.
-- [ ] No operation SKILL uses `--type` or `--frontmatter` for input selection;
+- [x] No operation SKILL uses `--type` or `--frontmatter` for input selection;
       each is replaced by the crosswalk `--genre`/`--subtype` filter (e.g.
       renewal-reminders `--type vendor-contract` → `--subtype vendor`,
       stakeholder-map-refresh `--type stakeholder-update` → `--subtype
       stakeholder`).
-- [ ] Every operation output-frontmatter block — the **nine** in
+- [x] Every operation output-frontmatter block — the **nine** in
       `templates/operations/*/files/skills/*/SKILL.md` that write output
       frontmatter (all operations except `trip-prep`, which augments an existing
       trip page and writes none), plus the `weekly-digest` expected-output
       fixture — stamps `genre: update` and `subtype: <product>` and no longer
       stamps `type:`; the stale sentence naming the removed
       `frontmatter.schema.yaml` `types` region / `wiki-lint` gap is gone.
-- [ ] The seven content-type ingest SKILLs that stub entity nodes
+- [x] The seven content-type ingest SKILLs that stub entity nodes
       (`customer-feedback`, `decision`, `interview`, `medical-record`,
       `meeting`, `stakeholder-update`, `vendor-contract`) stub `genre: profile`
       + the node subtype (`person`/`customer`/`vendor`/`organization`/`project`)
       per the §Crosswalk node table; none stubs `type:`.
-- [ ] A `grep` guard test asserts zero occurrences of the removed read-surface
+- [x] A `grep` guard test asserts zero occurrences of the removed read-surface
       tokens, using **anchored** patterns that do not false-match legitimate
       prose — specifically: the `--type` flag as a whole word; a **line-anchored**
       output stub `^type: <kind>` for the nine operation-output values that sit
@@ -225,23 +225,23 @@ shape; no production logic mirrors the assertion.
       rebuilt from the scanned sources, and its hand-authored seed pages carry
       the `type:` frontmatter whose value-faceting `role-folders-and-containers`
       deferred to a separate backlog item). Frozen `docs/rfc/` is out of scope.
-- [ ] `docs/specs/wiki-search/spec.md` and `plan.md` describe `--genre`/
+- [x] `docs/specs/wiki-search/spec.md` and `plan.md` describe `--genre`/
       `--subtype` (not `--type`), the re-keyed `genre:`/`subtype:` output block,
       and re-keyed ACs; the spec's status line and ACs reflect the shipped
       contract (drift is a bug, fixed in this PR).
-- [ ] The `faceted-frontmatter-schema` operation-SKILL deferral bullet and the
+- [x] The `faceted-frontmatter-schema` operation-SKILL deferral bullet and the
       `role-folders-and-containers` operation/search folder-glob and
       ingest-SKILL/template value-faceting bullets are removed from
       `docs/backlog.md` (closed work lives in each spec's Changelog, not the
       backlog).
-- [ ] `wiki init` over `family`, `work-os`, and `personal` still renders and
+- [x] `wiki init` over `family`, `work-os`, and `personal` still renders and
       `resolve_dependencies` still accepts each recipe (the re-key is doc/
       output-frontmatter only; no manifest or `requires:` change).
-- [ ] `python starters/regenerate.py --check` exits 0 — the committed starters
+- [x] `python starters/regenerate.py --check` exits 0 — the committed starters
       and the `conflict-pending` example vault embed copies of the re-keyed
       operation/search SKILLs, so the regenerated bytes are committed in this PR
       (the example-vault drift guard, as `role-folders-and-containers` used it).
-- [ ] `ruff check llm_wiki_kit tests`, `ruff format --check llm_wiki_kit tests`,
+- [x] `ruff check llm_wiki_kit tests`, `ruff format --check llm_wiki_kit tests`,
       `mypy llm_wiki_kit tests`, and `pytest -m 'not slow'` pass.
 
 ## Crosswalk

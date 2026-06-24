@@ -9,18 +9,13 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 
 | Spec | Status |
 |------|--------|
-| [operations-and-search-rekey](operations-and-search-rekey/spec.md) | Implementing |
-
-RFC-0009 follow-on #3: re-keys the operation SKILLs and `wiki search` /
-`search.py` from the removed entity-kind / content-type-kind folders and the
-fused page `type` to the four role folders and `genre`/`subtype` facets; folds
-in the ingest-SKILL entity-stub and operation-output frontmatter value-faceting.
-Lands after `role-folders-and-containers`, before `capture-synthesis-gating`.
+| _(none — `capture-synthesis-gating` is the next RFC-0009 follow-on)_ | |
 
 ## Shipped / Implemented
 
 | Spec | Status |
 |------|--------|
+| [operations-and-search-rekey](operations-and-search-rekey/spec.md) | Shipped |
 | [role-folders-and-containers](role-folders-and-containers/spec.md) | Shipped |
 | [faceted-frontmatter-schema](faceted-frontmatter-schema/spec.md) | Shipped |
 | [wiki-agents](wiki-agents/spec.md) | Shipped |
