@@ -164,6 +164,22 @@ def test_wiki_search_ranks_and_renders_results(
     assert "- matches: 1" in out
 
 
+def test_wiki_search_legacy_type_flag_is_rejected(
+    vault: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fused `--type` flag is gone; argparse rejects it at the CLI boundary.
+
+    Pins AC3's "no `--type`" at the argparse surface — the doc-grep guard
+    (`test_facet_rekey_guards`) only scans SKILL/doc text, so a regression that
+    re-added `--type` to the search subparser would otherwise ship green.
+    """
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["search", "stakeholder", "--type", "meeting"])
+    assert excinfo.value.code == 2
+    assert "unrecognized arguments: --type" in capsys.readouterr().err
+
+
 def test_wiki_search_subtype_filter_excludes_other_subtypes(
     vault: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

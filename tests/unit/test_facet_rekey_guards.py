@@ -46,7 +46,13 @@ _SCAN_FILES = (
 _REMOVED_FOLDER = re.compile(
     r"wiki/(?:customers|customer-feedback|vendors|food|domains|medical|meetings"
     r"|actions|decisions|interviews|receipts|tax|stakeholder-updates"
-    r"|vendor-contracts|health|finances|projects)/|trips/(?:upcoming|past)/"
+    r"|vendor-contracts|health|finances|projects)/"
+    # `trips/upcoming|past` is intentionally NOT `wiki/`-anchored: lifecycle
+    # subfolders are forbidden under *both* a stray `wiki/trips/` and the
+    # re-homed `efforts/trips/` container (RFC-0009 §C/§D — lifecycle is the
+    # `status` facet, never a folder), so a reintroduced
+    # `efforts/trips/upcoming/` must fail the guard too.
+    r"|trips/(?:upcoming|past)/"
 )
 
 # Operation-output stubs sit column-0 inside ```yaml fences.
@@ -94,10 +100,23 @@ def scanned() -> list[tuple[Path, str]]:
     return [(p, p.read_text(encoding="utf-8")) for p in _scan_paths()]
 
 
-def test_scan_set_is_non_empty(scanned: list[tuple[Path, str]]) -> None:
-    """Guard against a glob typo silently scanning nothing."""
+def test_scan_set_covers_every_group() -> None:
+    """Guard against a glob typo silently shrinking the scanned surface.
 
-    assert len(scanned) > 20
+    Asserting a bare total is too weak — if one of the three ``_SCAN_GLOBS``
+    stopped matching (a content-types/operations restructure), the count could
+    halve and still clear a loose floor, so the absence-asserting greps below
+    would quietly cover less. Require every glob group to contribute, and hold
+    a floor near the real count (55 files at time of writing).
+    """
+
+    paths = _scan_paths()
+    assert len(paths) >= 50, (
+        f"scan set shrank to {len(paths)} files — a glob likely stopped matching"
+    )
+    rels = [str(p.relative_to(REPO_ROOT)) for p in paths]
+    for prefix in ("templates/operations/", "templates/content-types/", "core/files/skills/"):
+        assert any(r.startswith(prefix) for r in rels), f"no scanned files under {prefix}"
 
 
 def test_no_removed_folder_references(scanned: list[tuple[Path, str]]) -> None:
