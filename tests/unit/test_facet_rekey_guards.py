@@ -44,9 +44,9 @@ _SCAN_FILES = (
 # subfolders. Valid role folders (people, library, atlas, efforts) and
 # `efforts/projects/` are deliberately absent so they never match.
 _REMOVED_FOLDER = re.compile(
-    r"wiki/(?:customers|vendors|food|domains|medical|meetings|actions|decisions"
-    r"|interviews|receipts|tax|stakeholder-updates|vendor-contracts|health"
-    r"|finances|projects)/|trips/(?:upcoming|past)/"
+    r"wiki/(?:customers|customer-feedback|vendors|food|domains|medical|meetings"
+    r"|actions|decisions|interviews|receipts|tax|stakeholder-updates"
+    r"|vendor-contracts|health|finances|projects)/|trips/(?:upcoming|past)/"
 )
 
 # Operation-output stubs sit column-0 inside ```yaml fences.
