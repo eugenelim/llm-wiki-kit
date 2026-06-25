@@ -16,3 +16,4 @@ a spec (`docs/specs/`).
 | [0007](0007-primitive-contribution-model.md) | Primitive contribution model — upstream PR plus sideload extension | Accepted |
 | [0008](0008-workspace-as-lens.md) | Workspace-as-lens — one knowledge bank, many filtered workspaces | Accepted |
 | [0009](0009-faceted-ontology-and-lyt-philosophy.md) | Faceted ontology and the LYT organizing philosophy — page-kind facets, capture/synthesis split, emergent structure | Accepted |
+| [0010](0010-decouple-authoring-from-projection.md) | Decouple authoring from projection — a projection port, a landing box, and externalized skill packs | Accepted |
