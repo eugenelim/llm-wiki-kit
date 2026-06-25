@@ -64,6 +64,24 @@ interim):
   `capture-synthesis-gating` spec; this spec seeds `atlas/` as an empty,
   human-gated role folder with its `_index.md` map only.
 
+## projection-port
+
+Deferred RFC-0010 follow-ons the `projection-port` spec scopes out (the port
+itself ships; these ride later, each its own RFC-0010 follow-on artifact):
+
+- **Fold `_cmd_research --out` onto the port** — research projects through the
+  shared projection path rather than its own `safe_write` wiring. Unblocked once a
+  research artifact reliably carries schema-valid faceted frontmatter.
+- **Fold the operations writer onto the port** — operation `outputs/*` (written
+  today through `safe_write` in vault-side SKILL prose) project via the verb.
+- **Landing box + `adopt` skill** — the inbox convention and the skill that
+  auto-routes foreign artifacts through the port (RFC-0010 D2; its own spec).
+- **Container-aware routing** — auto-homing a page into `efforts/<type>/<instance>/`
+  by `parent:`; today the port routes by `genre` to a role folder and container
+  pages require explicit `--at`.
+- **Changelog append by the port** — the port records the `log/changelog.md` line;
+  today the authoring skill writes it. Needs append-log mechanics that don't exist.
+
 <!-- Add one section per spec with open work, e.g.:
 
 ## <spec-name>

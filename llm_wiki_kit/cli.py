@@ -37,7 +37,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from llm_wiki_kit import __version__, adopt, journal
+from llm_wiki_kit import __version__, adopt, journal, projection
 from llm_wiki_kit.adopt import compute_required_regions
 from llm_wiki_kit.doctor import (
     check_managed_region_drift,
@@ -2084,29 +2084,56 @@ def _cmd_research(args: argparse.Namespace) -> int:
 def _resolve_out_path(raw: str, vault_root: Path) -> tuple[str, Path]:
     """Resolve ``--out`` to ``(vault-relative posix, absolute Path)``.
 
-    Rejects absolute paths, ``..`` escapes, and symlinks that resolve
-    out of the vault tree. ``Path.resolve(strict=False)`` follows
-    symlinks in any existing prefix even when the leaf doesn't exist
-    yet — the symlink-escape test exercises that path. The resolved
-    location must be the vault root or a descendant of it.
-
-    Raises ``WikiError`` with a one-line message; no journal event has
-    been appended at this point in the CLI's flow.
+    Thin delegate to the single confinement implementation,
+    ``projection.resolve_vault_path`` (RFC-0010 moved the resolver there so
+    ``wiki project`` and ``wiki research --out`` share one
+    canonicalize-then-verify-prefix check). Rejects absolute paths, ``..``
+    escapes, and symlink-escapes; raises ``WikiError`` with a one-line
+    message.
     """
 
-    candidate = Path(raw)
-    if candidate.is_absolute():
-        raise WikiError(f"--out path must be relative to the vault root: got {raw!r}")
-    abs_path = (vault_root / candidate).resolve(strict=False)
-    resolved_root = vault_root.resolve()
-    try:
-        rel = abs_path.relative_to(resolved_root)
-    except ValueError as exc:
+    return projection.resolve_vault_path(raw, vault_root, label="--out path")
+
+
+def _cmd_project(args: argparse.Namespace) -> int:
+    """Project a finished Markdown artifact into the vault (RFC-0010).
+
+    The porcelain over ``projection.project``: validate frontmatter against
+    the vault schema, resolve the destination (``genre`` routing or
+    ``--at``), and write through ``safe_write``. See
+    ``docs/specs/projection-port/spec.md``.
+    """
+
+    from llm_wiki_kit.write_helper import WriteResult
+
+    vault_root = Path.cwd().resolve()
+    journal_path = vault_root / ".wiki.journal" / "journal.jsonl"
+    if not journal_path.is_file():
         raise WikiError(
-            f"--out path must resolve under the vault root: "
-            f"{raw!r} resolves to {abs_path}, outside {resolved_root}"
-        ) from exc
-    return rel.as_posix(), abs_path
+            f"not a wiki vault: {vault_root} has no .wiki.journal/journal.jsonl. "
+            "Run `wiki init <path> --recipe <name>` first."
+        )
+
+    artifact = Path(args.artifact)
+    if not artifact.is_file():
+        raise WikiError(f"artifact not found: {args.artifact}")
+
+    result = projection.project(
+        artifact,
+        vault_root,
+        journal_path,
+        at=args.at,
+        subtype=args.as_subtype,
+        by=args.by,
+    )
+    if result.result is WriteResult.PROPOSAL:
+        print(
+            f"proposal at {result.dest_rel}.proposed (drift detected on "
+            f"{result.dest_rel}); run the wiki-conflict skill to merge."
+        )
+    else:
+        print(f"wrote {result.dest_rel}")
+    return 0
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
@@ -2678,6 +2705,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override auto-detection with an explicit content-type primitive name.",
     )
     ingest.set_defaults(func=_cmd_ingest)
+
+    project_cmd = subparsers.add_parser(
+        "project",
+        parents=[verbose_parent],
+        help="Project a finished Markdown artifact into the vault through the "
+        "validated, drift-protected write path.",
+    )
+    project_cmd.add_argument(
+        "artifact", help="Path to the Markdown artifact (frontmatter + body) to project."
+    )
+    project_cmd.add_argument(
+        "--at",
+        default=None,
+        metavar="<vault-rel-path>",
+        help="Explicit vault-relative destination, overriding genre routing "
+        "(required for container-scoped pages under efforts/).",
+    )
+    project_cmd.add_argument(
+        "--as",
+        dest="as_subtype",
+        default=None,
+        metavar="<subtype>",
+        help="Set or override the artifact's subtype facet before validation "
+        "(re-serializes the frontmatter block in canonical YAML — values and "
+        "key order preserved, formatting normalized; body kept verbatim).",
+    )
+    project_cmd.add_argument(
+        "--by",
+        default=None,
+        metavar="<name>",
+        help="Attribute the write to this name in the journal (default: wiki-project).",
+    )
+    project_cmd.set_defaults(func=_cmd_project)
 
     resolve = subparsers.add_parser(
         "resolve",

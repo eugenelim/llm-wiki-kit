@@ -113,6 +113,7 @@ RESERVED_OUTCOME_VERBS: frozenset[str] = frozenset(
         "upgrade",
         "doctor",
         "ingest",
+        "project",
         "resolve",
         "lock",
         "run",

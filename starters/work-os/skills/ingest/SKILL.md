@@ -81,7 +81,7 @@ Source arrives (paste, URL, file, photo)
   │  Shared flow           │
   │  - scope check         │   (does this belong in the wiki?)
   │  - contradiction check │   (does it conflict with existing pages?)
-  │  - write page          │   (via `safe_write` — drift-protected)
+  │  - write page          │   (via `wiki project` — validated + drift-protected)
   │  - extract tasks/facts │
   │  - log to changelog    │
   └────────────────────────┘
@@ -132,11 +132,21 @@ ingest runs these steps:
    `wiki-search` with a tight query. If found, surface the conflict
    and ask whether to update the old page, merge, or note divergence.
 3. **Write.** The content-type ingester produces the structured page
-   body; emit it through the kit's drift-protected write path so the
-   journal records the page. `wiki ingest <source>` only handles the
-   *routing* decision (see the kit-side route step above) — the page
-   write itself happens via the same `safe_write`-backed path every
-   primitive uses.
+   body with its faceted frontmatter; project it through the kit's
+   sanctioned write path:
+
+   ```
+   wiki project <artifact.md> --as <subtype> [--at <vault-rel-path>]
+   ```
+
+   `wiki project` validates the frontmatter against the vault schema,
+   routes the page to its role folder by `genre` (pass `--at` for a
+   container page under `efforts/`), then writes through the same
+   drift-protected, journaled path every primitive uses. `wiki ingest
+   <source>` only handles the *routing* decision (see the kit-side route
+   step above); `wiki project` does the write. The scope, contradiction,
+   fact-extraction, and changelog steps around it are yours — `wiki
+   project` owns only the mechanical write contract.
 4. **Extract facts / tasks.** Anything the page asserts about a person,
    project, or domain should propagate: pull facts into the relevant
    wiki pages, push action items into the appropriate tasks list.
@@ -180,9 +190,10 @@ Act without asking when:
 
 ## Anti-patterns
 
-- Don't write to `wiki/` outside the `wiki ingest` flow. The journal
-  is the source of truth for what's in the vault, and a hand-written
-  page bypasses drift detection.
+- Don't write to `wiki/` outside the `wiki project` path (the write
+  step of this flow). The journal is the source of truth for what's in
+  the vault, and a hand-written page bypasses the schema validation and
+  drift detection `wiki project` enforces.
 - Don't fan-out fact extraction without a sanity check. If a single
   ingest would touch ten pages, ask first.
 - Don't merge contradictions silently. The user owns those calls.
