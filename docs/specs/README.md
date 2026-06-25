@@ -15,6 +15,7 @@ feature: if the implementation diverges, the spec is wrong — fix it in the sam
 
 | Spec | Status |
 |------|--------|
+| [projection-port](projection-port/spec.md) | Shipped — RFC-0010 follow-on (`wiki project`) |
 | [operations-and-search-rekey](operations-and-search-rekey/spec.md) | Shipped |
 | [role-folders-and-containers](role-folders-and-containers/spec.md) | Shipped |
 | [faceted-frontmatter-schema](faceted-frontmatter-schema/spec.md) | Shipped |
